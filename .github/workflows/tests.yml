@@ -1,0 +1,80 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main, development]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Branch Protection Requirements:
+# After enabling this workflow, configure branch protection for 'main' via
+# GitHub UI or gh CLI with the following required status checks:
+#   - "Test on macOS"
+#   - "Test on iOS Simulator"
+# Also enable "Require a pull request before merging" for the main branch.
+#
+# Example gh CLI setup:
+#   gh api --method PUT repos/OWNER/REPO/branches/main/protection \
+#     --input <(cat <<'JSONEOF'
+#   {
+#     "required_status_checks": {
+#       "strict": true,
+#       "contexts": ["Test on macOS", "Test on iOS Simulator"]
+#     },
+#     "enforce_admins": false,
+#     "required_pull_request_reviews": {
+#       "required_approving_review_count": 1
+#     },
+#     "restrictions": null
+#   }
+#   JSONEOF
+#   )
+
+jobs:
+  test-macos:
+    name: Test on macOS
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme SwiftAcervo \
+            -destination 'platform=macOS'
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -scheme SwiftAcervo \
+            -destination 'platform=macOS'
+
+  test-ios:
+    name: Test on iOS Simulator
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build for iOS
+        run: |
+          xcodebuild build-for-testing \
+            -scheme SwiftAcervo \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.1'
+
+      - name: Test on iOS
+        run: |
+          xcodebuild test-without-building \
+            -scheme SwiftAcervo \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.1'
