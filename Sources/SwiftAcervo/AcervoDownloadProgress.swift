@@ -5,6 +5,14 @@ import Foundation
 /// Tracks the progress of downloading individual files within a multi-file
 /// download operation, including byte-level progress for the current file
 /// and file-level progress across the entire operation.
+///
+/// ```swift
+/// try await Acervo.download("mlx-community/Qwen2.5-7B-Instruct-4bit",
+///     files: ["config.json", "model.safetensors"]
+/// ) { progress in
+///     print("\(progress.fileName): \(Int(progress.overallProgress * 100))%")
+/// }
+/// ```
 public struct AcervoDownloadProgress: Sendable {
 
     /// The name of the file currently being downloaded.

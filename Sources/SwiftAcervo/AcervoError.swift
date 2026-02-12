@@ -1,6 +1,18 @@
 import Foundation
 
 /// Errors that can occur during SwiftAcervo operations.
+///
+/// All cases provide a human-readable `errorDescription` suitable for
+/// display to users or inclusion in log messages.
+///
+/// ```swift
+/// do {
+///     let dir = try Acervo.modelDirectory(for: "invalid-id")
+/// } catch let error as AcervoError {
+///     print(error.errorDescription ?? "Unknown error")
+///     // "Invalid model ID 'invalid-id'. Expected format: 'org/repo'"
+/// }
+/// ```
 public enum AcervoError: LocalizedError, Sendable {
 
     /// Failed to create a required directory at the specified path.

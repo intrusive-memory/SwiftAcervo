@@ -6,6 +6,14 @@ import Foundation
 /// HuggingFace identifier, local filesystem path, size, and download date.
 /// Conforms to `Identifiable` (keyed by HuggingFace ID), `Equatable`,
 /// `Codable`, and `Sendable`.
+///
+/// ```swift
+/// let model = try Acervo.modelInfo("mlx-community/Qwen2.5-7B-Instruct-4bit")
+/// print(model.formattedSize)  // "4.4 GB"
+/// print(model.slug)           // "mlx-community_Qwen2.5-7B-Instruct-4bit"
+/// print(model.baseName)       // "Qwen2.5"
+/// print(model.familyName)     // "mlx-community/Qwen2.5"
+/// ```
 public struct AcervoModel: Identifiable, Equatable, Codable, Sendable {
 
     /// The HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
