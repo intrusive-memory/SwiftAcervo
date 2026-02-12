@@ -232,6 +232,49 @@ extension Acervo {
     }
 }
 
+// MARK: - Pattern Matching
+
+extension Acervo {
+
+    /// Finds all models whose IDs contain the given substring.
+    ///
+    /// Performs a case-insensitive substring search across all model IDs
+    /// in the shared models directory. Returns all matching models sorted
+    /// alphabetically by ID.
+    ///
+    /// - Parameter pattern: The substring to search for within model IDs.
+    /// - Returns: An array of `AcervoModel` instances whose IDs contain
+    ///   the pattern (case-insensitive), sorted by model ID.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    public static func findModels(matching pattern: String) throws -> [AcervoModel] {
+        try findModels(matching: pattern, in: sharedModelsDirectory)
+    }
+
+    /// Finds all models whose IDs contain the given substring, scanning
+    /// the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - pattern: The substring to search for within model IDs (case-insensitive).
+    ///   - baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: An array of `AcervoModel` instances whose IDs contain
+    ///   the pattern (case-insensitive), sorted by model ID.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    static func findModels(matching pattern: String, in baseDirectory: URL) throws -> [AcervoModel] {
+        let allModels = try listModels(in: baseDirectory)
+        let lowercasedPattern = pattern.lowercased()
+
+        let matches = allModels.filter { model in
+            model.id.lowercased().contains(lowercasedPattern)
+        }
+
+        // listModels already returns sorted by ID, and filter preserves order
+        return matches
+    }
+}
+
 // MARK: - Directory Size Calculation
 
 extension Acervo {
