@@ -319,3 +319,75 @@ extension AcervoDownloader {
         try fm.moveItem(at: tempFileURL, to: destination)
     }
 }
+
+// MARK: - Multi-File Download
+
+extension AcervoDownloader {
+
+    /// Downloads multiple files for a HuggingFace model to a local destination directory.
+    ///
+    /// Iterates through the provided file list, constructing the HuggingFace
+    /// download URL for each file and downloading it to the corresponding
+    /// location within the destination directory. Progress is reported via
+    /// the optional callback, which receives both per-file byte progress and
+    /// overall multi-file progress (via `AcervoDownloadProgress.overallProgress`).
+    ///
+    /// Files that already exist at the destination are skipped unless `force`
+    /// is `true`, in which case they are re-downloaded.
+    ///
+    /// - Parameters:
+    ///   - modelId: The HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - files: An array of file names or relative paths within the model repository
+    ///     (e.g., `["config.json", "speech_tokenizer/config.json"]`).
+    ///   - destination: The local directory URL where files should be placed.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - force: When `true`, re-downloads files even if they already exist
+    ///     at the destination. Defaults to `false`.
+    ///   - progress: An optional callback invoked periodically with download progress.
+    ///     Must be `@Sendable` for Swift 6 strict concurrency.
+    /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+    ///   `AcervoError.networkError` for connection failures,
+    ///   `AcervoError.directoryCreationFailed` if directories cannot be created.
+    static func downloadFiles(
+        modelId: String,
+        files: [String],
+        destination: URL,
+        token: String?,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        // Ensure the top-level destination directory exists
+        try ensureDirectory(at: destination)
+
+        let totalFiles = files.count
+
+        for (fileIndex, fileName) in files.enumerated() {
+            let fileDestination = destination.appendingPathComponent(fileName)
+
+            // Skip if file already exists and force is not set
+            if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
+                // Report completed progress for skipped file
+                progress?(AcervoDownloadProgress(
+                    fileName: fileName,
+                    bytesDownloaded: 1,
+                    totalBytes: 1,
+                    fileIndex: fileIndex,
+                    totalFiles: totalFiles
+                ))
+                continue
+            }
+
+            let url = buildURL(modelId: modelId, fileName: fileName)
+
+            try await downloadFile(
+                from: url,
+                to: fileDestination,
+                token: token,
+                fileName: fileName,
+                fileIndex: fileIndex,
+                totalFiles: totalFiles,
+                progress: progress
+            )
+        }
+    }
+}
