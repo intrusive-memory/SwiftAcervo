@@ -726,3 +726,91 @@ extension Acervo {
         )
     }
 }
+
+// MARK: - Ensure Available
+
+extension Acervo {
+
+    /// Checks whether a model is available locally within a specified
+    /// base directory by verifying the presence of `config.json`.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier.
+    ///   - baseDirectory: The base directory to check for the model.
+    /// - Returns: `true` if the model directory contains a `config.json` file.
+    static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
+        let slug = slugify(modelId)
+        let modelDir = baseDirectory.appendingPathComponent(slug)
+        let configPath = modelDir.appendingPathComponent("config.json").path
+        return FileManager.default.fileExists(atPath: configPath)
+    }
+
+    /// Ensures a model is available locally, downloading it if necessary.
+    ///
+    /// If the model is already available (has `config.json` in its directory),
+    /// this method returns immediately without performing any downloads.
+    /// Otherwise, it calls `download()` with `force: false`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - files: An array of file names or relative paths within the model repository.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - progress: An optional callback invoked periodically with download progress.
+    ///     Must be `@Sendable` for Swift 6 strict concurrency.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   or download-related errors from `AcervoDownloader`.
+    public static func ensureAvailable(
+        _ modelId: String,
+        files: [String],
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        try await ensureAvailable(
+            modelId,
+            files: files,
+            token: token,
+            progress: progress,
+            in: sharedModelsDirectory
+        )
+    }
+
+    /// Ensures a model is available locally within a specified base directory,
+    /// downloading it if necessary.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format.
+    ///   - files: An array of file names or relative paths within the model repository.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - progress: An optional progress callback.
+    ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   or download-related errors from `AcervoDownloader`.
+    static func ensureAvailable(
+        _ modelId: String,
+        files: [String],
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+        in baseDirectory: URL
+    ) async throws {
+        // Check if model is already available (has config.json)
+        if isModelAvailable(modelId, in: baseDirectory) {
+            return
+        }
+
+        // Model not available -- download it
+        try await download(
+            modelId,
+            files: files,
+            token: token,
+            force: false,
+            progress: progress,
+            in: baseDirectory
+        )
+    }
+}
