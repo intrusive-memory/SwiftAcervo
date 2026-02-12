@@ -181,6 +181,152 @@ struct AcervoManagerTests {
         #expect(!lockedAfter, "Lock should be released even after error")
     }
 
+    // MARK: - withModelAccess() Tests
+
+    @Test("withModelAccess provides model directory URL")
+    func withModelAccessProvidesURL() async throws {
+        let manager = AcervoManager.shared
+        let modelId = "test-org/url-access-test"
+
+        // withModelAccess should provide the model directory URL
+        // matching what Acervo.modelDirectory(for:) returns
+        let expectedDir = try Acervo.modelDirectory(for: modelId)
+
+        let receivedURL = try await manager.withModelAccess(modelId) { url -> URL in
+            return url
+        }
+
+        #expect(receivedURL == expectedDir,
+                "withModelAccess should provide the correct model directory URL")
+    }
+
+    @Test("withModelAccess returns closure result")
+    func withModelAccessReturnsResult() async throws {
+        let manager = AcervoManager.shared
+        let modelId = "test-org/result-test"
+
+        let result = try await manager.withModelAccess(modelId) { url -> String in
+            return "computed-result-\(url.lastPathComponent)"
+        }
+
+        #expect(result.hasPrefix("computed-result-"),
+                "withModelAccess should return the closure's result")
+        #expect(result.contains("test-org_result-test"),
+                "Result should include the model directory name")
+    }
+
+    @Test("withModelAccess throws invalidModelId for bad model ID")
+    func withModelAccessThrowsForBadModelId() async {
+        let manager = AcervoManager.shared
+
+        do {
+            let _ = try await manager.withModelAccess("no-slash") { url -> String in
+                return url.path
+            }
+            #expect(Bool(false), "Expected withModelAccess to throw invalidModelId")
+        } catch let error as AcervoError {
+            if case .invalidModelId(let id) = error {
+                #expect(id == "no-slash")
+            } else {
+                #expect(Bool(false), "Expected invalidModelId but got \(error)")
+            }
+        } catch {
+            #expect(Bool(false), "Expected AcervoError but got \(error)")
+        }
+    }
+
+    @Test("withModelAccess lock released after invalidModelId error")
+    func withModelAccessLockReleasedAfterValidationError() async {
+        let manager = AcervoManager.shared
+        let badModelId = "no-slash-validation"
+
+        do {
+            let _ = try await manager.withModelAccess(badModelId) { _ -> String in
+                return ""
+            }
+        } catch {
+            // Expected -- invalidModelId
+        }
+
+        // Lock should be released even after validation error
+        let locked = await manager.isLocked(badModelId)
+        #expect(!locked, "Lock should be released after invalidModelId error")
+    }
+
+    @Test("withModelAccess lock released after closure throws custom error")
+    func withModelAccessLockReleasedAfterClosureError() async {
+        let manager = AcervoManager.shared
+        let modelId = "test-org/closure-error-test"
+
+        do {
+            let _ = try await manager.withModelAccess(modelId) { _ -> Int in
+                throw AcervoError.directoryCreationFailed("test failure")
+            }
+        } catch {
+            // Expected
+        }
+
+        // Lock should be released
+        let locked = await manager.isLocked(modelId)
+        #expect(!locked, "Lock should be released after closure error")
+    }
+
+    @Test("withModelAccess concurrent access to same model is serialized")
+    func withModelAccessConcurrentSameModelSerialized() async throws {
+        let manager = AcervoManager.shared
+        let modelId = "test-org/concurrent-access-test"
+        let tracker = TimestampTracker()
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    let _ = try await manager.withModelAccess(modelId) { _ -> Bool in
+                        tracker.record("access1-start")
+                        Thread.sleep(forTimeInterval: 0.08)
+                        tracker.record("access1-end")
+                        return true
+                    }
+                } catch {}
+            }
+
+            group.addTask {
+                try? await Task.sleep(for: .milliseconds(5))
+                do {
+                    let _ = try await manager.withModelAccess(modelId) { _ -> Bool in
+                        tracker.record("access2-start")
+                        Thread.sleep(forTimeInterval: 0.08)
+                        tracker.record("access2-end")
+                        return true
+                    }
+                } catch {}
+            }
+        }
+
+        let events = tracker.getEvents()
+
+        // Verify serialization: one access must complete before the other starts
+        if events.count >= 4 {
+            let a1End = events.firstIndex(where: { $0.name == "access1-end" })
+            let a2Start = events.firstIndex(where: { $0.name == "access2-start" })
+            let a2End = events.firstIndex(where: { $0.name == "access2-end" })
+            let a1Start = events.firstIndex(where: { $0.name == "access1-start" })
+
+            if let end1 = a1End, let start2 = a2Start {
+                let order1 = end1 < start2
+                var order2 = false
+                if let end2 = a2End, let start1 = a1Start {
+                    order2 = end2 < start1
+                }
+                #expect(order1 || order2,
+                        "Concurrent withModelAccess on same model should be serialized")
+            }
+        }
+
+        // Both locks should be released
+        let locked = await manager.isLocked(modelId)
+        #expect(!locked, "Lock should be released after concurrent operations")
+    }
+
     // MARK: - Timing-based serialization verification
 
     @Test("Same-model operations take at least 2x the work duration")
