@@ -133,3 +133,35 @@ extension AcervoManager {
         )
     }
 }
+
+// MARK: - Exclusive Model Access
+
+extension AcervoManager {
+
+    /// Provides exclusive access to a model's directory while holding the
+    /// per-model lock.
+    ///
+    /// The lock is acquired before the closure is called and released after
+    /// it returns (or throws), preventing concurrent modifications to the
+    /// same model directory. Access to different models is not blocked.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - perform: A `@Sendable` closure that receives the model directory
+    ///     URL and returns a value. The closure executes while the lock is held.
+    /// - Returns: The value returned by the `perform` closure.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   or any error thrown by the `perform` closure. The lock is released
+    ///   in all cases.
+    public func withModelAccess<T: Sendable>(
+        _ modelId: String,
+        perform: @Sendable (URL) throws -> T
+    ) async throws -> T {
+        await acquireLock(for: modelId)
+        defer { releaseLock(for: modelId) }
+
+        let modelDir = try Acervo.modelDirectory(for: modelId)
+        return try perform(modelDir)
+    }
+}
