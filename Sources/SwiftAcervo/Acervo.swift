@@ -37,6 +37,11 @@ extension Acervo {
     ///
     /// All model directories are stored as direct children of this path,
     /// named using the slugified HuggingFace model ID.
+    ///
+    /// ```swift
+    /// let baseDir = Acervo.sharedModelsDirectory
+    /// // ~/Library/SharedModels/
+    /// ```
     public static var sharedModelsDirectory: URL {
         FileManager.default
             .homeDirectoryForCurrentUser
@@ -51,6 +56,11 @@ extension Acervo {
     /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
     /// - Returns: The slugified form (e.g., "mlx-community_Qwen2.5-7B-Instruct-4bit").
     ///   Returns an empty string if the input is empty.
+    ///
+    /// ```swift
+    /// let slug = Acervo.slugify("mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// // "mlx-community_Qwen2.5-7B-Instruct-4bit"
+    /// ```
     public static func slugify(_ modelId: String) -> String {
         modelId.replacingOccurrences(of: "/", with: "_")
     }
@@ -64,6 +74,11 @@ extension Acervo {
     /// - Returns: The URL of the model directory within `sharedModelsDirectory`.
     /// - Throws: `AcervoError.invalidModelId` if the model ID does not contain
     ///   exactly one "/".
+    ///
+    /// ```swift
+    /// let dir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// // ~/Library/SharedModels/mlx-community_Qwen2.5-7B-Instruct-4bit/
+    /// ```
     public static func modelDirectory(for modelId: String) throws -> URL {
         let slashCount = modelId.filter { $0 == "/" }.count
         guard slashCount == 1 else {
@@ -85,6 +100,12 @@ extension Acervo {
     ///
     /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
     /// - Returns: `true` if the model directory contains a `config.json` file.
+    ///
+    /// ```swift
+    /// if Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit") {
+    ///     print("Model is ready to use")
+    /// }
+    /// ```
     public static func isModelAvailable(_ modelId: String) -> Bool {
         guard let dir = try? modelDirectory(for: modelId) else {
             return false
@@ -104,6 +125,13 @@ extension Acervo {
     ///   - fileName: The file name or relative path within the model directory
     ///     (e.g., "tokenizer.json" or "speech_tokenizer/config.json").
     /// - Returns: `true` if the file exists at the expected location.
+    ///
+    /// ```swift
+    /// let hasTokenizer = Acervo.modelFileExists(
+    ///     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    ///     fileName: "speech_tokenizer/config.json"
+    /// )
+    /// ```
     public static func modelFileExists(_ modelId: String, fileName: String) -> Bool {
         guard let dir = try? modelDirectory(for: modelId) else {
             return false
@@ -125,6 +153,13 @@ extension Acervo {
     /// - Returns: An array of `AcervoModel` instances for all valid models,
     ///   sorted by model ID.
     /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    ///
+    /// ```swift
+    /// let models = try Acervo.listModels()
+    /// for model in models {
+    ///     print("\(model.id): \(model.formattedSize)")
+    /// }
+    /// ```
     public static func listModels() throws -> [AcervoModel] {
         try listModels(in: sharedModelsDirectory)
     }
@@ -209,6 +244,11 @@ extension Acervo {
     /// - Returns: The `AcervoModel` matching the given ID.
     /// - Throws: `AcervoError.modelNotFound` if no model with the given ID
     ///   exists in the shared models directory.
+    ///
+    /// ```swift
+    /// let model = try Acervo.modelInfo("mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// print("Size: \(model.formattedSize), Downloaded: \(model.downloadDate)")
+    /// ```
     public static func modelInfo(_ modelId: String) throws -> AcervoModel {
         try modelInfo(modelId, in: sharedModelsDirectory)
     }
@@ -246,6 +286,11 @@ extension Acervo {
     /// - Returns: An array of `AcervoModel` instances whose IDs contain
     ///   the pattern (case-insensitive), sorted by model ID.
     /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    ///
+    /// ```swift
+    /// let qwenModels = try Acervo.findModels(matching: "Qwen")
+    /// // Returns all models whose IDs contain "Qwen" (case-insensitive)
+    /// ```
     public static func findModels(matching pattern: String) throws -> [AcervoModel] {
         try findModels(matching: pattern, in: sharedModelsDirectory)
     }
@@ -317,6 +362,11 @@ extension Acervo {
     /// - Returns: An array of `AcervoModel` instances within the threshold,
     ///   sorted by closeness (then by ID).
     /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    ///
+    /// ```swift
+    /// let matches = try Acervo.findModels(fuzzyMatching: "Qwen2.5-7B", editDistance: 10)
+    /// // Returns models with edit distance <= 10 from "Qwen2.5-7B"
+    /// ```
     public static func findModels(
         fuzzyMatching query: String,
         editDistance threshold: Int = 5
@@ -379,6 +429,12 @@ extension Acervo {
     ///   - threshold: The maximum edit distance to consider a match. Defaults to 5.
     /// - Returns: The closest `AcervoModel` within the threshold, or `nil`.
     /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    ///
+    /// ```swift
+    /// if let closest = try Acervo.closestModel(to: "Qwen2.5-7B-Instruct") {
+    ///     print("Did you mean: \(closest.id)?")
+    /// }
+    /// ```
     public static func closestModel(
         to query: String,
         editDistance threshold: Int = 5
@@ -423,6 +479,13 @@ extension Acervo {
     ///
     /// - Returns: A dictionary mapping family names to arrays of models.
     /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    ///
+    /// ```swift
+    /// let families = try Acervo.modelFamilies()
+    /// for (family, models) in families {
+    ///     print("\(family): \(models.count) variant(s)")
+    /// }
+    /// ```
     public static func modelFamilies() throws -> [String: [AcervoModel]] {
         try modelFamilies(in: sharedModelsDirectory)
     }
@@ -472,6 +535,11 @@ extension Acervo {
     /// - Returns: An array of `AcervoModel` instances for successfully migrated models.
     /// - Throws: `AcervoError.migrationFailed` if a filesystem error prevents migration.
     ///   Partial success is possible: some models may be migrated before an error occurs.
+    ///
+    /// ```swift
+    /// let migrated = try Acervo.migrateFromLegacyPaths()
+    /// print("Migrated \(migrated.count) model(s) to SharedModels")
+    /// ```
     public static func migrateFromLegacyPaths() throws -> [AcervoModel] {
         try migrateFromLegacyPaths(
             legacyBase: AcervoMigration.legacyBasePath,
@@ -663,6 +731,14 @@ extension Acervo {
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   `AcervoError.directoryCreationFailed` if the model directory cannot be
     ///   created, or download-related errors from `AcervoDownloader`.
+    ///
+    /// ```swift
+    /// try await Acervo.download(
+    ///     "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    ///     files: ["config.json", "tokenizer.json"],
+    ///     progress: { p in print("Progress: \(p.overallProgress)") }
+    /// )
+    /// ```
     public static func download(
         _ modelId: String,
         files: [String],
@@ -762,6 +838,14 @@ extension Acervo {
     ///     Must be `@Sendable` for Swift 6 strict concurrency.
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   or download-related errors from `AcervoDownloader`.
+    ///
+    /// ```swift
+    /// try await Acervo.ensureAvailable(
+    ///     "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    ///     files: ["config.json", "model.safetensors"]
+    /// )
+    /// // Model is now guaranteed to be available locally
+    /// ```
     public static func ensureAvailable(
         _ modelId: String,
         files: [String],
@@ -828,6 +912,10 @@ extension Acervo {
     ///   (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   `AcervoError.modelNotFound` if the model directory does not exist.
+    ///
+    /// ```swift
+    /// try Acervo.deleteModel("mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// ```
     public static func deleteModel(_ modelId: String) throws {
         try deleteModel(modelId, in: sharedModelsDirectory)
     }
