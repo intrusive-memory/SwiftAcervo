@@ -454,6 +454,146 @@ extension Acervo {
     }
 }
 
+// MARK: - Legacy Path Migration
+
+extension Acervo {
+
+    /// Migrates models from legacy intrusive-memory cache paths to the
+    /// canonical `~/Library/SharedModels/` directory.
+    ///
+    /// Scans the four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`)
+    /// under `~/Library/Caches/intrusive-memory/Models/` for directories
+    /// containing `config.json`. Valid models are moved to `sharedModelsDirectory`
+    /// if not already present there.
+    ///
+    /// Old parent directories are NOT deleted -- consumers clean up their own
+    /// legacy references.
+    ///
+    /// - Returns: An array of `AcervoModel` instances for successfully migrated models.
+    /// - Throws: `AcervoError.migrationFailed` if a filesystem error prevents migration.
+    ///   Partial success is possible: some models may be migrated before an error occurs.
+    public static func migrateFromLegacyPaths() throws -> [AcervoModel] {
+        try migrateFromLegacyPaths(
+            legacyBase: AcervoMigration.legacyBasePath,
+            sharedBase: sharedModelsDirectory
+        )
+    }
+
+    /// Migrates models from legacy paths to a shared base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real filesystem locations.
+    ///
+    /// - Parameters:
+    ///   - legacyBase: The legacy base directory containing subdirectories
+    ///     (`LLM`, `TTS`, `Audio`, `VLM`) with model directories.
+    ///   - sharedBase: The destination base directory for migrated models.
+    /// - Returns: An array of `AcervoModel` instances for successfully migrated models.
+    /// - Throws: `AcervoError.migrationFailed` if a filesystem error prevents migration.
+    static func migrateFromLegacyPaths(
+        legacyBase: URL,
+        sharedBase: URL
+    ) throws -> [AcervoModel] {
+        let fm = FileManager.default
+        var migratedModels: [AcervoModel] = []
+
+        // Scan each legacy subdirectory
+        for subdirectory in AcervoMigration.legacySubdirectories {
+            let subdirURL = legacyBase.appendingPathComponent(subdirectory)
+
+            // Skip if the subdirectory doesn't exist
+            guard fm.fileExists(atPath: subdirURL.path) else {
+                continue
+            }
+
+            // List contents of the subdirectory
+            let contents: [URL]
+            do {
+                contents = try fm.contentsOfDirectory(
+                    at: subdirURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                )
+            } catch {
+                // Skip unreadable directories gracefully
+                continue
+            }
+
+            for itemURL in contents {
+                // Only consider directories
+                guard let resourceValues = try? itemURL.resourceValues(
+                    forKeys: [.isDirectoryKey]
+                ), resourceValues.isDirectory == true else {
+                    continue
+                }
+
+                // Must contain config.json to be a valid model
+                let configURL = itemURL.appendingPathComponent("config.json")
+                guard fm.fileExists(atPath: configURL.path) else {
+                    continue
+                }
+
+                // The directory name is the slug
+                let slug = itemURL.lastPathComponent
+
+                // Determine destination path
+                let destinationURL = sharedBase.appendingPathComponent(slug)
+
+                // Skip if destination already exists (prefer existing copy)
+                if fm.fileExists(atPath: destinationURL.path) {
+                    continue
+                }
+
+                // Ensure the shared base directory exists
+                do {
+                    try fm.createDirectory(
+                        at: sharedBase,
+                        withIntermediateDirectories: true
+                    )
+                } catch {
+                    throw AcervoError.migrationFailed(
+                        source: itemURL.path,
+                        reason: "Failed to create destination directory: \(error.localizedDescription)"
+                    )
+                }
+
+                // Move the directory to the new location
+                do {
+                    try fm.moveItem(at: itemURL, to: destinationURL)
+                } catch {
+                    throw AcervoError.migrationFailed(
+                        source: itemURL.path,
+                        reason: "Failed to move directory: \(error.localizedDescription)"
+                    )
+                }
+
+                // Build the model ID from the slug (reverse slugify: first "_" -> "/")
+                guard let firstUnderscore = slug.firstIndex(of: "_") else {
+                    continue
+                }
+                let org = String(slug[slug.startIndex..<firstUnderscore])
+                let repo = String(slug[slug.index(after: firstUnderscore)...])
+                let modelId = "\(org)/\(repo)"
+
+                // Get metadata for the migrated model
+                let attributes = try? fm.attributesOfItem(atPath: destinationURL.path)
+                let downloadDate = (attributes?[.creationDate] as? Date) ?? Date()
+                let size = (try? directorySize(at: destinationURL)) ?? 0
+
+                let model = AcervoModel(
+                    id: modelId,
+                    path: destinationURL,
+                    sizeBytes: size,
+                    downloadDate: downloadDate
+                )
+                migratedModels.append(model)
+            }
+        }
+
+        return migratedModels
+    }
+}
+
 // MARK: - Directory Size Calculation
 
 extension Acervo {
