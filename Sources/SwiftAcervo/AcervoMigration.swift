@@ -18,8 +18,7 @@ struct AcervoMigration: Sendable {
     ///
     /// Resolves to `~/Library/Caches/intrusive-memory/Models/`.
     static var legacyBasePath: URL {
-        FileManager.default
-            .homeDirectoryForCurrentUser
+        URL(filePath: NSHomeDirectory())
             .appendingPathComponent("Library/Caches/intrusive-memory/Models")
     }
 

@@ -16,7 +16,7 @@ struct AcervoPathTests {
     @Test("sharedModelsDirectory is under home directory")
     func sharedModelsDirectoryIsUnderHome() {
         let dir = Acervo.sharedModelsDirectory
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = URL(filePath: NSHomeDirectory())
         #expect(dir.path.hasPrefix(home.path))
     }
 

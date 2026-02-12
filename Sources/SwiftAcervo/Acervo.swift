@@ -43,8 +43,7 @@ extension Acervo {
     /// // ~/Library/SharedModels/
     /// ```
     public static var sharedModelsDirectory: URL {
-        FileManager.default
-            .homeDirectoryForCurrentUser
+        URL(filePath: NSHomeDirectory())
             .appendingPathComponent("Library/SharedModels")
     }
 
