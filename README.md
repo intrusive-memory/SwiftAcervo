@@ -60,7 +60,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "1.0.0")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.1.0")
     ],
     targets: [
         .target(
@@ -497,10 +497,11 @@ xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
 
 ### Integration Tests
 
-Integration tests that hit the HuggingFace network are gated behind the `INTEGRATION_TESTS` environment variable. These are excluded from CI by default to keep the test suite fast and deterministic:
+Integration tests that hit the HuggingFace network are gated behind the `INTEGRATION_TESTS` compile flag. These are excluded from CI by default to keep the test suite fast and deterministic:
 
 ```bash
-INTEGRATION_TESTS=1 xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
+xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS' \
+    OTHER_SWIFT_FLAGS='-D INTEGRATION_TESTS'
 ```
 
 ### CI/CD

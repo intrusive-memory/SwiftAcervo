@@ -2,13 +2,13 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: Pre-release (February 2026)
+**Current Version**: 0.1.0 (February 2026)
 
 ---
 
 ## Project Overview
 
-SwiftAcervo is a shared AI model discovery and management library for the intrusive-memory ecosystem. It provides a single canonical location (`~/Library/SharedModels/`) for HuggingFace models so that models downloaded by one tool are visible to all others.
+Consumers need HuggingFace models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **download from HuggingFace** into a single shared directory (`~/Library/SharedModels/`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
 
 Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for **stability** -- once the discovery and download logic is set, it should rarely change.
 
@@ -38,6 +38,9 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 - `Sources/SwiftAcervo/AcervoModel.swift` -- Model metadata struct
 - `Sources/SwiftAcervo/AcervoError.swift` -- Error types
 - `Sources/SwiftAcervo/AcervoDownloader.swift` -- HuggingFace download logic
+- `Sources/SwiftAcervo/AcervoDownloadProgress.swift` -- Download progress tracking
+- `Sources/SwiftAcervo/AcervoMigration.swift` -- Legacy path migration
+- `Sources/SwiftAcervo/LevenshteinDistance.swift` -- Edit distance for fuzzy search
 - `Tests/SwiftAcervoTests/` -- Test suite
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
@@ -45,11 +48,14 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 
 | File | Purpose |
 |------|---------|
-| `Acervo.swift` | Static methods: `sharedModelsDirectory`, `modelDirectory(for:)`, `slugify(_:)`, `isModelAvailable(_:)`, `modelFileExists(_:fileName:)`, `listModels()`, `modelInfo(_:)`, `findModels(matching:)`, `findModels(fuzzyMatching:)`, `closestModel(to:)`, `modelFamilies()`, `download(_:files:)`, `ensureAvailable(_:files:)`, `deleteModel(_:)`, `migrateFromLegacyPaths()` |
+| `Acervo.swift` | Static methods: `sharedModelsDirectory`, `modelDirectory(for:)`, `slugify(_:)`, `isModelAvailable(_:)`, `modelFileExists(_:fileName:)`, `listModels()`, `modelInfo(_:)`, `findModels(matching:)`, `findModels(fuzzyMatching:editDistance:)`, `closestModel(to:)`, `modelFamilies()`, `download(_:files:token:force:progress:)`, `ensureAvailable(_:files:token:progress:)`, `deleteModel(_:)`, `migrateFromLegacyPaths()` |
 | `AcervoManager.swift` | Actor with per-model download locks, metadata cache, exclusive model access via `withModelAccess(_:perform:)`, download/access statistics |
-| `AcervoModel.swift` | Identifiable, Codable model metadata: `id`, `path`, `sizeBytes`, `downloadDate`, `formattedSize`, `slug` |
+| `AcervoModel.swift` | Identifiable, Codable model metadata: `id`, `path`, `sizeBytes`, `downloadDate`, `formattedSize`, `slug`, `baseName`, `familyName` |
 | `AcervoError.swift` | Error types: `directoryCreationFailed`, `modelNotFound`, `downloadFailed`, `networkError`, `modelAlreadyExists`, `migrationFailed`, `invalidModelId` |
 | `AcervoDownloader.swift` | URLSession-based HuggingFace file downloads with progress reporting and optional auth token support |
+| `AcervoDownloadProgress.swift` | Download progress struct: `fileName`, `bytesDownloaded`, `totalBytes`, `fileIndex`, `totalFiles`, `overallProgress` |
+| `AcervoMigration.swift` | Legacy path constants for migrating from `~/Library/Caches/intrusive-memory/Models/` subdirectories |
+| `LevenshteinDistance.swift` | Levenshtein edit distance algorithm for fuzzy model name matching |
 
 ## API Overview
 
@@ -64,13 +70,12 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 | `modelFileExists(_:fileName:)` | True if specific file exists in model directory |
 | `listModels()` | List all valid models in shared directory |
 | `modelInfo(_:)` | Get metadata for a model by HuggingFace ID |
-| `modelInfo(at:)` | Get metadata for a model at a specific path |
 | `findModels(matching:)` | Find models by name pattern (case-insensitive substring) |
-| `findModels(fuzzyMatching:threshold:)` | Find models by fuzzy edit distance (tolerates typos) |
+| `findModels(fuzzyMatching:editDistance:)` | Find models by fuzzy edit distance (tolerates typos) |
 | `closestModel(to:)` | Return single best fuzzy match, or nil |
 | `modelFamilies()` | Group models by base name family |
-| `download(_:files:force:token:progress:)` | Download specific files from HuggingFace |
-| `ensureAvailable(_:files:force:token:progress:)` | Download only if not already available |
+| `download(_:files:token:force:progress:)` | Download specific files from HuggingFace |
+| `ensureAvailable(_:files:token:progress:)` | Download only if not already available |
 | `deleteModel(_:)` | Delete a model from disk |
 | `migrateFromLegacyPaths()` | Move models from old cache paths to shared directory |
 
@@ -78,8 +83,7 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 
 | Method | Description |
 |--------|-------------|
-| `download(_:files:force:token:progress:)` | Download with per-model serialization |
-| `ensureAvailable(_:files:force:token:progress:)` | Ensure available with per-model serialization |
+| `download(_:files:token:force:progress:)` | Download with per-model serialization |
 | `withModelAccess(_:perform:)` | Exclusive access to a model directory |
 | `clearCache()` | Clear model metadata cache |
 | `preloadModels()` | Preload all model metadata into cache |
@@ -134,6 +138,36 @@ let modelDir = try await AcervoManager.shared.withModelAccess(
 }
 ```
 
+## Use Cases
+
+### 1. Find a model locally (fuzzy search)
+
+Model names from HuggingFace are long and easy to mistype. Fuzzy matching tolerates name variations:
+
+```swift
+// User types an approximate name -- fuzzy search finds the real model
+if let match = try Acervo.closestModel(to: "Qwen2.5-7B-Instrct") {
+    let dir = match.path
+    // Load model from dir
+}
+```
+
+### 2. Download if missing
+
+`ensureAvailable` checks local storage first, only downloading when the model isn't present:
+
+```swift
+try await Acervo.ensureAvailable(
+    "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    files: ["config.json", "tokenizer.json", "model.safetensors"]
+)
+// Model is now guaranteed to be at ~/Library/SharedModels/mlx-community_Qwen2.5-7B-Instruct-4bit/
+```
+
+### 3. Shared across tools
+
+All intrusive-memory projects point at the same `~/Library/SharedModels/` directory. A model downloaded by SwiftBruja (LLM inference) is immediately visible to mlx-audio-swift (TTS) or any other consumer -- no re-download, no path coordination.
+
 ## Design Patterns
 
 - **Static API + Actor**: `Acervo` for simple one-liners, `AcervoManager` for thread-safe operations
@@ -165,7 +199,7 @@ xcodebuild -scheme SwiftAcervo -destination 'platform=macOS' test
 
 ## Thread Safety
 
-`AcervoManager` is a `@globalActor` that ensures thread-safe model operations:
+`AcervoManager` is an `actor` that ensures thread-safe model operations:
 
 - **Per-model download locks**: Only one download per model at a time
 - **Automatic waiting**: If a model is locked, callers wait 50ms between checks
