@@ -264,6 +264,262 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 - **config.json as validity marker.** Universal across all HuggingFace model types.
 - **Swift 6 strict concurrency.** All closures are `@Sendable`. `AcervoManager` is an actor.
 
+## Consumer Integration
+
+SwiftAcervo is the model management layer for the [intrusive-memory](https://github.com/intrusive-memory) ecosystem. Each consumer project depends on SwiftAcervo for model discovery and downloading, then loads models using its own framework. Because every project shares `~/Library/SharedModels/`, a model downloaded by any one tool is immediately available to all others.
+
+### SwiftBruja (MLX Inference)
+
+[SwiftBruja](https://github.com/intrusive-memory/SwiftBruja) provides MLX-based LLM inference. It uses SwiftAcervo to locate quantized language models:
+
+```swift
+import SwiftAcervo
+import SwiftBruja
+
+let modelId = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+
+// Ensure the model is downloaded
+try await Acervo.ensureAvailable(modelId, files: [
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "model.safetensors"
+])
+
+// Get the local directory and load with MLX
+let modelDir = try Acervo.modelDirectory(for: modelId)
+let engine = try BrujaEngine(modelPath: modelDir)
+let response = try await engine.generate(prompt: "Explain quantum computing")
+```
+
+### mlx-audio-swift (Text-to-Speech)
+
+[mlx-audio-swift](https://github.com/intrusive-memory/mlx-audio-swift) handles TTS model inference. It uses SwiftAcervo to download and locate audio models:
+
+```swift
+import SwiftAcervo
+
+let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+let codecModelId = "mlx-community/snac_24khz"
+
+// Ensure both TTS and codec models are available
+try await Acervo.ensureAvailable(ttsModelId, files: [
+    "config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json"
+])
+try await Acervo.ensureAvailable(codecModelId, files: [
+    "config.json",
+    "model.safetensors"
+])
+
+// Both model directories are now ready for mlx-audio-swift to load
+let ttsDir = try Acervo.modelDirectory(for: ttsModelId)
+let codecDir = try Acervo.modelDirectory(for: codecModelId)
+```
+
+### SwiftVoxAlta (Voice Processing)
+
+[SwiftVoxAlta](https://github.com/intrusive-memory/SwiftVoxAlta) manages voice processing pipelines. It uses `AcervoManager` for thread-safe access when multiple voice operations run concurrently:
+
+```swift
+import SwiftAcervo
+
+let voiceModelId = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+
+// Thread-safe download with progress tracking
+try await AcervoManager.shared.download(voiceModelId, files: [
+    "config.json",
+    "model.safetensors",
+    "speech_tokenizer/config.json"
+]) { progress in
+    print("Voice model: \(Int(progress.overallProgress * 100))%")
+}
+
+// Exclusive access while reading model configuration
+let voiceConfig = try await AcervoManager.shared.withModelAccess(voiceModelId) { dir in
+    let configURL = dir.appendingPathComponent("config.json")
+    return try Data(contentsOf: configURL)
+}
+```
+
+### Produciesta (Production App)
+
+[Produciesta](https://github.com/intrusive-memory/Produciesta) is the user-facing production app that ties the ecosystem together. It uses SwiftAcervo at startup to migrate legacy paths and verify model availability:
+
+```swift
+import SwiftAcervo
+
+// At app launch: migrate any models from the old cache structure
+let migrated = try Acervo.migrateFromLegacyPaths()
+if !migrated.isEmpty {
+    print("Migrated \(migrated.count) model(s) to SharedModels")
+}
+
+// Preload the cache so model lookups are fast throughout the session
+try await AcervoManager.shared.preloadModels()
+
+// Check which models the user has available
+let available = try Acervo.listModels()
+let families = try Acervo.modelFamilies()
+for (family, variants) in families {
+    print("\(family): \(variants.count) variant(s)")
+}
+```
+
+## Migration from Legacy Paths
+
+Before SwiftAcervo, intrusive-memory projects stored models in a type-based directory structure under the system caches:
+
+```
+~/Library/Caches/intrusive-memory/Models/
+├── LLM/
+│   └── mlx-community_Qwen2.5-7B-Instruct-4bit/
+├── TTS/
+│   └── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
+├── Audio/
+│   └── mlx-community_snac_24khz/
+└── VLM/
+    └── (vision-language models)
+```
+
+SwiftAcervo consolidates all models into a single flat directory:
+
+```
+~/Library/SharedModels/
+├── mlx-community_Qwen2.5-7B-Instruct-4bit/
+├── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
+└── mlx-community_snac_24khz/
+```
+
+### Running the Migration
+
+Call `migrateFromLegacyPaths()` once at application startup. It scans all four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`) for valid model directories (those containing `config.json`) and moves them to `~/Library/SharedModels/`:
+
+```swift
+import SwiftAcervo
+
+let migrated = try Acervo.migrateFromLegacyPaths()
+print("Migrated \(migrated.count) model(s)")
+
+for model in migrated {
+    print("  \(model.id) -> \(model.path.path)")
+}
+```
+
+### Migration Behavior
+
+- **Safe operation.** Models are moved (not copied). If a model already exists at the destination, it is skipped.
+- **Old directories are preserved.** The legacy parent directories (`LLM/`, `TTS/`, etc.) are NOT deleted. Consumers are responsible for cleaning up their own legacy references.
+- **Idempotent.** Running migration multiple times is harmless. Already-migrated models are skipped because their destination directories already exist.
+- **Partial failure.** If one model fails to move, an `AcervoError.migrationFailed` is thrown. Models that were successfully migrated before the error remain in their new location.
+- **No network required.** Migration is a local filesystem operation only.
+
+### When to Migrate
+
+Run migration once when upgrading from an older version of any intrusive-memory project. A good pattern is to check at app launch:
+
+```swift
+// Only attempt migration if the legacy directory exists
+let legacyPath = URL(filePath: NSHomeDirectory())
+    .appendingPathComponent("Library/Caches/intrusive-memory/Models")
+if FileManager.default.fileExists(atPath: legacyPath.path) {
+    let migrated = try Acervo.migrateFromLegacyPaths()
+    if !migrated.isEmpty {
+        print("Migrated \(migrated.count) model(s) to ~/Library/SharedModels/")
+    }
+}
+```
+
+## Thread Safety
+
+SwiftAcervo provides two levels of concurrency support:
+
+- **`Acervo` (static API):** Stateless methods that are safe to call from any thread. Each call is independent and relies on Foundation's thread-safe `FileManager` and `URLSession`.
+- **`AcervoManager` (actor):** A singleton actor that adds per-model locking on top of the static API. Use this when multiple tasks might download or access the same model concurrently.
+
+### Per-Model Locking
+
+`AcervoManager` maintains a lock per model ID. Two concurrent downloads of the **same** model are serialized -- the second caller waits until the first completes. Downloads of **different** models proceed in parallel without blocking each other.
+
+```swift
+// These two downloads run concurrently (different models)
+async let llm: Void = AcervoManager.shared.download(
+    "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    files: ["config.json", "model.safetensors"]
+)
+async let tts: Void = AcervoManager.shared.download(
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    files: ["config.json", "model.safetensors"]
+)
+
+// Wait for both to finish
+try await llm
+try await tts
+```
+
+### Exclusive Model Access
+
+Use `withModelAccess(_:perform:)` when you need to read or inspect model files while holding the lock. This prevents another task from downloading (and potentially modifying) the same model directory while you are reading from it:
+
+```swift
+let configData = try await AcervoManager.shared.withModelAccess(
+    "mlx-community/Qwen2.5-7B-Instruct-4bit"
+) { modelDir in
+    let configURL = modelDir.appendingPathComponent("config.json")
+    return try Data(contentsOf: configURL)
+}
+```
+
+The lock is automatically released when the closure returns or throws, via `defer`. All closures must be `@Sendable` to satisfy Swift 6 strict concurrency.
+
+### Usage Statistics
+
+`AcervoManager` tracks download and access counts per model, which can be useful for diagnostics:
+
+```swift
+let downloads = await AcervoManager.shared.getDownloadCount(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+let accesses = await AcervoManager.shared.getAccessCount(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+
+// Print a formatted report of top-used models
+await AcervoManager.shared.printStatisticsReport()
+```
+
+## Testing
+
+### Unit Tests
+
+Unit tests run entirely offline with no network access required. They use temporary directories to avoid touching `~/Library/SharedModels/`:
+
+```bash
+xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
+```
+
+### Integration Tests
+
+Integration tests that hit the HuggingFace network are gated behind the `INTEGRATION_TESTS` environment variable. These are excluded from CI by default to keep the test suite fast and deterministic:
+
+```bash
+INTEGRATION_TESTS=1 xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
+```
+
+### CI/CD
+
+SwiftAcervo uses GitHub Actions for continuous integration. Tests run on every pull request targeting `main` or `development`:
+
+[![Tests](https://github.com/intrusive-memory/SwiftAcervo/actions/workflows/tests.yml/badge.svg)](https://github.com/intrusive-memory/SwiftAcervo/actions/workflows/tests.yml)
+
+| Job | Runner | Destination |
+|-----|--------|-------------|
+| Test on macOS | `macos-26` | `platform=macOS` |
+| Test on iOS Simulator | `macos-26` | `platform=iOS Simulator,name=iPhone 17,OS=26.1` |
+
+See [`.github/workflows/tests.yml`](.github/workflows/tests.yml) for the full workflow configuration.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing guidelines, commit conventions, and pull request process.
+
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT License. Copyright (c) 2026 Tom Stovall. See [LICENSE](LICENSE) for details.
