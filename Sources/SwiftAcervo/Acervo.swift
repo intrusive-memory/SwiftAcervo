@@ -54,4 +54,21 @@ extension Acervo {
     public static func slugify(_ modelId: String) -> String {
         modelId.replacingOccurrences(of: "/", with: "_")
     }
+
+    /// Returns the local filesystem directory for a given HuggingFace model ID.
+    ///
+    /// The model ID must contain exactly one "/" separating the organization
+    /// from the repository name (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///
+    /// - Parameter modelId: A HuggingFace model identifier in "org/repo" format.
+    /// - Returns: The URL of the model directory within `sharedModelsDirectory`.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID does not contain
+    ///   exactly one "/".
+    public static func modelDirectory(for modelId: String) throws -> URL {
+        let slashCount = modelId.filter { $0 == "/" }.count
+        guard slashCount == 1 else {
+            throw AcervoError.invalidModelId(modelId)
+        }
+        return sharedModelsDirectory.appendingPathComponent(slugify(modelId))
+    }
 }
