@@ -45,6 +45,12 @@ public actor AcervoManager {
     /// Cached model directory URLs, keyed by model ID.
     private var urlCache: [String: URL] = [:]
 
+    /// Download counts per model ID for statistics tracking.
+    private var downloadCount: [String: Int] = [:]
+
+    /// Access counts per model ID for statistics tracking.
+    private var accessCount: [String: Int] = [:]
+
     /// Private initializer to enforce singleton usage.
     private init() {}
 }
@@ -90,6 +96,164 @@ extension AcervoManager {
     }
 }
 
+// MARK: - URL Cache
+
+extension AcervoManager {
+
+    /// Returns the cached URL for the specified model ID, if present.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier.
+    /// - Returns: The cached URL, or `nil` if the model is not in the cache.
+    private func cachedURL(for modelId: String) -> URL? {
+        urlCache[modelId]
+    }
+
+    /// Stores a URL in the cache for the specified model ID.
+    ///
+    /// - Parameters:
+    ///   - url: The model directory URL to cache.
+    ///   - modelId: The HuggingFace model identifier.
+    private func cacheURL(_ url: URL, for modelId: String) {
+        urlCache[modelId] = url
+    }
+
+    /// Clears the entire URL cache.
+    ///
+    /// After calling this method, all cached model URLs are discarded.
+    /// Subsequent operations will re-resolve model directory paths.
+    public func clearCache() {
+        urlCache.removeAll()
+    }
+
+    /// Preloads the URL cache with all models found in the shared models directory.
+    ///
+    /// Calls `Acervo.listModels()` and caches the directory URL for each
+    /// discovered model. This is useful for warming the cache at application
+    /// startup to avoid repeated filesystem scans.
+    ///
+    /// - Throws: Errors from `FileManager` if the shared models directory
+    ///   cannot be read.
+    public func preloadModels() async throws {
+        let models = try Acervo.listModels()
+        for model in models {
+            cacheURL(model.path, for: model.id)
+        }
+    }
+
+    /// Preloads the URL cache with all models found in the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameter baseDirectory: The directory to scan for model subdirectories.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    func preloadModels(in baseDirectory: URL) async throws {
+        let models = try Acervo.listModels(in: baseDirectory)
+        for model in models {
+            cacheURL(model.path, for: model.id)
+        }
+    }
+
+    /// Returns the number of entries currently in the URL cache.
+    ///
+    /// Primarily useful for testing to verify cache population and clearing.
+    func cacheCount() -> Int {
+        urlCache.count
+    }
+
+    /// Returns whether the URL cache contains an entry for the specified model ID.
+    ///
+    /// Primarily useful for testing.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier to check.
+    /// - Returns: `true` if the cache contains a URL for the model.
+    func isCached(_ modelId: String) -> Bool {
+        urlCache[modelId] != nil
+    }
+}
+
+// MARK: - Statistics
+
+extension AcervoManager {
+
+    /// Returns the number of times `download()` has been called for the
+    /// specified model ID.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier.
+    /// - Returns: The download count, or 0 if the model has never been downloaded.
+    public func getDownloadCount(for modelId: String) -> Int {
+        downloadCount[modelId] ?? 0
+    }
+
+    /// Returns the number of times `withModelAccess()` has been called for the
+    /// specified model ID.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier.
+    /// - Returns: The access count, or 0 if the model has never been accessed.
+    public func getAccessCount(for modelId: String) -> Int {
+        accessCount[modelId] ?? 0
+    }
+
+    /// Prints a formatted statistics report showing the top 10 downloaded
+    /// and top 10 accessed models.
+    ///
+    /// Output goes to standard output via `print()`. If no statistics have
+    /// been recorded, the report indicates that.
+    public func printStatisticsReport() {
+        print("=== AcervoManager Statistics Report ===")
+        print("")
+
+        // Top 10 downloaded models
+        let topDownloads = downloadCount
+            .sorted { $0.value > $1.value }
+            .prefix(10)
+
+        print("Top Downloaded Models:")
+        if topDownloads.isEmpty {
+            print("  (no downloads recorded)")
+        } else {
+            for (index, entry) in topDownloads.enumerated() {
+                print("  \(index + 1). \(entry.key): \(entry.value) download(s)")
+            }
+        }
+
+        print("")
+
+        // Top 10 accessed models
+        let topAccesses = accessCount
+            .sorted { $0.value > $1.value }
+            .prefix(10)
+
+        print("Top Accessed Models:")
+        if topAccesses.isEmpty {
+            print("  (no accesses recorded)")
+        } else {
+            for (index, entry) in topAccesses.enumerated() {
+                print("  \(index + 1). \(entry.key): \(entry.value) access(es)")
+            }
+        }
+
+        print("")
+        print("=======================================")
+    }
+
+    /// Resets all download and access statistics counters to zero.
+    public func resetStatistics() {
+        downloadCount.removeAll()
+        accessCount.removeAll()
+    }
+
+    /// Increments the download counter for the specified model ID.
+    private func trackDownload(for modelId: String) {
+        downloadCount[modelId, default: 0] += 1
+    }
+
+    /// Increments the access counter for the specified model ID.
+    private func trackAccess(for modelId: String) {
+        accessCount[modelId, default: 0] += 1
+    }
+}
+
 // MARK: - Download
 
 extension AcervoManager {
@@ -124,6 +288,8 @@ extension AcervoManager {
         await acquireLock(for: modelId)
         defer { releaseLock(for: modelId) }
 
+        trackDownload(for: modelId)
+
         try await Acervo.download(
             modelId,
             files: files,
@@ -131,6 +297,11 @@ extension AcervoManager {
             force: force,
             progress: progress
         )
+
+        // Cache the model directory URL after successful download
+        if let modelDir = try? Acervo.modelDirectory(for: modelId) {
+            cacheURL(modelDir, for: modelId)
+        }
     }
 }
 
@@ -160,6 +331,8 @@ extension AcervoManager {
     ) async throws -> T {
         await acquireLock(for: modelId)
         defer { releaseLock(for: modelId) }
+
+        trackAccess(for: modelId)
 
         let modelDir = try Acervo.modelDirectory(for: modelId)
         return try perform(modelDir)
