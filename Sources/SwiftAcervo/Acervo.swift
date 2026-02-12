@@ -112,3 +112,48 @@ extension Acervo {
         return FileManager.default.fileExists(atPath: filePath)
     }
 }
+
+// MARK: - Directory Size Calculation
+
+extension Acervo {
+
+    /// Calculates the total size of all files within a directory, in bytes.
+    ///
+    /// Recursively enumerates all files in the directory tree and sums their
+    /// `fileSize` resource values. Unreadable files are silently skipped.
+    ///
+    /// - Parameter url: The root directory URL to calculate size for.
+    /// - Returns: The total size of all readable files in bytes.
+    /// - Throws: Errors from `FileManager` if the directory cannot be enumerated.
+    private static func directorySize(at url: URL) throws -> Int64 {
+        let fm = FileManager.default
+        let resourceKeys: Set<URLResourceKey> = [.fileSizeKey, .isRegularFileKey]
+
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: Array(resourceKeys),
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true } // Skip unreadable files
+        ) else {
+            return 0
+        }
+
+        var totalSize: Int64 = 0
+
+        for case let fileURL as URL in enumerator {
+            guard let resourceValues = try? fileURL.resourceValues(
+                forKeys: resourceKeys
+            ) else {
+                continue // Skip files whose resource values cannot be read
+            }
+
+            guard resourceValues.isRegularFile == true else {
+                continue
+            }
+
+            totalSize += Int64(resourceValues.fileSize ?? 0)
+        }
+
+        return totalSize
+    }
+}
