@@ -88,4 +88,55 @@ struct AcervoPathTests {
         let dir = try Acervo.modelDirectory(for: "mlx-community/Phi-3-mini-4k-instruct-4bit")
         #expect(dir.lastPathComponent == "mlx-community_Phi-3-mini-4k-instruct-4bit")
     }
+
+    // MARK: - slugify() Edge Cases
+
+    @Test("slugify handles org containing underscore")
+    func slugifyOrgWithUnderscore() {
+        let result = Acervo.slugify("my_org/model-name")
+        #expect(result == "my_org_model-name")
+    }
+
+    @Test("slugify handles model ID with hyphens")
+    func slugifyWithHyphens() {
+        let result = Acervo.slugify("org-name/model-with-many-hyphens")
+        #expect(result == "org-name_model-with-many-hyphens")
+    }
+
+    @Test("slugify handles model ID with numbers")
+    func slugifyWithNumbers() {
+        let result = Acervo.slugify("org123/model456v2")
+        #expect(result == "org123_model456v2")
+    }
+
+    @Test("slugify handles very long model ID")
+    func slugifyVeryLongId() {
+        let longOrg = String(repeating: "a", count: 100)
+        let longRepo = String(repeating: "b", count: 200)
+        let modelId = "\(longOrg)/\(longRepo)"
+        let result = Acervo.slugify(modelId)
+        #expect(result == "\(longOrg)_\(longRepo)")
+        #expect(result.count == 301)
+        #expect(!result.contains("/"))
+    }
+
+    @Test("slugify handles org with multiple underscores")
+    func slugifyOrgMultipleUnderscores() {
+        let result = Acervo.slugify("my_special_org/model")
+        #expect(result == "my_special_org_model")
+    }
+
+    @Test("slugify handles dots and special characters in model name")
+    func slugifySpecialCharacters() {
+        let result = Acervo.slugify("mlx-community/Qwen2.5-7B-Instruct-4bit")
+        #expect(result.contains("Qwen2.5"))
+        #expect(result.contains("-7B-"))
+        #expect(!result.contains("/"))
+    }
+
+    @Test("slugify handles single character org and repo")
+    func slugifySingleCharParts() {
+        let result = Acervo.slugify("a/b")
+        #expect(result == "a_b")
+    }
 }
