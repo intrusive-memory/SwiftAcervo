@@ -814,3 +814,49 @@ extension Acervo {
         )
     }
 }
+
+// MARK: - Delete Model
+
+extension Acervo {
+
+    /// Deletes a model's directory from the canonical shared models directory.
+    ///
+    /// Validates the model ID format, verifies the directory exists, then
+    /// removes the entire model directory recursively.
+    ///
+    /// - Parameter modelId: A HuggingFace model identifier in "org/repo" format
+    ///   (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   `AcervoError.modelNotFound` if the model directory does not exist.
+    public static func deleteModel(_ modelId: String) throws {
+        try deleteModel(modelId, in: sharedModelsDirectory)
+    }
+
+    /// Deletes a model's directory from the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format.
+    ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   `AcervoError.modelNotFound` if the model directory does not exist.
+    static func deleteModel(_ modelId: String, in baseDirectory: URL) throws {
+        // Validate model ID format (must contain exactly one "/")
+        let slashCount = modelId.filter { $0 == "/" }.count
+        guard slashCount == 1 else {
+            throw AcervoError.invalidModelId(modelId)
+        }
+
+        let modelDir = baseDirectory.appendingPathComponent(slugify(modelId))
+
+        // Verify directory exists
+        guard FileManager.default.fileExists(atPath: modelDir.path) else {
+            throw AcervoError.modelNotFound(modelId)
+        }
+
+        // Remove directory recursively
+        try FileManager.default.removeItem(at: modelDir)
+    }
+}
