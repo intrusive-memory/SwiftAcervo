@@ -72,4 +72,90 @@ public struct AcervoModel: Identifiable, Equatable, Codable, Sendable {
     public var slug: String {
         id.replacingOccurrences(of: "/", with: "_")
     }
+
+    // MARK: - Name Parsing
+
+    /// The base model name with quantization, size, and variant suffixes stripped.
+    ///
+    /// Extracts just the repo name (after the "/") and removes:
+    /// - Quantization suffixes: `-4bit`, `-8bit`, `-bf16`, `-fp16`
+    /// - Variant suffixes: `-Base`, `-Instruct`, `-VoiceDesign`, `-CustomVoice`
+    /// - Size suffixes: `-0.6B`, `-1.7B`, `-7B`, `-8B`, `-70B`, etc.
+    ///
+    /// Examples:
+    /// - "mlx-community/Qwen2.5-7B-Instruct-4bit" -> "Qwen2.5"
+    /// - "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16" -> "Qwen3-TTS-12Hz"
+    /// - "mlx-community/Phi-3-mini-4k-instruct-4bit" -> "Phi-3-mini-4k"
+    public var baseName: String {
+        let repoName: String
+        if let slashIndex = id.firstIndex(of: "/") {
+            repoName = String(id[id.index(after: slashIndex)...])
+        } else {
+            repoName = id
+        }
+        return Self.stripSuffixes(repoName)
+    }
+
+    /// The organization and base model name, used for grouping model variants.
+    ///
+    /// Combines the organization prefix with the `baseName` to form a family
+    /// identifier. Models with the same `familyName` are considered variants
+    /// of the same model (e.g., different quantizations or sizes).
+    ///
+    /// Examples:
+    /// - "mlx-community/Qwen2.5-7B-Instruct-4bit" -> "mlx-community/Qwen2.5"
+    /// - "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16" -> "mlx-community/Qwen3-TTS-12Hz"
+    public var familyName: String {
+        let org: String
+        if let slashIndex = id.firstIndex(of: "/") {
+            org = String(id[id.startIndex..<slashIndex])
+        } else {
+            org = ""
+        }
+
+        let base = baseName
+
+        if org.isEmpty {
+            return base
+        }
+        return "\(org)/\(base)"
+    }
+
+    // MARK: - Private Helpers
+
+    /// Strips known suffixes from a model repo name to extract the base name.
+    ///
+    /// Strips in order: quantization, then variant, then size suffixes.
+    /// Each category is stripped repeatedly to handle multiple suffixes.
+    private static func stripSuffixes(_ name: String) -> String {
+        var result = name
+
+        // Quantization suffixes (case-sensitive match on common patterns)
+        let quantizationSuffixes = ["-4bit", "-8bit", "-bf16", "-fp16"]
+        for suffix in quantizationSuffixes {
+            if result.hasSuffix(suffix) {
+                result = String(result.dropLast(suffix.count))
+            }
+        }
+
+        // Variant suffixes (case-insensitive check for common variants)
+        let variantSuffixes = ["-Base", "-Instruct", "-VoiceDesign", "-CustomVoice",
+                               "-base", "-instruct", "-voicedesign", "-customvoice"]
+        for suffix in variantSuffixes {
+            if result.hasSuffix(suffix) {
+                result = String(result.dropLast(suffix.count))
+            }
+        }
+
+        // Size suffixes: match pattern like -0.6B, -1.7B, -7B, -8B, -70B
+        // Pattern: hyphen, optional digits and dot, digits, "B"
+        while let range = result.range(
+            of: #"-\d+(\.\d+)?[Bb]$"#,
+            options: .regularExpression
+        ) {
+            result = String(result[result.startIndex..<range.lowerBound])
+        }
+
+        return result
+    }
 }
