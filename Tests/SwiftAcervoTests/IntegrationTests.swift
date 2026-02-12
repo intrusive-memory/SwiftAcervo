@@ -211,4 +211,64 @@ struct EnsureAvailableIntegrationTests {
     }
 }
 
+// MARK: - Force Re-Download Tests
+
+@Suite("Integration: Force Re-Download")
+struct ForceReDownloadIntegrationTests {
+
+    @Test("force=true re-downloads an existing file")
+    func forceRedownloadsExistingFile() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        // First download: populate config.json
+        try await Acervo.download(
+            testModelId,
+            files: ["config.json"],
+            in: tempBase
+        )
+
+        let slug = Acervo.slugify(testModelId)
+        let configPath = tempBase
+            .appendingPathComponent(slug)
+            .appendingPathComponent("config.json")
+        #expect(FileManager.default.fileExists(atPath: configPath.path))
+
+        // Record the modification date before re-download
+        let attrsBefore = try FileManager.default.attributesOfItem(
+            atPath: configPath.path
+        )
+        let modDateBefore = attrsBefore[.modificationDate] as? Date
+
+        // Small delay to ensure the re-download produces a different timestamp
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Force re-download
+        try await Acervo.download(
+            testModelId,
+            files: ["config.json"],
+            force: true,
+            in: tempBase
+        )
+
+        // File should still exist
+        #expect(FileManager.default.fileExists(atPath: configPath.path))
+
+        // File should have been replaced (modification date changed)
+        let attrsAfter = try FileManager.default.attributesOfItem(
+            atPath: configPath.path
+        )
+        let modDateAfter = attrsAfter[.modificationDate] as? Date
+        #expect(
+            modDateBefore != modDateAfter,
+            "force=true should replace the file, changing its modification date"
+        )
+
+        // Verify the re-downloaded file is still valid JSON
+        let data = try Data(contentsOf: configPath)
+        let json = try JSONSerialization.jsonObject(with: data)
+        #expect(json is [String: Any])
+    }
+}
+
 #endif
