@@ -124,4 +124,91 @@ struct RealDownloadIntegrationTests {
     }
 }
 
+// MARK: - ensureAvailable() Integration Tests
+
+@Suite("Integration: ensureAvailable()")
+struct EnsureAvailableIntegrationTests {
+
+    @Test("ensureAvailable() downloads model when it is missing")
+    func ensureAvailableDownloadsWhenMissing() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        // Model does not exist in the temp directory
+        #expect(!Acervo.isModelAvailable(testModelId, in: tempBase))
+
+        // ensureAvailable() should download the model
+        try await Acervo.ensureAvailable(
+            testModelId,
+            files: ["config.json"],
+            in: tempBase
+        )
+
+        // Now the model should be available
+        #expect(Acervo.isModelAvailable(testModelId, in: tempBase))
+
+        // Verify config.json exists and is valid JSON
+        let slug = Acervo.slugify(testModelId)
+        let configPath = tempBase
+            .appendingPathComponent(slug)
+            .appendingPathComponent("config.json")
+        let data = try Data(contentsOf: configPath)
+        let json = try JSONSerialization.jsonObject(with: data)
+        #expect(json is [String: Any])
+    }
+
+    @Test("ensureAvailable() skips download when model already exists")
+    func ensureAvailableSkipsWhenPresent() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        // First download: populate the model
+        try await Acervo.download(
+            testModelId,
+            files: ["config.json"],
+            in: tempBase
+        )
+        #expect(Acervo.isModelAvailable(testModelId, in: tempBase))
+
+        // Record the modification date of config.json before ensureAvailable()
+        let slug = Acervo.slugify(testModelId)
+        let configPath = tempBase
+            .appendingPathComponent(slug)
+            .appendingPathComponent("config.json")
+        let attrsBefore = try FileManager.default.attributesOfItem(
+            atPath: configPath.path
+        )
+        let modDateBefore = attrsBefore[.modificationDate] as? Date
+
+        // Small delay to ensure any re-download would produce a different timestamp
+        try await Task.sleep(for: .milliseconds(100))
+
+        // ensureAvailable() should skip because config.json already exists
+        let collector = IntegrationProgressCollector()
+        try await Acervo.ensureAvailable(
+            testModelId,
+            files: ["config.json"],
+            progress: { report in
+                Task { await collector.append(report) }
+            },
+            in: tempBase
+        )
+
+        // File modification date should be unchanged (no re-download occurred)
+        let attrsAfter = try FileManager.default.attributesOfItem(
+            atPath: configPath.path
+        )
+        let modDateAfter = attrsAfter[.modificationDate] as? Date
+        #expect(
+            modDateBefore == modDateAfter,
+            "ensureAvailable should not re-download when model exists"
+        )
+
+        // No progress should have been reported (download was skipped entirely)
+        try await Task.sleep(for: .milliseconds(50))
+        let reports = await collector.getReports()
+        #expect(reports.isEmpty, "No progress reports expected when download is skipped")
+    }
+}
+
 #endif
