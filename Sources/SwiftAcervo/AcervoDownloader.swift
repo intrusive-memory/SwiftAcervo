@@ -181,4 +181,141 @@ extension AcervoDownloader {
         // Move temp file to destination atomically
         try fm.moveItem(at: tempFileURL, to: destination)
     }
+
+    /// Downloads a single file from a remote URL to a local destination,
+    /// reporting progress via a callback.
+    ///
+    /// Uses `URLSession.bytes(for:)` to stream the response, writing chunks
+    /// to a temporary file and reporting byte-level progress along the way.
+    /// Once the download is complete, the temporary file is moved atomically
+    /// to the final destination.
+    ///
+    /// If the server responds with a non-200 HTTP status code, this method
+    /// throws `AcervoError.downloadFailed`. Network-level errors are wrapped
+    /// in `AcervoError.networkError`.
+    ///
+    /// - Parameters:
+    ///   - url: The remote URL to download from.
+    ///   - destination: The local file URL where the downloaded file should be placed.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - fileName: The display name for the file (used in progress reporting).
+    ///   - fileIndex: The zero-based index of this file in a multi-file download.
+    ///   - totalFiles: The total number of files in the download operation.
+    ///   - progress: An optional callback invoked periodically with download progress.
+    ///     Must be `@Sendable` for Swift 6 strict concurrency.
+    /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+    ///   `AcervoError.networkError` for connection failures,
+    ///   `AcervoError.directoryCreationFailed` if intermediate directories
+    ///   cannot be created.
+    static func downloadFile(
+        from url: URL,
+        to destination: URL,
+        token: String?,
+        fileName: String,
+        fileIndex: Int,
+        totalFiles: Int,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+    ) async throws {
+        let request = buildRequest(from: url, token: token)
+
+        // Use bytes API for streaming progress
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await URLSession.shared.bytes(for: request)
+        } catch {
+            throw AcervoError.networkError(error)
+        }
+
+        // Verify HTTP 200
+        if let httpResponse = response as? HTTPURLResponse,
+           httpResponse.statusCode != 200 {
+            let name = url.lastPathComponent
+            throw AcervoError.downloadFailed(
+                fileName: name,
+                statusCode: httpResponse.statusCode
+            )
+        }
+
+        // Get expected content length (may be -1 / unknown)
+        let expectedLength = response.expectedContentLength
+        let totalBytes: Int64? = expectedLength > 0 ? expectedLength : nil
+
+        // Ensure the destination's parent directory exists
+        let parentDirectory = destination.deletingLastPathComponent()
+        try ensureDirectory(at: parentDirectory)
+
+        // Write to a temporary file while streaming
+        let tempFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+
+        FileManager.default.createFile(atPath: tempFileURL.path, contents: nil)
+        let fileHandle = try FileHandle(forWritingTo: tempFileURL)
+        defer { try? fileHandle.close() }
+
+        var bytesDownloaded: Int64 = 0
+        // Buffer size for progress reporting (64 KB chunks)
+        let reportInterval: Int64 = 65_536
+        var bytesSinceLastReport: Int64 = 0
+        var buffer = Data()
+        let bufferFlushSize = 262_144 // 256 KB
+
+        // Report initial progress
+        progress?(AcervoDownloadProgress(
+            fileName: fileName,
+            bytesDownloaded: 0,
+            totalBytes: totalBytes,
+            fileIndex: fileIndex,
+            totalFiles: totalFiles
+        ))
+
+        for try await byte in bytes {
+            buffer.append(byte)
+
+            if buffer.count >= bufferFlushSize {
+                fileHandle.write(buffer)
+                bytesDownloaded += Int64(buffer.count)
+                bytesSinceLastReport += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+
+                // Report progress periodically
+                if bytesSinceLastReport >= reportInterval {
+                    bytesSinceLastReport = 0
+                    progress?(AcervoDownloadProgress(
+                        fileName: fileName,
+                        bytesDownloaded: bytesDownloaded,
+                        totalBytes: totalBytes,
+                        fileIndex: fileIndex,
+                        totalFiles: totalFiles
+                    ))
+                }
+            }
+        }
+
+        // Flush remaining buffer
+        if !buffer.isEmpty {
+            fileHandle.write(buffer)
+            bytesDownloaded += Int64(buffer.count)
+        }
+
+        try fileHandle.close()
+
+        // Report final progress
+        progress?(AcervoDownloadProgress(
+            fileName: fileName,
+            bytesDownloaded: bytesDownloaded,
+            totalBytes: totalBytes ?? bytesDownloaded,
+            fileIndex: fileIndex,
+            totalFiles: totalFiles
+        ))
+
+        // Remove any existing file at the destination
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+
+        // Move temp file to destination atomically
+        try fm.moveItem(at: tempFileURL, to: destination)
+    }
 }
