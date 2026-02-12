@@ -63,3 +63,38 @@ extension AcervoDownloader {
         return url
     }
 }
+
+// MARK: - Directory Creation
+
+extension AcervoDownloader {
+
+    /// Ensures that a directory exists at the specified URL, creating it
+    /// (along with any intermediate directories) if necessary.
+    ///
+    /// If the directory already exists, this method does nothing. If creation
+    /// fails, an `AcervoError.directoryCreationFailed` error is thrown.
+    ///
+    /// - Parameter url: The directory URL to ensure exists.
+    /// - Throws: `AcervoError.directoryCreationFailed` if the directory
+    ///   cannot be created.
+    static func ensureDirectory(at url: URL) throws {
+        let fm = FileManager.default
+
+        // Skip if directory already exists
+        var isDirectory: ObjCBool = false
+        if fm.fileExists(atPath: url.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return
+        }
+
+        do {
+            try fm.createDirectory(
+                at: url,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+        } catch {
+            throw AcervoError.directoryCreationFailed(url.path)
+        }
+    }
+}
