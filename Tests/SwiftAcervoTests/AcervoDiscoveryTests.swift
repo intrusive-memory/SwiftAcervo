@@ -210,4 +210,79 @@ struct AcervoDiscoveryTests {
         // config.json (2 bytes) + speech_tokenizer/model.bin (20 bytes) = 22 bytes
         #expect(models[0].sizeBytes == 22)
     }
+
+    // MARK: - modelInfo() Tests
+
+    @Test("modelInfo returns correct model")
+    func modelInfoReturnsCorrectModel() throws {
+        let (base, cleanup) = try makeTempBase()
+        defer { cleanup() }
+
+        _ = try createModelDir(in: base, slug: "org_alpha-model")
+        _ = try createModelDir(in: base, slug: "org_beta-model")
+
+        let info = try Acervo.modelInfo("org/beta-model", in: base)
+        #expect(info.id == "org/beta-model")
+    }
+
+    @Test("modelInfo throws modelNotFound for nonexistent model")
+    func modelInfoThrowsModelNotFound() throws {
+        let (base, cleanup) = try makeTempBase()
+        defer { cleanup() }
+
+        _ = try createModelDir(in: base, slug: "org_existing-model")
+
+        #expect(throws: AcervoError.self) {
+            _ = try Acervo.modelInfo("org/nonexistent-model", in: base)
+        }
+    }
+
+    @Test("modelInfo throws modelNotFound for empty directory")
+    func modelInfoThrowsForEmptyDirectory() throws {
+        let (base, cleanup) = try makeTempBase()
+        defer { cleanup() }
+
+        #expect(throws: AcervoError.self) {
+            _ = try Acervo.modelInfo("org/any-model", in: base)
+        }
+    }
+
+    @Test("modelInfo metadata matches listModels result")
+    func modelInfoMetadataMatchesListModels() throws {
+        let (base, cleanup) = try makeTempBase()
+        defer { cleanup() }
+
+        let extraData = Data(repeating: 0x41, count: 50)
+        _ = try createModelDir(
+            in: base,
+            slug: "org_test-model",
+            extraFiles: ["weights.bin": extraData]
+        )
+
+        let models = try Acervo.listModels(in: base)
+        let info = try Acervo.modelInfo("org/test-model", in: base)
+
+        #expect(models.count == 1)
+        #expect(info.id == models[0].id)
+        #expect(info.sizeBytes == models[0].sizeBytes)
+        #expect(info.downloadDate == models[0].downloadDate)
+        #expect(info.path == models[0].path)
+    }
+
+    @Test("modelInfo returns correct size")
+    func modelInfoCorrectSize() throws {
+        let (base, cleanup) = try makeTempBase()
+        defer { cleanup() }
+
+        let extraData = Data(repeating: 0x43, count: 100)
+        _ = try createModelDir(
+            in: base,
+            slug: "org_sized-check",
+            extraFiles: ["model.safetensors": extraData]
+        )
+
+        let info = try Acervo.modelInfo("org/sized-check", in: base)
+        // config.json (2 bytes) + model.safetensors (100 bytes) = 102 bytes
+        #expect(info.sizeBytes == 102)
+    }
 }
