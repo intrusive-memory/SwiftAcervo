@@ -92,4 +92,23 @@ extension Acervo {
         let configPath = dir.appendingPathComponent("config.json").path
         return FileManager.default.fileExists(atPath: configPath)
     }
+
+    /// Checks whether a specific file exists within a model's directory.
+    ///
+    /// Supports files in subdirectories (e.g., "speech_tokenizer/config.json").
+    /// This method never throws. If the model ID is invalid or the model
+    /// directory does not exist, it returns `false`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16").
+    ///   - fileName: The file name or relative path within the model directory
+    ///     (e.g., "tokenizer.json" or "speech_tokenizer/config.json").
+    /// - Returns: `true` if the file exists at the expected location.
+    public static func modelFileExists(_ modelId: String, fileName: String) -> Bool {
+        guard let dir = try? modelDirectory(for: modelId) else {
+            return false
+        }
+        let filePath = dir.appendingPathComponent(fileName).path
+        return FileManager.default.fileExists(atPath: filePath)
+    }
 }
