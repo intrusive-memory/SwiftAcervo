@@ -275,6 +275,185 @@ extension Acervo {
     }
 }
 
+// MARK: - Fuzzy Search
+
+extension Acervo {
+
+    /// Common HuggingFace organization prefixes that are stripped before
+    /// computing edit distance, so that "Qwen2.5-7B" matches
+    /// "mlx-community/Qwen2.5-7B-Instruct-4bit" without the org prefix
+    /// inflating the distance.
+    private static let commonPrefixes = ["mlx-community/"]
+
+    /// Strips known organization prefixes from a string for fuzzy comparison.
+    ///
+    /// This allows queries like "Qwen2.5-7B" to match model IDs like
+    /// "mlx-community/Qwen2.5-7B-Instruct-4bit" without the org prefix
+    /// contributing to the edit distance.
+    ///
+    /// - Parameter value: The string to strip prefixes from.
+    /// - Returns: The string with any matching prefix removed (case-insensitive).
+    private static func stripCommonPrefixes(_ value: String) -> String {
+        let lowered = value.lowercased()
+        for prefix in commonPrefixes {
+            if lowered.hasPrefix(prefix.lowercased()) {
+                return String(value.dropFirst(prefix.count))
+            }
+        }
+        return value
+    }
+
+    /// Finds all models whose IDs are within the given Levenshtein edit distance
+    /// of the query string.
+    ///
+    /// Before computing edit distance, common organization prefixes
+    /// (e.g., "mlx-community/") are stripped from both the query and each
+    /// model ID. Results are sorted by distance (closest first), then
+    /// alphabetically by model ID for ties.
+    ///
+    /// - Parameters:
+    ///   - query: The search string to match against model IDs.
+    ///   - threshold: The maximum edit distance to consider a match. Defaults to 5.
+    /// - Returns: An array of `AcervoModel` instances within the threshold,
+    ///   sorted by closeness (then by ID).
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    public static func findModels(
+        fuzzyMatching query: String,
+        editDistance threshold: Int = 5
+    ) throws -> [AcervoModel] {
+        try findModels(fuzzyMatching: query, editDistance: threshold, in: sharedModelsDirectory)
+    }
+
+    /// Finds all models whose IDs are within the given Levenshtein edit distance,
+    /// scanning the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - query: The search string to match against model IDs.
+    ///   - threshold: The maximum edit distance to consider a match.
+    ///   - baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: An array of `AcervoModel` instances within the threshold,
+    ///   sorted by closeness (then by ID).
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    static func findModels(
+        fuzzyMatching query: String,
+        editDistance threshold: Int = 5,
+        in baseDirectory: URL
+    ) throws -> [AcervoModel] {
+        let allModels = try listModels(in: baseDirectory)
+        let strippedQuery = stripCommonPrefixes(query)
+
+        // Calculate distance for each model and filter by threshold
+        var matches: [(model: AcervoModel, distance: Int)] = []
+
+        for model in allModels {
+            let strippedId = stripCommonPrefixes(model.id)
+            let distance = levenshteinDistance(strippedQuery, strippedId)
+            if distance <= threshold {
+                matches.append((model: model, distance: distance))
+            }
+        }
+
+        // Sort by distance (closest first), then by ID for ties
+        matches.sort { lhs, rhs in
+            if lhs.distance != rhs.distance {
+                return lhs.distance < rhs.distance
+            }
+            return lhs.model.id < rhs.model.id
+        }
+
+        return matches.map(\.model)
+    }
+
+    /// Returns the single closest model to the query string by edit distance,
+    /// or `nil` if no model is within the threshold.
+    ///
+    /// This is a convenience wrapper around `findModels(fuzzyMatching:editDistance:)`
+    /// that returns only the first (closest) result. Useful for "did you mean...?"
+    /// suggestions.
+    ///
+    /// - Parameters:
+    ///   - query: The search string to match against model IDs.
+    ///   - threshold: The maximum edit distance to consider a match. Defaults to 5.
+    /// - Returns: The closest `AcervoModel` within the threshold, or `nil`.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    public static func closestModel(
+        to query: String,
+        editDistance threshold: Int = 5
+    ) throws -> AcervoModel? {
+        try closestModel(to: query, editDistance: threshold, in: sharedModelsDirectory)
+    }
+
+    /// Returns the single closest model to the query string, scanning the
+    /// specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameters:
+    ///   - query: The search string to match against model IDs.
+    ///   - threshold: The maximum edit distance to consider a match.
+    ///   - baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: The closest `AcervoModel` within the threshold, or `nil`.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    static func closestModel(
+        to query: String,
+        editDistance threshold: Int = 5,
+        in baseDirectory: URL
+    ) throws -> AcervoModel? {
+        let matches = try findModels(
+            fuzzyMatching: query,
+            editDistance: threshold,
+            in: baseDirectory
+        )
+        return matches.first
+    }
+}
+
+// MARK: - Model Families
+
+extension Acervo {
+
+    /// Groups all models by their family name.
+    ///
+    /// Models with the same `familyName` (org + base model name, with
+    /// quantization/size/variant suffixes stripped) are grouped together.
+    /// Models within each family are sorted alphabetically by ID.
+    ///
+    /// - Returns: A dictionary mapping family names to arrays of models.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    public static func modelFamilies() throws -> [String: [AcervoModel]] {
+        try modelFamilies(in: sharedModelsDirectory)
+    }
+
+    /// Groups all models by their family name, scanning the specified
+    /// base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameter baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: A dictionary mapping family names to arrays of models.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    static func modelFamilies(in baseDirectory: URL) throws -> [String: [AcervoModel]] {
+        let allModels = try listModels(in: baseDirectory)
+
+        var families: [String: [AcervoModel]] = [:]
+
+        for model in allModels {
+            let family = model.familyName
+            families[family, default: []].append(model)
+        }
+
+        // Sort models within each family by ID
+        for key in families.keys {
+            families[key]?.sort { $0.id < $1.id }
+        }
+
+        return families
+    }
+}
+
 // MARK: - Directory Size Calculation
 
 extension Acervo {
