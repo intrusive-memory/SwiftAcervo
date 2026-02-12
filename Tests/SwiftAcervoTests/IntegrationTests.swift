@@ -451,4 +451,159 @@ struct SubdirectoryFileDownloadIntegrationTests {
     }
 }
 
+// MARK: - HTTP Error Handling Tests
+
+@Suite("Integration: HTTP Error Handling")
+struct HTTPErrorHandlingIntegrationTests {
+
+    @Test("404 error for nonexistent file in a real model")
+    func notFoundForNonexistentFile() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        do {
+            try await Acervo.download(
+                testModelId,
+                files: ["this_file_definitely_does_not_exist_12345.json"],
+                in: tempBase
+            )
+            #expect(Bool(false), "Expected download to throw for nonexistent file")
+        } catch let error as AcervoError {
+            switch error {
+            case .downloadFailed(let fileName, let statusCode):
+                // HuggingFace returns 404 for missing files
+                #expect(statusCode == 404, "Expected 404 status code, got \(statusCode)")
+                #expect(
+                    fileName.contains("this_file_definitely_does_not_exist_12345"),
+                    "Error should include the file name"
+                )
+            default:
+                // Some 404s may redirect and result in different errors;
+                // as long as it is an AcervoError, the handling is correct.
+                break
+            }
+            // Verify the error has a descriptive message
+            let description = error.errorDescription ?? ""
+            #expect(!description.isEmpty, "Error should have a descriptive message")
+        } catch {
+            #expect(Bool(false), "Expected AcervoError but got \(type(of: error)): \(error)")
+        }
+    }
+
+    @Test("404 error for completely nonexistent model")
+    func notFoundForNonexistentModel() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        let fakeModelId = "nonexistent-org-xyz/nonexistent-model-abc-99999"
+
+        do {
+            try await Acervo.download(
+                fakeModelId,
+                files: ["config.json"],
+                in: tempBase
+            )
+            #expect(Bool(false), "Expected download to throw for nonexistent model")
+        } catch let error as AcervoError {
+            switch error {
+            case .downloadFailed(_, let statusCode):
+                // HuggingFace returns 401 or 404 for nonexistent repos
+                #expect(
+                    statusCode == 404 || statusCode == 401,
+                    "Expected 404 or 401 for nonexistent model, got \(statusCode)"
+                )
+            case .networkError:
+                // Network errors are also acceptable (e.g., DNS resolution
+                // failures for unusual hostnames)
+                break
+            default:
+                break
+            }
+            let description = error.errorDescription ?? ""
+            #expect(!description.isEmpty)
+        } catch {
+            #expect(Bool(false), "Expected AcervoError but got \(type(of: error)): \(error)")
+        }
+    }
+
+    @Test("Network error for unreachable host")
+    func networkErrorForUnreachableHost() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        // Use the downloader directly with an unreachable URL
+        let unreachableURL = URL(string: "https://localhost:1/fake/path/file.json")!
+        let destination = tempBase.appendingPathComponent("output.json")
+
+        do {
+            try await AcervoDownloader.downloadFile(
+                from: unreachableURL,
+                to: destination,
+                token: nil
+            )
+            #expect(Bool(false), "Expected download to throw for unreachable host")
+        } catch let error as AcervoError {
+            if case .networkError(let underlyingError) = error {
+                // Verify the underlying error has useful information
+                let desc = underlyingError.localizedDescription
+                #expect(!desc.isEmpty, "Underlying network error should be descriptive")
+            } else {
+                #expect(Bool(false), "Expected networkError but got \(error)")
+            }
+        } catch {
+            #expect(Bool(false), "Expected AcervoError but got \(type(of: error)): \(error)")
+        }
+    }
+
+    @Test("Error descriptions are non-empty for all download error types")
+    func errorDescriptionsAreDescriptive() {
+        let downloadFailed = AcervoError.downloadFailed(
+            fileName: "model.safetensors",
+            statusCode: 404
+        )
+        #expect(downloadFailed.errorDescription?.contains("404") == true)
+        #expect(downloadFailed.errorDescription?.contains("model.safetensors") == true)
+
+        let invalidId = AcervoError.invalidModelId("bad-id")
+        #expect(invalidId.errorDescription?.contains("bad-id") == true)
+        #expect(invalidId.errorDescription?.contains("org/repo") == true)
+
+        let notFound = AcervoError.modelNotFound("org/missing-model")
+        #expect(notFound.errorDescription?.contains("org/missing-model") == true)
+    }
+
+    @Test("downloadFile with progress throws descriptive error for 404")
+    func downloadFileWithProgressThrows404() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        let url = AcervoDownloader.buildURL(
+            modelId: testModelId,
+            fileName: "this_file_does_not_exist_xyz.json"
+        )
+        let destination = tempBase.appendingPathComponent("output.json")
+
+        do {
+            try await AcervoDownloader.downloadFile(
+                from: url,
+                to: destination,
+                token: nil,
+                fileName: "this_file_does_not_exist_xyz.json",
+                fileIndex: 0,
+                totalFiles: 1,
+                progress: nil
+            )
+            #expect(Bool(false), "Expected download to throw")
+        } catch let error as AcervoError {
+            if case .downloadFailed(_, let statusCode) = error {
+                #expect(statusCode == 404, "Expected 404 for missing file")
+            }
+            // Other AcervoError types are also acceptable (e.g., networkError
+            // if the request fails at the transport level)
+        } catch {
+            #expect(Bool(false), "Expected AcervoError but got \(type(of: error))")
+        }
+    }
+}
+
 #endif
