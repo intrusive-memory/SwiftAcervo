@@ -45,4 +45,25 @@ public struct AcervoDownloadProgress: Sendable {
         self.fileIndex = fileIndex
         self.totalFiles = totalFiles
     }
+
+    /// The overall progress of the entire download operation as a value from 0.0 to 1.0.
+    ///
+    /// Combines file-level progress (which file we are on) with byte-level progress
+    /// (how much of the current file has been downloaded). If `totalBytes` is `nil`,
+    /// the current file's byte progress is treated as 0.0.
+    ///
+    /// The result is clamped to the range `0.0...1.0`.
+    public var overallProgress: Double {
+        guard totalFiles > 0 else { return 0.0 }
+
+        let fileProgress: Double
+        if let totalBytes, totalBytes > 0 {
+            fileProgress = Double(bytesDownloaded) / Double(totalBytes)
+        } else {
+            fileProgress = 0.0
+        }
+
+        let raw = (Double(fileIndex) + fileProgress) / Double(totalFiles)
+        return min(max(raw, 0.0), 1.0)
+    }
 }
