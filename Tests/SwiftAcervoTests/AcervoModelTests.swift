@@ -128,4 +128,118 @@ struct AcervoModelTests {
         let model = makeModel(id: "mlx-community/Phi-3-mini-4k-instruct-4bit")
         #expect(model.familyName == "mlx-community/Phi-3-mini-4k")
     }
+
+    // MARK: - formattedSize Edge Cases
+
+    @Test("formattedSize for exactly 1 KB boundary")
+    func formattedSizeExact1KB() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1024)
+        let size = model.formattedSize
+        #expect(size == "1.0 KB")
+    }
+
+    @Test("formattedSize for exactly 1 MB boundary")
+    func formattedSizeExact1MB() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1_048_576) // 1024 * 1024
+        let size = model.formattedSize
+        #expect(size == "1.0 MB")
+    }
+
+    @Test("formattedSize for exactly 1 GB boundary")
+    func formattedSizeExact1GB() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1_073_741_824) // 1024^3
+        let size = model.formattedSize
+        #expect(size == "1.0 GB")
+    }
+
+    @Test("formattedSize for terabyte-scale value")
+    func formattedSizeTB() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1_099_511_627_776) // 1024^4 = 1 TB
+        let size = model.formattedSize
+        // Should display as 1024.0 GB since the implementation only goes up to GB
+        #expect(size == "1024.0 GB")
+    }
+
+    @Test("formattedSize for 1 byte")
+    func formattedSizeOneByte() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1)
+        #expect(model.formattedSize == "1 bytes")
+    }
+
+    @Test("formattedSize for just under 1 KB")
+    func formattedSizeJustUnder1KB() {
+        let model = makeModel(id: "org/repo", sizeBytes: 1023)
+        #expect(model.formattedSize == "1023 bytes")
+    }
+
+    // MARK: - baseName Edge Cases
+
+    @Test("baseName for model without any suffixes")
+    func baseNameNoSuffixes() {
+        let model = makeModel(id: "mlx-community/snac_24khz")
+        #expect(model.baseName == "snac_24khz")
+    }
+
+    @Test("baseName for model with only quantization suffix")
+    func baseNameOnlyQuantization() {
+        let model = makeModel(id: "org/SimpleModel-4bit")
+        #expect(model.baseName == "SimpleModel")
+    }
+
+    @Test("baseName for model with only size suffix")
+    func baseNameOnlySize() {
+        let model = makeModel(id: "org/Llama-7B")
+        #expect(model.baseName == "Llama")
+    }
+
+    @Test("baseName for model with only variant suffix")
+    func baseNameOnlyVariant() {
+        let model = makeModel(id: "org/Model-Instruct")
+        #expect(model.baseName == "Model")
+    }
+
+    @Test("baseName for model without slash uses full ID")
+    func baseNameNoSlash() {
+        let model = AcervoModel(
+            id: "just-a-model-name-4bit",
+            path: URL(fileURLWithPath: "/tmp/test"),
+            sizeBytes: 0,
+            downloadDate: Date()
+        )
+        #expect(model.baseName == "just-a-model-name")
+    }
+
+    // MARK: - familyName Edge Cases
+
+    @Test("familyName for model without suffixes")
+    func familyNameNoSuffixes() {
+        let model = makeModel(id: "mlx-community/snac_24khz")
+        #expect(model.familyName == "mlx-community/snac_24khz")
+    }
+
+    @Test("familyName for different quantizations produces same family")
+    func familyNameSameForQuantizations() {
+        let model4bit = makeModel(id: "mlx-community/Model-7B-Instruct-4bit")
+        let model8bit = makeModel(id: "mlx-community/Model-7B-Instruct-8bit")
+        #expect(model4bit.familyName == model8bit.familyName)
+    }
+
+    @Test("familyName for different sizes produces same family")
+    func familyNameSameForSizes() {
+        let model7B = makeModel(id: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        let model70B = makeModel(id: "mlx-community/Qwen2.5-70B-Instruct-4bit")
+        #expect(model7B.familyName == model70B.familyName)
+        #expect(model7B.familyName == "mlx-community/Qwen2.5")
+    }
+
+    @Test("familyName for model without slash returns baseName only")
+    func familyNameNoSlash() {
+        let model = AcervoModel(
+            id: "standalone-model-4bit",
+            path: URL(fileURLWithPath: "/tmp/test"),
+            sizeBytes: 0,
+            downloadDate: Date()
+        )
+        #expect(model.familyName == "standalone-model")
+    }
 }
