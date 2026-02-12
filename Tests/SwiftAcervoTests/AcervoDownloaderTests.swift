@@ -474,4 +474,117 @@ struct AcervoDownloaderTests {
         #expect(reports[2].fileName == "file3.json")
         #expect(reports[2].totalFiles == 3)
     }
+
+    @Test("downloadFiles skips existing file and preserves its content")
+    func downloadFilesSkipsPreservesContent() async throws {
+        let tempBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AcervoDownloaderTests-preserve-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        try FileManager.default.createDirectory(
+            at: tempBase,
+            withIntermediateDirectories: true
+        )
+
+        // Write known content to the file
+        let knownContent = "{\"key\": \"preserved_value\"}"
+        let file = tempBase.appendingPathComponent("data.json")
+        try knownContent.write(to: file, atomically: true, encoding: .utf8)
+
+        // Get the modification date before the call
+        let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
+        let modDateBefore = attrs[.modificationDate] as? Date
+
+        // Small delay to ensure any re-download would produce a different mod date
+        try await Task.sleep(for: .milliseconds(50))
+
+        // Skip since file exists
+        try await AcervoDownloader.downloadFiles(
+            modelId: "test/preserve-model",
+            files: ["data.json"],
+            destination: tempBase,
+            token: nil,
+            force: false,
+            progress: nil
+        )
+
+        // Verify content is unchanged
+        let afterContent = try String(contentsOf: file, encoding: .utf8)
+        #expect(afterContent == knownContent)
+
+        // Verify modification date is unchanged (file was not touched)
+        let attrsAfter = try FileManager.default.attributesOfItem(atPath: file.path)
+        let modDateAfter = attrsAfter[.modificationDate] as? Date
+        #expect(modDateBefore == modDateAfter)
+    }
+
+    @Test("downloadFiles skips subdirectory file when it exists")
+    func downloadFilesSkipsSubdirectoryFile() async throws {
+        let tempBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AcervoDownloaderTests-subdir-skip-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        // Create destination with a subdirectory file
+        let subdir = tempBase.appendingPathComponent("speech_tokenizer")
+        try FileManager.default.createDirectory(
+            at: subdir,
+            withIntermediateDirectories: true
+        )
+        let subdirFile = subdir.appendingPathComponent("config.json")
+        try "subdir content".write(to: subdirFile, atomically: true, encoding: .utf8)
+
+        let collector = ProgressCollector()
+
+        // Should skip the subdirectory file since it exists
+        try await AcervoDownloader.downloadFiles(
+            modelId: "test/subdir-model",
+            files: ["speech_tokenizer/config.json"],
+            destination: tempBase,
+            token: nil,
+            force: false,
+            progress: { report in
+                Task { await collector.append(report) }
+            }
+        )
+
+        // Content should be unchanged
+        let content = try String(contentsOf: subdirFile, encoding: .utf8)
+        #expect(content == "subdir content")
+
+        // Allow async tasks to complete
+        try await Task.sleep(for: .milliseconds(50))
+
+        let reports = await collector.getReports()
+        #expect(reports.count == 1)
+        #expect(reports[0].fileName == "speech_tokenizer/config.json")
+    }
+
+    @Test("downloadFiles does not skip missing files when force is false")
+    func downloadFilesDoesNotSkipMissing() async throws {
+        let tempBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AcervoDownloaderTests-no-skip-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        try FileManager.default.createDirectory(
+            at: tempBase,
+            withIntermediateDirectories: true
+        )
+
+        // File does NOT exist, so even with force=false it should try to download.
+        // The download will fail because the model doesn't exist, proving the attempt.
+        var downloadAttempted = false
+        do {
+            try await AcervoDownloader.downloadFiles(
+                modelId: "nonexistent-org/missing-model-xyz",
+                files: ["missing.json"],
+                destination: tempBase,
+                token: nil,
+                force: false,
+                progress: nil
+            )
+        } catch {
+            downloadAttempted = true
+        }
+        #expect(downloadAttempted, "Missing files should trigger download even with force=false")
+    }
 }
