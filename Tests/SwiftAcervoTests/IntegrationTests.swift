@@ -271,4 +271,75 @@ struct ForceReDownloadIntegrationTests {
     }
 }
 
+// MARK: - Auth Token Tests
+
+@Suite("Integration: Auth Token Header")
+struct AuthTokenIntegrationTests {
+
+    @Test("buildRequest includes Bearer token in Authorization header")
+    func buildRequestIncludesToken() {
+        let url = AcervoDownloader.buildURL(
+            modelId: testModelId,
+            fileName: "config.json"
+        )
+        let token = "hf_test_token_abcdef123456"
+        let request = AcervoDownloader.buildRequest(from: url, token: token)
+
+        #expect(request.url == url)
+        #expect(
+            request.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)"
+        )
+    }
+
+    @Test("buildRequest omits Authorization header when token is nil")
+    func buildRequestOmitsTokenWhenNil() {
+        let url = AcervoDownloader.buildURL(
+            modelId: testModelId,
+            fileName: "config.json"
+        )
+        let request = AcervoDownloader.buildRequest(from: url, token: nil)
+
+        #expect(request.url == url)
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test("Download with a bogus token still works for public models")
+    func downloadWithBogusTokenSucceeds() async throws {
+        let tempBase = try makeTempSharedModels()
+        defer { cleanupTempDirectory(tempBase) }
+
+        // Public models should be downloadable even with a token present.
+        // The token is included in the request but the server ignores it
+        // for public models.
+        try await Acervo.download(
+            testModelId,
+            files: ["config.json"],
+            token: "hf_bogus_token_for_testing",
+            in: tempBase
+        )
+
+        let slug = Acervo.slugify(testModelId)
+        let configPath = tempBase
+            .appendingPathComponent(slug)
+            .appendingPathComponent("config.json")
+        #expect(FileManager.default.fileExists(atPath: configPath.path))
+
+        // Verify the file is valid JSON
+        let data = try Data(contentsOf: configPath)
+        let json = try JSONSerialization.jsonObject(with: data)
+        #expect(json is [String: Any])
+    }
+
+    @Test("buildRequest preserves token with special characters")
+    func buildRequestPreservesSpecialChars() {
+        let url = URL(string: "https://huggingface.co/test/model/resolve/main/f.json")!
+        let token = "hf_ABC+/=xyz"
+        let request = AcervoDownloader.buildRequest(from: url, token: token)
+
+        #expect(
+            request.value(forHTTPHeaderField: "Authorization") == "Bearer hf_ABC+/=xyz"
+        )
+    }
+}
+
 #endif
