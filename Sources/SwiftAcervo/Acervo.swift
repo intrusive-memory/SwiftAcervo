@@ -113,6 +113,94 @@ extension Acervo {
     }
 }
 
+// MARK: - Model Discovery
+
+extension Acervo {
+
+    /// Lists all valid models in the shared models directory.
+    ///
+    /// Scans `sharedModelsDirectory` for subdirectories containing `config.json`,
+    /// extracts model metadata, and returns them sorted alphabetically by ID.
+    ///
+    /// - Returns: An array of `AcervoModel` instances for all valid models,
+    ///   sorted by model ID.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    public static func listModels() throws -> [AcervoModel] {
+        try listModels(in: sharedModelsDirectory)
+    }
+
+    /// Lists all valid models in the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameter baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: An array of `AcervoModel` instances for all valid models,
+    ///   sorted by model ID.
+    /// - Throws: Errors from `FileManager` if the directory cannot be read.
+    static func listModels(in baseDirectory: URL) throws -> [AcervoModel] {
+        let fm = FileManager.default
+
+        // If the base directory doesn't exist, return empty array
+        guard fm.fileExists(atPath: baseDirectory.path) else {
+            return []
+        }
+
+        let contents = try fm.contentsOfDirectory(
+            at: baseDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        var models: [AcervoModel] = []
+
+        for itemURL in contents {
+            // Only consider directories
+            guard let resourceValues = try? itemURL.resourceValues(
+                forKeys: [.isDirectoryKey]
+            ), resourceValues.isDirectory == true else {
+                continue
+            }
+
+            // Must contain config.json to be a valid model
+            let configURL = itemURL.appendingPathComponent("config.json")
+            guard fm.fileExists(atPath: configURL.path) else {
+                continue
+            }
+
+            // Extract model ID from directory name by reverse slugify:
+            // Replace the first "_" with "/" to reconstruct "org/repo"
+            let dirName = itemURL.lastPathComponent
+            guard let firstUnderscore = dirName.firstIndex(of: "_") else {
+                continue // Skip directories without underscore (invalid slug)
+            }
+            let org = String(dirName[dirName.startIndex..<firstUnderscore])
+            let repo = String(dirName[dirName.index(after: firstUnderscore)...])
+            let modelId = "\(org)/\(repo)"
+
+            // Get creation date from directory attributes
+            let attributes = try? fm.attributesOfItem(atPath: itemURL.path)
+            let downloadDate = (attributes?[.creationDate] as? Date) ?? Date()
+
+            // Calculate total size
+            let size = (try? directorySize(at: itemURL)) ?? 0
+
+            let model = AcervoModel(
+                id: modelId,
+                path: itemURL,
+                sizeBytes: size,
+                downloadDate: downloadDate
+            )
+            models.append(model)
+        }
+
+        // Sort alphabetically by ID
+        models.sort { $0.id < $1.id }
+
+        return models
+    }
+}
+
 // MARK: - Directory Size Calculation
 
 extension Acervo {
