@@ -89,3 +89,47 @@ extension AcervoManager {
         downloadLocks[modelId] == true
     }
 }
+
+// MARK: - Download
+
+extension AcervoManager {
+
+    /// Downloads specific files for a HuggingFace model with per-model locking.
+    ///
+    /// If another download or access operation is in progress for the same model,
+    /// this method waits until the lock is released before proceeding. Downloads
+    /// of different models proceed concurrently without blocking each other.
+    ///
+    /// The lock is automatically released when the download completes or throws,
+    /// via `defer`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - files: An array of file names or relative paths within the model repository.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - force: When `true`, re-downloads files even if they already exist.
+    ///     Defaults to `false`.
+    ///   - progress: An optional callback invoked periodically with download
+    ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   or download-related errors from the underlying `Acervo.download()`.
+    public func download(
+        _ modelId: String,
+        files: [String],
+        token: String? = nil,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        await acquireLock(for: modelId)
+        defer { releaseLock(for: modelId) }
+
+        try await Acervo.download(
+            modelId,
+            files: files,
+            token: token,
+            force: force,
+            progress: progress
+        )
+    }
+}
