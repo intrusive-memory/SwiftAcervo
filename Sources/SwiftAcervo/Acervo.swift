@@ -25,3 +25,21 @@ import Foundation
 /// is provided through static properties and methods. For thread-safe
 /// operations with per-model locking, see `AcervoManager`.
 public enum Acervo {}
+
+// MARK: - Path Resolution
+
+extension Acervo {
+
+    /// The canonical base directory for all shared HuggingFace models.
+    ///
+    /// Returns `~/Library/SharedModels/`. This directory is persistent
+    /// (not in Caches) and survives macOS cleanup operations.
+    ///
+    /// All model directories are stored as direct children of this path,
+    /// named using the slugified HuggingFace model ID.
+    public static var sharedModelsDirectory: URL {
+        FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/SharedModels")
+    }
+}
