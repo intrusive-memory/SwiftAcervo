@@ -199,6 +199,37 @@ extension Acervo {
 
         return models
     }
+
+    /// Returns metadata for a single model identified by its HuggingFace ID.
+    ///
+    /// Scans the shared models directory and returns the model whose ID matches
+    /// the given identifier.
+    ///
+    /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Returns: The `AcervoModel` matching the given ID.
+    /// - Throws: `AcervoError.modelNotFound` if no model with the given ID
+    ///   exists in the shared models directory.
+    public static func modelInfo(_ modelId: String) throws -> AcervoModel {
+        try modelInfo(modelId, in: sharedModelsDirectory)
+    }
+
+    /// Returns metadata for a single model, scanning the specified base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier.
+    ///   - baseDirectory: The directory to scan for model subdirectories.
+    /// - Returns: The `AcervoModel` matching the given ID.
+    /// - Throws: `AcervoError.modelNotFound` if no model with the given ID
+    ///   exists in the specified directory.
+    static func modelInfo(_ modelId: String, in baseDirectory: URL) throws -> AcervoModel {
+        let models = try listModels(in: baseDirectory)
+        guard let model = models.first(where: { $0.id == modelId }) else {
+            throw AcervoError.modelNotFound(modelId)
+        }
+        return model
+    }
 }
 
 // MARK: - Directory Size Calculation
