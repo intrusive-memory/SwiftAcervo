@@ -587,10 +587,11 @@ extension Acervo {
             }
 
             for itemURL in contents {
-                // Only consider directories
+                // Skip symlinks - only migrate actual directories
                 guard let resourceValues = try? itemURL.resourceValues(
-                    forKeys: [.isDirectoryKey]
-                ), resourceValues.isDirectory == true else {
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                ), resourceValues.isDirectory == true,
+                   resourceValues.isSymbolicLink != true else {
                     continue
                 }
 
