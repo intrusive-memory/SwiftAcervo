@@ -98,3 +98,87 @@ extension AcervoDownloader {
         }
     }
 }
+
+// MARK: - File Download
+
+extension AcervoDownloader {
+
+    /// Constructs a `URLRequest` for downloading a file, optionally including
+    /// a Bearer authorization header.
+    ///
+    /// This is extracted as a separate method to enable unit testing of
+    /// request construction without making network calls.
+    ///
+    /// - Parameters:
+    ///   - url: The remote URL to download from.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    /// - Returns: A configured `URLRequest`.
+    static func buildRequest(from url: URL, token: String?) -> URLRequest {
+        var request = URLRequest(url: url)
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        return request
+    }
+
+    /// Downloads a single file from a remote URL to a local destination.
+    ///
+    /// The file is first downloaded to a temporary location, then moved
+    /// atomically to the destination. Intermediate directories at the
+    /// destination are created automatically if they do not exist.
+    ///
+    /// If the server responds with a non-200 HTTP status code, this method
+    /// throws `AcervoError.downloadFailed`. Network-level errors are wrapped
+    /// in `AcervoError.networkError`.
+    ///
+    /// - Parameters:
+    ///   - url: The remote URL to download from.
+    ///   - destination: The local file URL where the downloaded file should be placed.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///     When provided, an `Authorization: Bearer {token}` header is added.
+    /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+    ///   `AcervoError.networkError` for connection failures,
+    ///   `AcervoError.directoryCreationFailed` if intermediate directories
+    ///   cannot be created.
+    static func downloadFile(
+        from url: URL,
+        to destination: URL,
+        token: String?
+    ) async throws {
+        let request = buildRequest(from: url, token: token)
+
+        // Download the file
+        let tempFileURL: URL
+        let response: URLResponse
+        do {
+            (tempFileURL, response) = try await URLSession.shared.download(for: request)
+        } catch {
+            throw AcervoError.networkError(error)
+        }
+
+        // Verify HTTP 200
+        if let httpResponse = response as? HTTPURLResponse,
+           httpResponse.statusCode != 200 {
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: tempFileURL)
+            let fileName = url.lastPathComponent
+            throw AcervoError.downloadFailed(
+                fileName: fileName,
+                statusCode: httpResponse.statusCode
+            )
+        }
+
+        // Ensure the destination's parent directory exists
+        let parentDirectory = destination.deletingLastPathComponent()
+        try ensureDirectory(at: parentDirectory)
+
+        // Remove any existing file at the destination
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+
+        // Move temp file to destination atomically
+        try fm.moveItem(at: tempFileURL, to: destination)
+    }
+}
