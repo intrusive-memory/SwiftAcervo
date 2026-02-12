@@ -36,6 +36,10 @@ import Foundation
 public actor AcervoManager {
 
     /// The shared singleton instance.
+    ///
+    /// ```swift
+    /// let manager = AcervoManager.shared
+    /// ```
     public static let shared = AcervoManager()
 
     /// Per-model download locks. When a model ID maps to `true`, the model
@@ -121,6 +125,10 @@ extension AcervoManager {
     ///
     /// After calling this method, all cached model URLs are discarded.
     /// Subsequent operations will re-resolve model directory paths.
+    ///
+    /// ```swift
+    /// await AcervoManager.shared.clearCache()
+    /// ```
     public func clearCache() {
         urlCache.removeAll()
     }
@@ -133,6 +141,11 @@ extension AcervoManager {
     ///
     /// - Throws: Errors from `FileManager` if the shared models directory
     ///   cannot be read.
+    ///
+    /// ```swift
+    /// try await AcervoManager.shared.preloadModels()
+    /// // URL cache is now warmed for all discovered models
+    /// ```
     public func preloadModels() async throws {
         let models = try Acervo.listModels()
         for model in models {
@@ -181,6 +194,10 @@ extension AcervoManager {
     ///
     /// - Parameter modelId: The HuggingFace model identifier.
     /// - Returns: The download count, or 0 if the model has never been downloaded.
+    ///
+    /// ```swift
+    /// let count = await AcervoManager.shared.getDownloadCount(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// ```
     public func getDownloadCount(for modelId: String) -> Int {
         downloadCount[modelId] ?? 0
     }
@@ -190,6 +207,10 @@ extension AcervoManager {
     ///
     /// - Parameter modelId: The HuggingFace model identifier.
     /// - Returns: The access count, or 0 if the model has never been accessed.
+    ///
+    /// ```swift
+    /// let count = await AcervoManager.shared.getAccessCount(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+    /// ```
     public func getAccessCount(for modelId: String) -> Int {
         accessCount[modelId] ?? 0
     }
@@ -199,6 +220,10 @@ extension AcervoManager {
     ///
     /// Output goes to standard output via `print()`. If no statistics have
     /// been recorded, the report indicates that.
+    ///
+    /// ```swift
+    /// await AcervoManager.shared.printStatisticsReport()
+    /// ```
     public func printStatisticsReport() {
         print("=== AcervoManager Statistics Report ===")
         print("")
@@ -238,6 +263,10 @@ extension AcervoManager {
     }
 
     /// Resets all download and access statistics counters to zero.
+    ///
+    /// ```swift
+    /// await AcervoManager.shared.resetStatistics()
+    /// ```
     public func resetStatistics() {
         downloadCount.removeAll()
         accessCount.removeAll()
@@ -278,6 +307,14 @@ extension AcervoManager {
     ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   or download-related errors from the underlying `Acervo.download()`.
+    ///
+    /// ```swift
+    /// try await AcervoManager.shared.download(
+    ///     "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    ///     files: ["config.json", "model.safetensors"],
+    ///     progress: { p in print("\(p.overallProgress * 100)%") }
+    /// )
+    /// ```
     public func download(
         _ modelId: String,
         files: [String],
@@ -325,6 +362,14 @@ extension AcervoManager {
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   or any error thrown by the `perform` closure. The lock is released
     ///   in all cases.
+    ///
+    /// ```swift
+    /// let configURL = try await AcervoManager.shared.withModelAccess(
+    ///     "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    /// ) { dir in
+    ///     dir.appendingPathComponent("config.json")
+    /// }
+    /// ```
     public func withModelAccess<T: Sendable>(
         _ modelId: String,
         perform: @Sendable (URL) throws -> T
