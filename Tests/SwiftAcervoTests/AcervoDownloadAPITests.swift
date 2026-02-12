@@ -262,4 +262,137 @@ struct AcervoDownloadAPITests {
         // Now it should be available
         #expect(Acervo.isModelAvailable(modelId, in: tempBase))
     }
+
+    // MARK: - deleteModel() Tests
+
+    @Test("deleteModel() removes model directory")
+    func deleteModelRemovesDirectory() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        let modelId = "test-org/deletable-model"
+        let slug = Acervo.slugify(modelId)
+        let modelDir = tempBase.appendingPathComponent(slug)
+
+        // Create fake model
+        try createFakeModel(modelId: modelId, in: tempBase)
+
+        // Verify directory exists
+        #expect(FileManager.default.fileExists(atPath: modelDir.path))
+
+        // Delete the model
+        try Acervo.deleteModel(modelId, in: tempBase)
+
+        // Verify directory no longer exists
+        #expect(!FileManager.default.fileExists(atPath: modelDir.path))
+    }
+
+    @Test("deleteModel() removes directory with multiple files")
+    func deleteModelRemovesMultipleFiles() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        let modelId = "test-org/multi-file-model"
+
+        // Create model with multiple files including subdirectory
+        try createFakeModel(
+            modelId: modelId,
+            in: tempBase,
+            files: [
+                "config.json",
+                "tokenizer.json",
+                "model.safetensors",
+                "speech_tokenizer/config.json"
+            ]
+        )
+
+        let slug = Acervo.slugify(modelId)
+        let modelDir = tempBase.appendingPathComponent(slug)
+        #expect(FileManager.default.fileExists(atPath: modelDir.path))
+
+        // Delete the model
+        try Acervo.deleteModel(modelId, in: tempBase)
+
+        // Verify entire directory tree is gone
+        #expect(!FileManager.default.fileExists(atPath: modelDir.path))
+    }
+
+    @Test("deleteModel() throws modelNotFound if directory doesn't exist")
+    func deleteModelThrowsForNonexistent() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        let modelId = "test-org/nonexistent-model"
+
+        do {
+            try Acervo.deleteModel(modelId, in: tempBase)
+            #expect(Bool(false), "Expected deleteModel to throw modelNotFound")
+        } catch let error as AcervoError {
+            if case .modelNotFound(let id) = error {
+                #expect(id == modelId)
+            } else {
+                #expect(Bool(false), "Expected modelNotFound but got \(error)")
+            }
+        }
+    }
+
+    @Test("deleteModel() validates model ID")
+    func deleteModelValidatesModelId() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        do {
+            try Acervo.deleteModel("no-slash", in: tempBase)
+            #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
+        } catch let error as AcervoError {
+            if case .invalidModelId(let id) = error {
+                #expect(id == "no-slash")
+            } else {
+                #expect(Bool(false), "Expected invalidModelId but got \(error)")
+            }
+        }
+    }
+
+    @Test("deleteModel() throws invalidModelId for multiple slashes")
+    func deleteModelThrowsForMultipleSlashes() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        do {
+            try Acervo.deleteModel("a/b/c", in: tempBase)
+            #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
+        } catch let error as AcervoError {
+            if case .invalidModelId(let id) = error {
+                #expect(id == "a/b/c")
+            } else {
+                #expect(Bool(false), "Expected invalidModelId but got \(error)")
+            }
+        }
+    }
+
+    @Test("deleteModel() does not affect other models")
+    func deleteModelDoesNotAffectOthers() throws {
+        let tempBase = try makeTempBase()
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        let modelToDelete = "test-org/to-delete"
+        let modelToKeep = "test-org/to-keep"
+
+        // Create both models
+        try createFakeModel(modelId: modelToDelete, in: tempBase)
+        try createFakeModel(modelId: modelToKeep, in: tempBase)
+
+        // Delete one model
+        try Acervo.deleteModel(modelToDelete, in: tempBase)
+
+        // Verify the deleted model is gone
+        let deletedDir = tempBase.appendingPathComponent(Acervo.slugify(modelToDelete))
+        #expect(!FileManager.default.fileExists(atPath: deletedDir.path))
+
+        // Verify the other model is untouched
+        let keptDir = tempBase.appendingPathComponent(Acervo.slugify(modelToKeep))
+        #expect(FileManager.default.fileExists(atPath: keptDir.path))
+        let keptConfig = keptDir.appendingPathComponent("config.json")
+        #expect(FileManager.default.fileExists(atPath: keptConfig.path))
+    }
 }
