@@ -48,3 +48,44 @@ public actor AcervoManager {
     /// Private initializer to enforce singleton usage.
     private init() {}
 }
+
+// MARK: - Per-Model Locking
+
+extension AcervoManager {
+
+    /// Acquires an exclusive lock for the specified model ID.
+    ///
+    /// If the model is already locked by another operation, this method
+    /// suspends and polls every 50 milliseconds until the lock becomes
+    /// available. Once acquired, the caller is responsible for releasing
+    /// the lock via `releaseLock(for:)`.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier to lock.
+    private func acquireLock(for modelId: String) async {
+        while downloadLocks[modelId] == true {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        downloadLocks[modelId] = true
+    }
+
+    /// Releases the exclusive lock for the specified model ID.
+    ///
+    /// This should be called (typically via `defer`) after a locked operation
+    /// completes, even if the operation threw an error.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier to unlock.
+    private func releaseLock(for modelId: String) {
+        downloadLocks[modelId] = false
+    }
+
+    /// Returns whether the specified model ID is currently locked.
+    ///
+    /// This is primarily useful for testing to verify that locks are
+    /// properly released after operations complete.
+    ///
+    /// - Parameter modelId: The HuggingFace model identifier to check.
+    /// - Returns: `true` if the model is currently locked.
+    func isLocked(_ modelId: String) -> Bool {
+        downloadLocks[modelId] == true
+    }
+}
