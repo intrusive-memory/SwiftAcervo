@@ -42,4 +42,16 @@ extension Acervo {
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Library/SharedModels")
     }
+
+    /// Converts a HuggingFace model ID to a filesystem-safe directory name.
+    ///
+    /// Replaces all "/" characters with "_". This is the canonical transformation
+    /// used to derive directory names from HuggingFace model identifiers.
+    ///
+    /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Returns: The slugified form (e.g., "mlx-community_Qwen2.5-7B-Instruct-4bit").
+    ///   Returns an empty string if the input is empty.
+    public static func slugify(_ modelId: String) -> String {
+        modelId.replacingOccurrences(of: "/", with: "_")
+    }
 }
