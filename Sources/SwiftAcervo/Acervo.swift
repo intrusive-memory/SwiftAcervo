@@ -638,3 +638,91 @@ extension Acervo {
         return totalSize
     }
 }
+
+// MARK: - Download API
+
+extension Acervo {
+
+    /// Downloads specific files for a HuggingFace model to the canonical
+    /// shared models directory.
+    ///
+    /// Validates the model ID format, creates the model directory if needed,
+    /// and delegates file-level downloading to `AcervoDownloader`. Files that
+    /// already exist at the destination are skipped unless `force` is `true`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - files: An array of file names or relative paths within the model
+    ///     repository (e.g., `["config.json", "speech_tokenizer/config.json"]`).
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - force: When `true`, re-downloads files even if they already exist.
+    ///     Defaults to `false`.
+    ///   - progress: An optional callback invoked periodically with download
+    ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   `AcervoError.directoryCreationFailed` if the model directory cannot be
+    ///   created, or download-related errors from `AcervoDownloader`.
+    public static func download(
+        _ modelId: String,
+        files: [String],
+        token: String? = nil,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        try await download(
+            modelId,
+            files: files,
+            token: token,
+            force: force,
+            progress: progress,
+            in: sharedModelsDirectory
+        )
+    }
+
+    /// Downloads specific files for a HuggingFace model to the specified
+    /// base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - modelId: A HuggingFace model identifier in "org/repo" format.
+    ///   - files: An array of file names or relative paths within the model repository.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - force: When `true`, re-downloads files even if they already exist.
+    ///   - progress: An optional progress callback.
+    ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
+    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
+    ///   or download-related errors from `AcervoDownloader`.
+    static func download(
+        _ modelId: String,
+        files: [String],
+        token: String? = nil,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+        in baseDirectory: URL
+    ) async throws {
+        // Validate model ID format (must contain exactly one "/")
+        let slashCount = modelId.filter { $0 == "/" }.count
+        guard slashCount == 1 else {
+            throw AcervoError.invalidModelId(modelId)
+        }
+
+        // Compute destination directory
+        let destination = baseDirectory.appendingPathComponent(slugify(modelId))
+
+        // Create directory if needed
+        try AcervoDownloader.ensureDirectory(at: destination)
+
+        // Delegate to AcervoDownloader for actual file downloads
+        try await AcervoDownloader.downloadFiles(
+            modelId: modelId,
+            files: files,
+            destination: destination,
+            token: token,
+            force: force,
+            progress: progress
+        )
+    }
+}
