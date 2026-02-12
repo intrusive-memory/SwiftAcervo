@@ -72,3 +72,24 @@ extension Acervo {
         return sharedModelsDirectory.appendingPathComponent(slugify(modelId))
     }
 }
+
+// MARK: - Availability
+
+extension Acervo {
+
+    /// Checks whether a model is available locally by verifying the presence
+    /// of `config.json` in its model directory.
+    ///
+    /// This method never throws. If the model ID is invalid or the directory
+    /// does not exist, it returns `false`.
+    ///
+    /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Returns: `true` if the model directory contains a `config.json` file.
+    public static func isModelAvailable(_ modelId: String) -> Bool {
+        guard let dir = try? modelDirectory(for: modelId) else {
+            return false
+        }
+        let configPath = dir.appendingPathComponent("config.json").path
+        return FileManager.default.fileExists(atPath: configPath)
+    }
+}
