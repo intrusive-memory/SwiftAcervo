@@ -2,9 +2,12 @@ import Testing
 import Foundation
 @testable import SwiftAcervo
 
-/// Tests for AcervoManager actor, focusing on per-model locking serialization
-/// and concurrent access behavior.
-@Suite("AcervoManager Tests")
+/// Tests for AcervoManager actor, focusing on per-model locking serialization,
+/// concurrent access behavior, URL caching, and statistics tracking.
+///
+/// Serialized because tests share the `AcervoManager.shared` singleton
+/// and its mutable cache/statistics state.
+@Suite("AcervoManager Tests", .serialized)
 struct AcervoManagerTests {
 
     // MARK: - Singleton
@@ -362,6 +365,245 @@ struct AcervoManagerTests {
         let minimumExpected: Duration = .milliseconds(Int(workDuration * 1500))
         #expect(sameModelDuration >= minimumExpected,
                 "Serialized operations (\(sameModelDuration)) should take at least \(minimumExpected)")
+    }
+
+    // MARK: - URL Cache Tests
+
+    @Test("URL cache stores and retrieves correctly")
+    func urlCacheStoresAndRetrieves() async throws {
+        let manager = AcervoManager.shared
+
+        // Use a unique model ID to avoid interference from other tests
+        let uniqueId = UUID().uuidString.prefix(8)
+
+        // Create a temporary directory with mock model directories containing config.json
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acervo-cache-test-\(uniqueId)")
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: tempDir) }
+
+        // Create a mock model directory with config.json
+        let modelId = "test-org/cache-model-\(uniqueId)"
+        let slug = Acervo.slugify(modelId)
+        let modelDir = tempDir.appendingPathComponent(slug)
+        try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        try "{}".write(
+            to: modelDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        // Record count before preloading
+        let countBefore = await manager.cacheCount()
+
+        // Preload the cache from the temp directory
+        try await manager.preloadModels(in: tempDir)
+
+        // Verify the model is cached
+        let cached = await manager.isCached(modelId)
+        #expect(cached, "Model should be present in cache after preloading")
+
+        // Verify cache count increased
+        let countAfter = await manager.cacheCount()
+        #expect(countAfter > countBefore, "Cache count should increase after preloading")
+    }
+
+    @Test("clearCache() empties cache")
+    func clearCacheEmptiesCache() async throws {
+        let manager = AcervoManager.shared
+
+        // Create a temporary directory with a mock model
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acervo-clear-cache-test-\(UUID().uuidString)")
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: tempDir) }
+
+        let modelDir = tempDir.appendingPathComponent("test-org_clear-cache-model")
+        try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        try "{}".write(
+            to: modelDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        // Preload to populate cache
+        try await manager.preloadModels(in: tempDir)
+
+        let cachedBefore = await manager.isCached("test-org/clear-cache-model")
+        #expect(cachedBefore, "Model should be cached after preloading")
+
+        // Clear the cache
+        await manager.clearCache()
+
+        // Verify cache is empty
+        let cachedAfter = await manager.isCached("test-org/clear-cache-model")
+        #expect(!cachedAfter, "Model should not be cached after clearCache()")
+
+        let countAfter = await manager.cacheCount()
+        #expect(countAfter == 0, "Cache count should be 0 after clearCache()")
+    }
+
+    @Test("preloadModels() populates cache for models in temp directory")
+    func preloadModelsPopulatesCache() async throws {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+
+        // Create a temporary directory with multiple mock models
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("acervo-preload-test-\(uniqueId)")
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: tempDir) }
+
+        // Create three model directories with unique names
+        let modelIds = [
+            "org-a/preload-model-\(uniqueId)-one",
+            "org-a/preload-model-\(uniqueId)-two",
+            "org-b/preload-model-\(uniqueId)-three"
+        ]
+
+        for modelId in modelIds {
+            let slug = Acervo.slugify(modelId)
+            let modelDir = tempDir.appendingPathComponent(slug)
+            try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
+            try "{}".write(
+                to: modelDir.appendingPathComponent("config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        // Record count before preloading
+        let countBefore = await manager.cacheCount()
+
+        // Preload models
+        try await manager.preloadModels(in: tempDir)
+
+        // Verify all three models are cached
+        for modelId in modelIds {
+            let cached = await manager.isCached(modelId)
+            #expect(cached, "Model \(modelId) should be cached after preloading")
+        }
+
+        // Verify cache grew by at least 3
+        let countAfter = await manager.cacheCount()
+        #expect(countAfter >= countBefore + 3,
+                "Cache should have at least 3 more entries after preloading")
+    }
+
+    // MARK: - Statistics Tests
+
+    @Test("Download count increments after download()")
+    func downloadCountIncrements() async throws {
+        let manager = AcervoManager.shared
+        // Use a unique model ID to avoid interference from other tests
+        let uniqueId = UUID().uuidString.prefix(8)
+        let modelId = "test-org/download-stats-\(uniqueId)"
+
+        // Record count before (should be 0 for this unique model)
+        let countBefore = await manager.getDownloadCount(for: modelId)
+
+        // The download will fail (no real network), but the counter
+        // should still increment because tracking happens before the
+        // network call
+        do {
+            try await manager.download(modelId, files: ["config.json"])
+        } catch {
+            // Expected -- no real server to download from
+        }
+
+        let countAfter = await manager.getDownloadCount(for: modelId)
+        #expect(countAfter == countBefore + 1,
+                "Download count should increment by 1 after download()")
+    }
+
+    @Test("Access count increments after withModelAccess()")
+    func accessCountIncrements() async throws {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+        let modelId = "test-org/access-stats-\(uniqueId)"
+
+        let countBefore = await manager.getAccessCount(for: modelId)
+
+        // withModelAccess will succeed (provides URL to closure)
+        let _ = try await manager.withModelAccess(modelId) { url -> String in
+            return url.lastPathComponent
+        }
+
+        let countAfter = await manager.getAccessCount(for: modelId)
+        #expect(countAfter == countBefore + 1,
+                "Access count should increment by 1 after withModelAccess()")
+    }
+
+    @Test("resetStatistics() clears all counters")
+    func resetStatisticsClearsCounters() async throws {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+        let modelId = "test-org/reset-stats-\(uniqueId)"
+
+        // Perform some operations to generate statistics
+        let _ = try? await manager.withModelAccess(modelId) { _ -> Bool in true }
+        do {
+            try await manager.download(modelId, files: ["config.json"])
+        } catch {
+            // Expected
+        }
+
+        // Verify counters are non-zero before reset
+        let downloadBefore = await manager.getDownloadCount(for: modelId)
+        let accessBefore = await manager.getAccessCount(for: modelId)
+        #expect(downloadBefore > 0, "Download count should be > 0 before reset")
+        #expect(accessBefore > 0, "Access count should be > 0 before reset")
+
+        // Reset statistics
+        await manager.resetStatistics()
+
+        // Verify counters are zero
+        let downloadAfter = await manager.getDownloadCount(for: modelId)
+        let accessAfter = await manager.getAccessCount(for: modelId)
+        #expect(downloadAfter == 0, "Download count should be 0 after reset")
+        #expect(accessAfter == 0, "Access count should be 0 after reset")
+    }
+
+    @Test("getDownloadCount returns 0 for unknown model")
+    func downloadCountZeroForUnknownModel() async {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+        let count = await manager.getDownloadCount(for: "unknown-org/never-downloaded-\(uniqueId)")
+        #expect(count == 0, "Download count should be 0 for a model that was never downloaded")
+    }
+
+    @Test("getAccessCount returns 0 for unknown model")
+    func accessCountZeroForUnknownModel() async {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+        let count = await manager.getAccessCount(for: "unknown-org/never-accessed-\(uniqueId)")
+        #expect(count == 0, "Access count should be 0 for a model that was never accessed")
+    }
+
+    @Test("printStatisticsReport() executes without error")
+    func printStatisticsReportExecutes() async throws {
+        let manager = AcervoManager.shared
+        let uniqueId = UUID().uuidString.prefix(8)
+        let modelA = "test-org/report-model-a-\(uniqueId)"
+        let modelB = "test-org/report-model-b-\(uniqueId)"
+
+        // Record baseline counts for these unique model IDs (should be 0)
+        let baseA = await manager.getAccessCount(for: modelA)
+        let baseB = await manager.getAccessCount(for: modelB)
+
+        // Perform a few operations
+        let _ = try? await manager.withModelAccess(modelA) { _ -> Bool in true }
+        let _ = try? await manager.withModelAccess(modelA) { _ -> Bool in true }
+        let _ = try? await manager.withModelAccess(modelB) { _ -> Bool in true }
+
+        // printStatisticsReport should not throw or crash
+        await manager.printStatisticsReport()
+
+        // Verify the access counts incremented correctly
+        let countA = await manager.getAccessCount(for: modelA)
+        let countB = await manager.getAccessCount(for: modelB)
+        #expect(countA == baseA + 2, "Model A should have 2 more accesses")
+        #expect(countB == baseB + 1, "Model B should have 1 more access")
     }
 }
 
