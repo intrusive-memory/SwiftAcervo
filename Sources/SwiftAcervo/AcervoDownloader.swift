@@ -218,11 +218,11 @@ extension AcervoDownloader {
     ) async throws {
         let request = buildRequest(from: url, token: token)
 
-        // Use bytes API for streaming progress
-        let bytes: URLSession.AsyncBytes
+        // Download the file to a temp location
+        let tempFileURL: URL
         let response: URLResponse
         do {
-            (bytes, response) = try await URLSession.shared.bytes(for: request)
+            (tempFileURL, response) = try await URLSession.shared.download(for: request)
         } catch {
             throw AcervoError.networkError(error)
         }
@@ -230,6 +230,8 @@ extension AcervoDownloader {
         // Verify HTTP 200
         if let httpResponse = response as? HTTPURLResponse,
            httpResponse.statusCode != 200 {
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: tempFileURL)
             let name = url.lastPathComponent
             throw AcervoError.downloadFailed(
                 fileName: name,
@@ -237,74 +239,33 @@ extension AcervoDownloader {
             )
         }
 
-        // Get expected content length (may be -1 / unknown)
-        let expectedLength = response.expectedContentLength
-        let totalBytes: Int64? = expectedLength > 0 ? expectedLength : nil
-
-        // Ensure the destination's parent directory exists
-        let parentDirectory = destination.deletingLastPathComponent()
-        try ensureDirectory(at: parentDirectory)
-
-        // Write to a temporary file while streaming
-        let tempFileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-
-        FileManager.default.createFile(atPath: tempFileURL.path, contents: nil)
-        let fileHandle = try FileHandle(forWritingTo: tempFileURL)
-        defer { try? fileHandle.close() }
-
-        var bytesDownloaded: Int64 = 0
-        // Buffer size for progress reporting (64 KB chunks)
-        let reportInterval: Int64 = 65_536
-        var bytesSinceLastReport: Int64 = 0
-        var buffer = Data()
-        let bufferFlushSize = 262_144 // 256 KB
+        // Get file size from response or temp file
+        let totalBytes: Int64
+        if response.expectedContentLength > 0 {
+            totalBytes = response.expectedContentLength
+        } else {
+            let attrs = try FileManager.default.attributesOfItem(atPath: tempFileURL.path)
+            totalBytes = attrs[.size] as? Int64 ?? 0
+        }
 
         // Report initial progress
         progress?(AcervoDownloadProgress(
             fileName: fileName,
             bytesDownloaded: 0,
-            totalBytes: totalBytes,
+            totalBytes: totalBytes > 0 ? totalBytes : nil,
             fileIndex: fileIndex,
             totalFiles: totalFiles
         ))
 
-        for try await byte in bytes {
-            buffer.append(byte)
+        // Ensure the destination's parent directory exists
+        let parentDirectory = destination.deletingLastPathComponent()
+        try ensureDirectory(at: parentDirectory)
 
-            if buffer.count >= bufferFlushSize {
-                fileHandle.write(buffer)
-                bytesDownloaded += Int64(buffer.count)
-                bytesSinceLastReport += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-
-                // Report progress periodically
-                if bytesSinceLastReport >= reportInterval {
-                    bytesSinceLastReport = 0
-                    progress?(AcervoDownloadProgress(
-                        fileName: fileName,
-                        bytesDownloaded: bytesDownloaded,
-                        totalBytes: totalBytes,
-                        fileIndex: fileIndex,
-                        totalFiles: totalFiles
-                    ))
-                }
-            }
-        }
-
-        // Flush remaining buffer
-        if !buffer.isEmpty {
-            fileHandle.write(buffer)
-            bytesDownloaded += Int64(buffer.count)
-        }
-
-        try fileHandle.close()
-
-        // Report final progress
+        // Report completion
         progress?(AcervoDownloadProgress(
             fileName: fileName,
-            bytesDownloaded: bytesDownloaded,
-            totalBytes: totalBytes ?? bytesDownloaded,
+            bytesDownloaded: totalBytes,
+            totalBytes: totalBytes > 0 ? totalBytes : nil,
             fileIndex: fileIndex,
             totalFiles: totalFiles
         ))
