@@ -1002,3 +1002,234 @@ extension Acervo {
         ComponentRegistry.shared.unregister(componentId)
     }
 }
+
+// MARK: - Component Catalog
+
+extension Acervo {
+
+    /// Returns all registered component descriptors (whether downloaded or not).
+    ///
+    /// This is the "what exists in the world?" API. A UI can use this to
+    /// show all known components regardless of download status.
+    ///
+    /// - Returns: An array of all registered descriptors, in no particular order.
+    public static func registeredComponents() -> [ComponentDescriptor] {
+        ComponentRegistry.shared.allComponents()
+    }
+
+    /// Returns all registered components of the specified type.
+    ///
+    /// - Parameter type: The component type to filter by (e.g., `.encoder`, `.backbone`).
+    /// - Returns: An array of matching descriptors.
+    public static func registeredComponents(ofType type: ComponentType) -> [ComponentDescriptor] {
+        ComponentRegistry.shared.components(ofType: type)
+    }
+
+    /// Looks up a specific component by its ID.
+    ///
+    /// - Parameter id: The component ID to look up (e.g., "t5-xxl-encoder-int4").
+    /// - Returns: The matching `ComponentDescriptor`, or `nil` if not registered.
+    public static func component(_ id: String) -> ComponentDescriptor? {
+        ComponentRegistry.shared.component(id)
+    }
+
+    /// Checks if a registered component is fully downloaded and available on disk.
+    ///
+    /// For each file in the component's descriptor:
+    /// - Verifies the file exists at the expected path
+    /// - If `expectedSizeBytes` is declared, verifies the actual file size matches
+    ///
+    /// Returns `false` if the component is not registered or any file is missing/wrong size.
+    ///
+    /// - Parameter id: The component ID to check.
+    /// - Returns: `true` if all declared files are present with correct sizes.
+    public static func isComponentReady(_ id: String) -> Bool {
+        isComponentReady(id, in: sharedModelsDirectory)
+    }
+
+    /// Checks if a registered component is fully downloaded, using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - id: The component ID to check.
+    ///   - baseDirectory: The base directory to resolve component paths against.
+    /// - Returns: `true` if all declared files are present with correct sizes.
+    static func isComponentReady(_ id: String, in baseDirectory: URL) -> Bool {
+        guard let descriptor = ComponentRegistry.shared.component(id) else {
+            return false
+        }
+
+        let fm = FileManager.default
+        let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.huggingFaceRepo))
+
+        for file in descriptor.files {
+            let filePath = componentDir.appendingPathComponent(file.relativePath).path
+            guard fm.fileExists(atPath: filePath) else {
+                return false
+            }
+
+            // If expected size is declared, verify it matches
+            if let expectedSize = file.expectedSizeBytes {
+                guard let attrs = try? fm.attributesOfItem(atPath: filePath),
+                      let actualSize = attrs[.size] as? Int64,
+                      actualSize == expectedSize else {
+                    return false
+                }
+            }
+        }
+
+        return true
+    }
+
+    /// Returns all registered components that are not yet downloaded.
+    ///
+    /// Filters `registeredComponents()` to those where `isComponentReady` is `false`.
+    ///
+    /// - Returns: An array of component descriptors for components awaiting download.
+    public static func pendingComponents() -> [ComponentDescriptor] {
+        pendingComponents(in: sharedModelsDirectory)
+    }
+
+    /// Returns all registered components that are not yet downloaded,
+    /// using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameter baseDirectory: The base directory to resolve component paths against.
+    /// - Returns: An array of component descriptors for components awaiting download.
+    static func pendingComponents(in baseDirectory: URL) -> [ComponentDescriptor] {
+        registeredComponents().filter { !isComponentReady($0.id, in: baseDirectory) }
+    }
+
+    /// Returns the total catalog size split between downloaded and pending components.
+    ///
+    /// Sums `estimatedSizeBytes` for ready components (downloaded) and
+    /// not-ready components (pending). This allows a UI to display something
+    /// like "3 of 7 components downloaded, 4.2 GB cached, 8.1 GB available."
+    ///
+    /// - Returns: A tuple of `(downloaded: Int64, pending: Int64)` byte counts.
+    public static func totalCatalogSize() -> (downloaded: Int64, pending: Int64) {
+        totalCatalogSize(in: sharedModelsDirectory)
+    }
+
+    /// Returns the total catalog size split between downloaded and pending components,
+    /// using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameter baseDirectory: The base directory to resolve component paths against.
+    /// - Returns: A tuple of `(downloaded: Int64, pending: Int64)` byte counts.
+    static func totalCatalogSize(in baseDirectory: URL) -> (downloaded: Int64, pending: Int64) {
+        var downloaded: Int64 = 0
+        var pending: Int64 = 0
+
+        for descriptor in registeredComponents() {
+            if isComponentReady(descriptor.id, in: baseDirectory) {
+                downloaded += descriptor.estimatedSizeBytes
+            } else {
+                pending += descriptor.estimatedSizeBytes
+            }
+        }
+
+        return (downloaded: downloaded, pending: pending)
+    }
+}
+
+// MARK: - Integrity Verification
+
+extension Acervo {
+
+    /// Verifies the integrity of a downloaded component's files.
+    ///
+    /// For each file with a declared SHA-256 checksum, computes the actual
+    /// hash and compares it to the expected value. Files without declared
+    /// checksums are skipped.
+    ///
+    /// - Parameter componentId: The ID of the component to verify.
+    /// - Returns: `true` if all checksums pass (or if no checksums are declared).
+    /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
+    /// - Throws: `AcervoError.componentNotDownloaded` if any required files are missing.
+    public static func verifyComponent(_ componentId: String) throws -> Bool {
+        try verifyComponent(componentId, in: sharedModelsDirectory)
+    }
+
+    /// Verifies the integrity of a downloaded component's files,
+    /// using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameters:
+    ///   - componentId: The ID of the component to verify.
+    ///   - baseDirectory: The base directory to resolve component paths against.
+    /// - Returns: `true` if all checksums pass (or if no checksums are declared).
+    /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
+    /// - Throws: `AcervoError.componentNotDownloaded` if any required files are missing.
+    static func verifyComponent(_ componentId: String, in baseDirectory: URL) throws -> Bool {
+        guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+            throw AcervoError.componentNotRegistered(componentId)
+        }
+
+        let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.huggingFaceRepo))
+
+        // Check that all files exist first
+        let fm = FileManager.default
+        for file in descriptor.files {
+            let filePath = componentDir.appendingPathComponent(file.relativePath).path
+            guard fm.fileExists(atPath: filePath) else {
+                throw AcervoError.componentNotDownloaded(componentId)
+            }
+        }
+
+        // Verify checksums
+        for file in descriptor.files {
+            let result = try IntegrityVerification.verify(file: file, in: componentDir)
+            if !result {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    /// Verifies all downloaded components and returns the IDs of any that fail.
+    ///
+    /// Iterates over all registered components. Components that are not downloaded
+    /// are skipped (they are not failures -- they are simply not yet available).
+    /// Only components whose files are present but fail checksum verification
+    /// are included in the returned array.
+    ///
+    /// - Returns: An array of component IDs that failed integrity verification.
+    ///   Empty if all pass (or if no components are registered/downloaded).
+    /// - Throws: Errors from file I/O during hash computation.
+    public static func verifyAllComponents() throws -> [String] {
+        try verifyAllComponents(in: sharedModelsDirectory)
+    }
+
+    /// Verifies all downloaded components using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    ///
+    /// - Parameter baseDirectory: The base directory to resolve component paths against.
+    /// - Returns: An array of component IDs that failed integrity verification.
+    /// - Throws: Errors from file I/O during hash computation.
+    static func verifyAllComponents(in baseDirectory: URL) throws -> [String] {
+        var failures: [String] = []
+
+        for descriptor in registeredComponents() {
+            // Skip components that are not downloaded
+            guard isComponentReady(descriptor.id, in: baseDirectory) else {
+                continue
+            }
+
+            // Verify this downloaded component
+            let passed = try verifyComponent(descriptor.id, in: baseDirectory)
+            if !passed {
+                failures.append(descriptor.id)
+            }
+        }
+
+        return failures
+    }
+}
