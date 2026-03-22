@@ -291,6 +291,7 @@ extension Acervo {
     /// Delete a downloaded component's files from disk.
     /// Does NOT unregister the component — it remains in the registry as "not downloaded."
     /// Throws AcervoError.componentNotRegistered if the ID is unknown.
+    /// If the component is registered but not downloaded, this is a no-op (nothing to delete).
     public static func deleteComponent(_ componentId: String) throws
 }
 ```
@@ -318,9 +319,14 @@ Download → Write to disk → Compute SHA-256 → Compare to expected → Accep
 ```swift
 extension Acervo {
     /// Verify integrity of a downloaded component without re-downloading.
+    /// Throws `AcervoError.componentNotRegistered` if the ID is unknown.
+    /// Throws `AcervoError.componentNotDownloaded` if files are missing.
+    /// Returns `false` if any file fails its SHA-256 checksum.
+    /// Returns `true` if all checksums pass (or if no checksums are declared).
     public static func verifyComponent(_ componentId: String) throws -> Bool
 
-    /// Verify all downloaded components. Returns IDs of any that fail.
+    /// Verify all downloaded components. Returns IDs of any that fail checksum verification.
+    /// Skips components that are registered but not downloaded.
     public static func verifyAllComponents() throws -> [String]
 }
 ```
