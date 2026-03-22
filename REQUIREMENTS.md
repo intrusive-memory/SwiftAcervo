@@ -1,555 +1,490 @@
-# SwiftAcervo Requirements
+# SwiftAcervo — Requirements (v2: Component Registry)
 
-## Vision
+**Status**: DRAFT — debate and refine before implementation.
+**Parent project**: [`PROJECT_PIPELINE.md`](../PROJECT_PIPELINE.md) — Unified MLX Inference Architecture (§1. SwiftAcervo, Wave 0)
+**Scope**: Evolve SwiftAcervo from a filesystem discovery layer into the declarative component registry for the entire MLX ecosystem. Model plugins register what exists; Acervo manages the full lifecycle — catalog, download, cache, access. Consumers (SwiftTubería, SwiftVoxAlta) address models exclusively through Acervo's abstractions, never through file paths.
+**Supersedes**: `docs/archive/REQUIREMENTS_V1.md` (v1 filesystem-only spec, complete and implemented)
 
-**SwiftAcervo** ("Swift Collection/Repository") provides a single canonical location for shared HuggingFace AI models across the intrusive-memory ecosystem. All projects discover, download, and reference models through SwiftAcervo instead of defining their own paths.
+---
 
-This library is designed for **stability**. Like SwiftFijos for test fixtures, once the discovery and download logic is set, it should rarely change. The API surface is intentionally small and final.
+## Motivation
 
-## The Problem
+SwiftAcervo v1 answers one question: **"What's on disk?"** It scans `~/Library/SharedModels/` and reports what it finds. This works, but every consumer must independently know:
+- Which HuggingFace repos to download
+- Which files each model needs
+- Expected sizes and whether a download is complete
+- How to verify integrity
 
-Multiple libraries each hardcode their own model subdirectory:
+Each consumer reinvents this knowledge. flux-2-swift-mlx has a `ModelRegistry`. pixart-swift-mlx planned one. SwiftVoxAlta's `VoxAltaModelManager` hardcodes `Qwen3TTSModelRepo` variants. The result: model knowledge is scattered across packages, and the "what can I download?" question has no central answer.
 
-| Project | Current Path |
-|---------|-------------|
-| SwiftBruja | `~/Library/Caches/intrusive-memory/Models/LLM/` |
-| SwiftVoxAlta | `~/Library/Caches/intrusive-memory/Models/TTS/` |
-| mlx-audio-swift | `~/Library/Caches/intrusive-memory/Models/Audio/` |
-| Produciesta | `~/Library/Caches/intrusive-memory/Models/LLM/` (duplicated logic) |
+Acervo v2 adds a second question: **"What exists in the world?"** Model plugins register their components declaratively. Acervo becomes the single source of truth for both "what's available" and "what's cached." SwiftTubería then addresses models purely through Acervo — no file paths, no HuggingFace URLs, no hardcoded repo strings.
 
-A model downloaded by one tool is invisible to another. Qwen3-TTS models exist in both `TTS/` and `Audio/`, wasting ~10 GB on duplicates. Adding a new model type requires inventing yet another subdirectory.
+### Design Principle: Abstracted Access
 
-## The Solution
+**SwiftTubería should only ever address a model from the Acervo context and with abstraction, never with individual file paths.**
 
-**One path. No subdirectories. Every project uses SwiftAcervo.**
+This means:
+- Pipeline says: "I need component `t5-xxl-encoder-int4`"
+- Acervo says: "It's available. Here's scoped access to load it."
+- Pipeline loads weights through Acervo's access handle
+- Pipeline never constructs, stores, or passes file system URLs for model data
 
+If Acervo moves the storage location, changes the caching strategy, or adds integrity checks — no consumer code changes.
+
+---
+
+## What's New in v2 vs v1
+
+| Capability | v1 (current) | v2 (this spec) |
+|---|---|---|
+| Filesystem discovery | Yes | Yes (unchanged) |
+| Download from HuggingFace | Yes (caller specifies files) | Yes (registry knows files) |
+| Fuzzy search | Yes | Yes (unchanged) |
+| **Component catalog** | No | **Yes — declarative registry** |
+| **"What can I download?"** | No (only "what's on disk?") | **Yes** |
+| **Integrity verification** | No | **Yes — SHA-256 checksums** |
+| **Abstracted model access** | Partial (withModelAccess gives URL) | **Yes — opaque component handles** |
+| **Component type awareness** | No | **Yes — encoder, backbone, decoder, etc.** |
+| **Cross-package deduplication** | No | **Yes — same component registered twice is one entry** |
+
+### What Does NOT Change
+
+- Zero external dependencies (Foundation only)
+- `~/Library/SharedModels/` canonical path
+- `config.json` validity marker
+- Slugification rules (`org/repo` → `org_repo`)
+- Existing `Acervo` static API (additive, not breaking)
+- Existing `AcervoManager` actor API (additive, not breaking)
+- `AcervoModel`, `AcervoError`, `AcervoDownloadProgress` types
+- Migration from legacy paths
+
+---
+
+## A1. Component Registry
+
+### A1.1 ComponentDescriptor
+
+A declarative description of a downloadable model component. Model plugins create these and register them with Acervo.
+
+```swift
+public struct ComponentDescriptor: Sendable, Identifiable {
+    public let id: String                      // e.g. "t5-xxl-encoder-int4"
+    public let type: ComponentType             // .encoder, .backbone, .decoder, .vocoder, .tokenizer
+    public let displayName: String             // "T5-XXL Text Encoder (int4)"
+    public let huggingFaceRepo: String         // "intrusive-memory/t5-xxl-int4-mlx"
+    public let files: [ComponentFile]          // required files with checksums
+    public let estimatedSizeBytes: Int64       // total expected download size
+    public let minimumMemoryBytes: Int64       // RAM needed to load this component
+    public let metadata: [String: String]      // model-specific key-value pairs
+}
+
+public struct ComponentFile: Sendable {
+    public let relativePath: String            // "model.safetensors" or "speech_tokenizer/config.json"
+    public let expectedSizeBytes: Int64?       // nil if unknown
+    public let sha256: String?                 // nil to skip verification
+}
 ```
-~/Library/SharedModels/{org}_{repo}/
+
+**Sharded weights**: Sharded safetensors files (e.g., `model-00001-of-00003.safetensors`) are listed as separate `ComponentFile` entries. Each shard has its own size and optional checksum.
+
+**Quantization variants**: Each quantization level is a separate `ComponentDescriptor` with its own ID. Different quantizations produce different files with different sizes and checksums. Naming pattern: `{model}-{quantization}`, e.g., `flux2-klein-4b-dit-bf16`, `flux2-klein-4b-dit-int4`, `flux2-klein-4b-dit-qint8`. Pre-quantized safetensors are the norm; on-the-fly quantization by WeightLoader is a fallback, not the default path.
+
+```swift
+public enum ComponentType: String, Sendable, CaseIterable {
+    case encoder        // text encoders (T5, CLIP, Qwen3, Mistral)
+    case backbone       // core model (DiT, autoregressive, etc.)
+    case decoder        // latent → data (VAE, vocoder)
+    case scheduler      // noise scheduling (weights are rare, but some are learned)
+    case tokenizer      // tokenizer files (often bundled with encoder, but separable)
+    case auxiliary      // anything else (LoRA adapters, config files, etc.)
+}
+```
+
+### A1.2 Registration API
+
+Model plugins register their components at import time or at pipeline assembly time.
+
+```swift
+extension Acervo {
+    /// Register a component descriptor. Idempotent — re-registering the same ID updates the entry.
+    public static func register(_ descriptor: ComponentDescriptor)
+
+    /// Register multiple descriptors at once.
+    public static func register(_ descriptors: [ComponentDescriptor])
+
+    /// Remove a registration (does NOT delete downloaded files).
+    public static func unregister(_ componentId: String)
+}
+```
+
+**Deduplication**: If two model plugins both register `sdxl-vae-decoder-fp16` with the same HuggingFace repo and files, it's one entry. The registry deduplicates by `id`. Deduplication rules:
+- Same `id`, same `huggingFaceRepo` and `files` → silent deduplicate (identical component)
+- Same `id`, different `huggingFaceRepo` or `files` → warning logged, last registration wins
+- `metadata` dictionaries are merged (newer keys overwrite on conflict)
+- `estimatedSizeBytes` and `minimumMemoryBytes` take the max of both values
+
+**Registration timing**: Standardized on import time via Swift static `let` initialization. Each plugin defines a static registration block that runs exactly once, thread-safely, when the module is first imported. Pipeline assembly can call `_ = PluginComponents.registered` as a defensive trigger.
+
+### A1.3 Catalog Queries
+
+```swift
+extension Acervo {
+    /// All registered components (whether downloaded or not).
+    public static func registeredComponents() -> [ComponentDescriptor]
+
+    /// Filter by type.
+    public static func registeredComponents(ofType type: ComponentType) -> [ComponentDescriptor]
+
+    /// Look up a specific component.
+    public static func component(_ id: String) -> ComponentDescriptor?
+
+    /// Check if a registered component is fully downloaded and verified.
+    public static func isComponentReady(_ id: String) -> Bool
+
+    /// Components that are registered but not yet downloaded.
+    public static func pendingComponents() -> [ComponentDescriptor]
+
+    /// Total size of all registered components (downloaded + pending).
+    public static func totalCatalogSize() -> (downloaded: Int64, pending: Int64)
+}
+```
+
+This is the "what exists in the world?" API. A UI can show "3 of 7 components downloaded, 4.2 GB cached, 8.1 GB available to download."
+
+---
+
+## A2. Abstracted Component Access
+
+### A2.1 ComponentHandle
+
+When a consumer (e.g., SwiftTubería's WeightLoader) needs to load a component's files, it requests a handle from Acervo. The handle provides scoped access without exposing filesystem paths.
+
+```swift
+public struct ComponentHandle: Sendable {
+    /// The component this handle provides access to.
+    public let descriptor: ComponentDescriptor
+
+    /// Access a file within the component by its relative path.
+    /// Returns a URL valid for the duration of the enclosing `withComponentAccess` scope.
+    public func url(for relativePath: String) throws -> URL
+
+    /// Convenience: access the first file matching a suffix (e.g., ".safetensors").
+    public func url(matching suffix: String) throws -> URL
+
+    /// List all files available in this component.
+    public func availableFiles() -> [String]
+
+    /// Access all files matching a suffix (e.g., ".safetensors") for sharded weights.
+    public func urls(matching suffix: String) throws -> [URL]
+}
+```
+
+**URL lifetime**: Contractual, not runtime-enforced. The handle's URLs are valid for the duration of the enclosing `withComponentAccess` closure. Load data into memory within the closure; do not cache or store URLs beyond the closure scope. No runtime URL revocation — unnecessary overhead for filesystem URLs.
+
+### A2.2 Scoped Access Pattern
+
+```swift
+extension AcervoManager {
+    /// Provides scoped, exclusive access to a downloaded component.
+    /// Throws if the component is not downloaded or fails integrity check.
+    public func withComponentAccess<T: Sendable>(
+        _ componentId: String,
+        perform: @Sendable (ComponentHandle) throws -> T
+    ) async throws -> T
+}
+```
+
+**Contract**:
+- The component MUST be downloaded and pass integrity checks before the closure is called
+- The `ComponentHandle`'s URLs are valid only within the closure scope
+- Access is serialized per component (same locking as existing `withModelAccess`)
+- If the component is not registered, throws `AcervoError.componentNotRegistered`
+- If the component is not downloaded, throws `AcervoError.componentNotDownloaded`
+
+**Locking**: Exclusive lock per component ID. Different component IDs do not block each other (matches existing `AcervoManager` per-model locking). Reader-writer locking is unnecessary — weight loading (the primary access pattern) is a one-time operation per generation session.
+
+### A2.3 How Pipeline Uses This
+
+```swift
+// In SwiftTubería's WeightLoader — no file paths, no HF repo strings
+let weights = try await AcervoManager.shared.withComponentAccess("t5-xxl-encoder-int4") { handle in
+    let safetensorsURL = try handle.url(matching: ".safetensors")
+    return try loadArrays(url: safetensorsURL)
+}
+```
+
+The WeightLoader knows it needs safetensors data. It doesn't know where on disk that data lives, which HuggingFace repo it came from, or how it was cached. That's Acervo's business.
+
+---
+
+## A3. Registry-Aware Downloads
+
+### A3.1 Component Download
+
+```swift
+extension Acervo {
+    /// Download a registered component. Uses the descriptor's file list and HF repo.
+    /// No need for the caller to specify files — the registry knows.
+    public static func downloadComponent(
+        _ componentId: String,
+        token: String? = nil,
+        force: Bool = false,
+        progress: @Sendable (AcervoDownloadProgress) -> Void = { _ in }
+    ) async throws
+
+    /// Ensure a registered component is downloaded. No-op if already cached and verified.
+    public static func ensureComponentReady(
+        _ componentId: String,
+        token: String? = nil,
+        progress: @Sendable (AcervoDownloadProgress) -> Void = { _ in }
+    ) async throws
+
+    /// Download all files needed for a set of components (e.g., a full pipeline recipe).
+    public static func ensureComponentsReady(
+        _ componentIds: [String],
+        token: String? = nil,
+        progress: @Sendable (AcervoDownloadProgress) -> Void = { _ in }
+    ) async throws
+}
+```
+
+**Partial download handling**:
+- Resume by default: only download files not yet present on disk
+- Size mismatch vs `ComponentFile.expectedSizeBytes` → delete file and re-download
+- SHA-256 mismatch (if declared) → delete file and re-download
+- `isComponentReady()` returns `true` only when ALL files in the descriptor are present and pass integrity checks
+- `ensureComponentReady()` downloads only missing or corrupted files, not the entire component
+
+**Key difference from v1**: Callers no longer specify file lists. The registry knows what files each component needs. This eliminates the most common source of errors — mismatched or incomplete file lists.
+
+### A3.2 Pipeline Recipe Downloads
+
+A pipeline recipe declares which components it needs (e.g., T5 encoder + PixArt backbone + SDXL VAE). A single call ensures everything is ready:
+
+```swift
+// In SwiftTubería, before generation:
+let componentIds = recipe.allComponentIds  // ["t5-xxl-encoder-int4", "pixart-dit-int4", "sdxl-vae-fp16"]
+try await Acervo.ensureComponentsReady(componentIds) { progress in
+    reportProgress(.downloading(component: progress.fileName, fraction: progress.overallProgress))
+}
 ```
 
 ---
 
-## Canonical Path
+## A4. Integrity Verification
+
+### A4.1 SHA-256 Checksums
+
+Each `ComponentFile` can declare an expected SHA-256 hash. When present, Acervo verifies the file after download and before granting access.
 
 ```
-~/Library/SharedModels/
-├── mlx-community_Qwen2.5-7B-Instruct-4bit/
-│   ├── config.json
-│   ├── tokenizer.json
-│   ├── tokenizer_config.json
-│   └── model.safetensors
-├── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
-│   ├── config.json
-│   ├── ...
-│   └── speech_tokenizer/
-├── mlx-community_Phi-3-mini-4k-instruct-4bit/
-│   └── ...
-└── mlx-community_snac_24khz/
-    └── ...
+Download → Write to disk → Compute SHA-256 → Compare to expected → Accept or reject
 ```
 
-### Path Rules
+### A4.2 Verification Points
 
-1. **Base directory**: `~/Library/SharedModels/` -- persistent, not in Caches (survives macOS cleanup)
-2. **Model naming**: HuggingFace ID with `/` replaced by `_` (e.g., `mlx-community/Qwen2.5-7B-Instruct-4bit` becomes `mlx-community_Qwen2.5-7B-Instruct-4bit`)
-3. **No type subdirectories**: LLM, TTS, Audio, VLM models are all peers in the same flat directory
-4. **Validity marker**: A model directory is considered valid when `config.json` is present
-5. **Reverse lookup**: Directory name `org_repo` maps back to HuggingFace ID `org/repo` (first underscore that matches a known org boundary)
+- **After download**: Verify immediately. If mismatch, delete the file and throw `AcervoError.integrityCheckFailed`.
+- **Before access**: When `withComponentAccess` is called, verify all files with declared checksums. If a file has been corrupted or tampered with, throw before the closure runs.
+- **Optional**: Checksums are optional per file. Files without a declared checksum skip verification (backward compatible with v1 behavior).
 
----
-
-## Design Principles
-
-### 1. Stability First
-
-This library should change as rarely as SwiftFijos. The path convention, discovery logic, and download mechanics are intentionally simple so they do not need updating. Once v1.0 ships, breaking changes should be avoided.
-
-### 2. Zero External Dependencies
-
-Foundation only. No HuggingFace Hub library, no MLX, no model-type-specific logic. URLSession for downloads. FileManager for discovery. That's it.
-
-### 3. Not a Model Loader
-
-SwiftAcervo finds and downloads models. It does **not** load them into memory. Loading is the consumer's job (SwiftBruja loads via MLX, mlx-audio-swift loads via MLXAudioTTS, etc.). SwiftAcervo is the filesystem layer beneath all of them.
-
-### 4. Caller-Specified File Lists
-
-Different model types need different files. LLMs need `model.safetensors` + tokenizer files. Audio models need speech tokenizer subdirectories. SwiftAcervo does not know or care what files a model needs -- the caller provides the file list, and SwiftAcervo downloads them.
-
-### 5. Fuzzy Model Search
-
-Model names from HuggingFace are long and easy to get slightly wrong (`Qwen2.5` vs `Qwen25`, `1.7B` vs `1.7b`, `VoiceDesign` vs `Voice-Design`). SwiftAcervo provides fuzzy matching to find models even when the caller's name is off by a few characters.
-
-**Exact match** (`findModels(matching:)`): Case-insensitive substring search across model IDs. Fast, no tolerance for typos.
-
-**Fuzzy match** (`findModels(fuzzyMatching:)`): Levenshtein edit distance search. Finds models within a configurable distance threshold. Returns results sorted by closeness. Strips common prefixes (`mlx-community/`) before comparing to reduce noise.
-
-**Closest match** (`closestModel(to:)`): Returns the single best fuzzy match, or `nil` if nothing is within threshold. Useful for CLI tools that want to suggest "did you mean...?" corrections.
-
-**Base name matching**: Extracts the base model name by stripping quantization suffixes (`-4bit`, `-8bit`, `-bf16`, `-fp16`), size suffixes (`-0.6B`, `-1.7B`), and variant suffixes (`-Base`, `-Instruct`, `-VoiceDesign`, `-CustomVoice`). Two models with the same base name are considered variants of the same model family.
+### A4.3 Re-verification
 
 ```swift
-// All of these find "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16":
-try Acervo.findModels(matching: "Qwen3-TTS")                   // exact substring
-try Acervo.findModels(fuzzyMatching: "Qwen3-TTS-12Hz-1.7B")    // fuzzy, close enough
-try Acervo.closestModel(to: "Qwen3-TTS-1.7B-Base")             // best single match
+extension Acervo {
+    /// Verify integrity of a downloaded component without re-downloading.
+    public static func verifyComponent(_ componentId: String) throws -> Bool
 
-// Base name grouping:
-let families = try Acervo.modelFamilies()
-// ["mlx-community/Qwen3-TTS-12Hz": [0.6B-Base-bf16, 1.7B-Base-bf16, 1.7B-VoiceDesign-bf16]]
-```
-
-The edit distance implementation is built-in (no external dependency). Standard Levenshtein with default threshold of 5 (configurable per call).
-
-### 6. Pattern After SwiftFijos
-
-| SwiftFijos | SwiftAcervo |
-|-----------|------------|
-| `Fijos.swift` -- static discovery | `Acervo.swift` -- static discovery + download |
-| `FixtureManager.swift` -- actor, locks, cache | `AcervoManager.swift` -- actor, per-model locks, cache |
-| `Fixture` struct -- metadata | `AcervoModel` struct -- metadata |
-| `FijosError` enum | `AcervoError` enum |
-| Fixtures directory | `~/Library/SharedModels/` |
-
----
-
-## v1.0 Deliverable
-
-### Static API (`Acervo`)
-
-```swift
-import SwiftAcervo
-
-// Path resolution
-let dir = Acervo.sharedModelsDirectory           // ~/Library/SharedModels/
-let modelDir = Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
-let slug = Acervo.slugify("mlx-community/Qwen2.5-7B-Instruct-4bit")  // "mlx-community_Qwen2.5-7B-Instruct-4bit"
-
-// Availability
-let ready = Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit")
-let hasFile = Acervo.modelFileExists("mlx-community/Qwen2.5-7B-Instruct-4bit", fileName: "tokenizer.json")
-
-// Discovery
-let allModels = try Acervo.listModels()
-let info = try Acervo.modelInfo("mlx-community/Qwen2.5-7B-Instruct-4bit")
-let matches = try Acervo.findModels(matching: "Qwen")
-
-// Fuzzy search (tolerates typos and near-misses)
-let fuzzy = try Acervo.findModels(fuzzyMatching: "Qwen2.5-7B-Instruct")  // finds "Qwen2.5-7B-Instruct-4bit"
-let closest = try Acervo.closestModel(to: "Qwen3-TTS-1.7B-Base")          // best match by edit distance
-
-// Download
-try await Acervo.download(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"]
-) { progress in
-    print("\(progress.fileName): \(Int(progress.overallProgress * 100))%")
-}
-
-// Ensure available (skip if already downloaded)
-try await Acervo.ensureAvailable(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"]
-)
-
-// Deletion
-try Acervo.deleteModel("mlx-community/Qwen2.5-7B-Instruct-4bit")
-
-// Migration from legacy paths
-let migrated = try Acervo.migrateFromLegacyPaths()
-```
-
-### Thread-Safe Manager (`AcervoManager`)
-
-```swift
-import SwiftAcervo
-
-// Per-model serialized download (waits if same model is already downloading)
-try await AcervoManager.shared.download(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "model.safetensors"]
-)
-
-// Exclusive access to a model directory (prevents concurrent modifications)
-let modelDir = try await AcervoManager.shared.withModelAccess(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit"
-) { url in
-    // Safe to read/write model files here
-    return url
-}
-
-// Cache and statistics
-AcervoManager.shared.clearCache()
-try await AcervoManager.shared.preloadModels()
-AcervoManager.shared.printStatisticsReport()
-```
-
-### Model Metadata (`AcervoModel`)
-
-```swift
-public struct AcervoModel: Identifiable, Equatable, Codable, Sendable {
-    public let id: String           // "mlx-community/Qwen2.5-7B-Instruct-4bit"
-    public let path: URL            // ~/Library/SharedModels/mlx-community_Qwen2.5-7B-Instruct-4bit/
-    public let sizeBytes: Int64     // Total size of all files
-    public let downloadDate: Date   // Directory creation date
-    public var formattedSize: String // "4.4 GB"
-    public var slug: String         // "mlx-community_Qwen2.5-7B-Instruct-4bit"
-    public var baseName: String     // "Qwen2.5-7B-Instruct" (stripped of quantization/variant suffixes)
-    public var familyName: String   // "mlx-community/Qwen2.5" (org + base model without size/variant)
-}
-```
-
-### Download Progress
-
-```swift
-public struct AcervoDownloadProgress: Sendable {
-    public let fileName: String       // Current file being downloaded
-    public let bytesDownloaded: Int64  // Bytes so far for current file
-    public let totalBytes: Int64?     // Expected total (nil if unknown)
-    public let fileIndex: Int         // 0-based index in file list
-    public let totalFiles: Int        // Total files being downloaded
-    public var overallProgress: Double // 0.0 to 1.0
-}
-```
-
-### Error Types
-
-```swift
-public enum AcervoError: LocalizedError, Sendable {
-    case directoryCreationFailed(String)
-    case modelNotFound(String)
-    case downloadFailed(fileName: String, statusCode: Int)
-    case networkError(Error)
-    case modelAlreadyExists(String)
-    case migrationFailed(source: String, reason: String)
-    case invalidModelId(String)
+    /// Verify all downloaded components. Returns IDs of any that fail.
+    public static func verifyAllComponents() throws -> [String]
 }
 ```
 
 ---
 
-## Package Structure
+## A5. Backward Compatibility
+
+### A5.1 Existing API Unchanged
+
+All v1 API methods continue to work exactly as before:
+
+```swift
+// These all still work, unchanged:
+Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit")
+Acervo.listModels()
+Acervo.download("org/repo", files: [...])
+AcervoManager.shared.withModelAccess("org/repo") { url in ... }
+```
+
+The registry is an additive layer. Models that are on disk but not registered still show up in `listModels()`. Registered components that are downloaded appear in both `listModels()` (filesystem view) and `registeredComponents()` (registry view).
+
+**Relationship between `AcervoModel` (v1) and `ComponentDescriptor` (v2)**:
+
+Two views of the same storage:
+- `listModels()` → filesystem view → `[AcervoModel]` (anything in `~/Library/SharedModels/`)
+- `registeredComponents()` → registry view → `[ComponentDescriptor]` (declared by plugins)
+- Cross-reference via `isComponentReady(id)` — checks if a registered component's files exist on disk
+- `AcervoModel.sizeBytes` = filesystem ground truth (actual bytes on disk)
+- `ComponentDescriptor.estimatedSizeBytes` = advisory (declared by plugin, may not match exactly)
+
+Three possible states for a model directory:
+1. **Registered + downloaded** (normal) — appears in both views
+2. **Not registered + on disk** (legacy/manual download) — appears only in `listModels()`
+3. **Registered + not downloaded** — appears only in `registeredComponents()` with `isComponentReady = false`
+
+### A5.2 Migration for Existing Consumers
+
+Consumers can adopt the registry incrementally:
+1. **Phase 1**: Keep using `Acervo.download(modelId, files: [...])` as before
+2. **Phase 2**: Register their components and switch to `Acervo.ensureComponentReady(componentId)`
+3. **Phase 3**: Switch to `withComponentAccess` for abstracted file access
+
+No consumer is forced to migrate. The v1 API is not deprecated.
+
+---
+
+## A6. Error Types (Additions)
+
+```swift
+// New cases added to AcervoError:
+case componentNotRegistered(String)           // component ID not in registry
+case componentNotDownloaded(String)           // registered but files missing
+case integrityCheckFailed(file: String, expected: String, actual: String)
+case componentFileNotFound(component: String, file: String)
+```
+
+Existing error cases unchanged.
+
+---
+
+## A7. What Acervo Still Is NOT
+
+Even with the registry, Acervo maintains its boundaries:
+
+1. **Not a model loader** — Does not import MLX or load weights into GPU memory. The `ComponentHandle` provides file access; consumers do the loading.
+2. **Not a HuggingFace Hub client** — Downloads via direct URLs, not the Hub API. The registry provides the URLs; the download logic is the same as v1.
+3. **Not a cache evictor** — Does not automatically delete models to free space. Explicit deletion via `deleteModel()` or `deleteComponent()`.
+4. **Not a model converter** — Does not quantize or transform files.
+5. **Zero external dependencies** — Foundation only. The registry is just in-memory data structures.
+
+---
+
+## A8. Storage of Registry State
+
+The component registry is **in-memory only**. It is populated at process startup when model plugins register their components. There is no persistent registry database.
+
+**Rationale**: The registry is a declaration of "what exists in the world" — this is static knowledge compiled into the model plugin packages. It doesn't need persistence because it's rebuilt from code every launch. Filesystem state (what's downloaded) is the persistent layer, and that already exists.
+
+If a component is registered but not downloaded, it shows as "available to download." If a model directory exists on disk but no component is registered for it, it shows in `listModels()` as an unregistered model (v1 behavior).
+
+---
+
+## A9. Package Structure (Updated)
 
 ```
 SwiftAcervo/
-├── Package.swift
-├── REQUIREMENTS.md
-├── AGENTS.md
-├── CLAUDE.md
-├── GEMINI.md
-├── README.md
 ├── Sources/
 │   └── SwiftAcervo/
-│       ├── Acervo.swift              # Static discovery + download API
-│       ├── AcervoManager.swift       # Actor-based thread-safe manager
-│       ├── AcervoModel.swift         # Model metadata struct
-│       ├── AcervoError.swift         # Error types
-│       └── AcervoDownloader.swift    # HuggingFace download implementation
-├── Tests/
-│   └── SwiftAcervoTests/
-│       ├── AcervoTests.swift         # Static API tests
-│       ├── AcervoManagerTests.swift  # Actor/threading tests
-│       └── AcervoDownloaderTests.swift # URL construction, progress math
-└── .github/
-    └── workflows/
-        └── tests.yml
+│       ├── Acervo.swift                  # Static API (v1 + registry additions)
+│       ├── AcervoManager.swift           # Actor (v1 + withComponentAccess)
+│       ├── AcervoModel.swift             # Filesystem metadata (unchanged)
+│       ├── AcervoError.swift             # Error types (extended)
+│       ├── AcervoDownloader.swift        # Download implementation (unchanged)
+│       ├── AcervoDownloadProgress.swift  # Progress tracking (unchanged)
+│       ├── AcervoMigration.swift         # Legacy path migration (unchanged)
+│       ├── LevenshteinDistance.swift      # Fuzzy search (unchanged)
+│       ├── ComponentDescriptor.swift     # NEW — registry types
+│       ├── ComponentHandle.swift         # NEW — abstracted access
+│       └── ComponentRegistry.swift       # NEW — in-memory catalog
+```
+
+**Zero new dependencies.** The registry is pure Swift data structures and logic.
+
+---
+
+## A10. Interaction with SwiftTubería
+
+```
+Model Plugin (e.g., pixart-swift-mlx)
+    │
+    │ registers ComponentDescriptors at import time
+    ▼
+SwiftAcervo ◀──────── SwiftTubería
+    │                       │
+    │ catalog queries        │ "is component ready?"
+    │ download management    │ "ensure these components"
+    │ abstracted access      │ "give me access to load weights"
+    │                       │
+    ▼                       ▼
+~/Library/SharedModels/    WeightLoader (loads through ComponentHandle)
+```
+
+**Dependency direction**: SwiftTubería depends on SwiftAcervo. Model plugins depend on SwiftAcervo (for registration) and SwiftTubería (for protocols). Acervo depends on nothing.
+
+```
+pixart-swift-mlx ──▶ SwiftTubería ──▶ SwiftAcervo
+                  └────────────────────▶ SwiftAcervo  (also directly, for registration)
 ```
 
 ---
 
-## Dependencies
+## A11. Testing Strategy
 
-```swift
-// swift-tools-version: 6.2
-import PackageDescription
+### A11.1 Existing Tests (Unchanged)
+- Path construction, slugification
+- Filesystem discovery and enumeration
+- Fuzzy search and pattern matching
+- Download URL construction
+- Migration logic
+- Manager locking
 
-let package = Package(
-    name: "SwiftAcervo",
-    platforms: [
-        .macOS(.v26),
-        .iOS(.v26)
-    ],
-    products: [
-        .library(name: "SwiftAcervo", targets: ["SwiftAcervo"])
-    ],
-    targets: [
-        .target(
-            name: "SwiftAcervo",
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency")
-            ]
-        ),
-        .testTarget(
-            name: "SwiftAcervoTests",
-            dependencies: ["SwiftAcervo"],
-            swiftSettings: [
-                .enableUpcomingFeature("StrictConcurrency")
-            ]
-        )
-    ],
-    swiftLanguageModes: [.v6]
-)
-```
+### A11.2 New Tests
 
-**Zero external dependencies.** Foundation only. No HuggingFace Hub library, no MLX, no model-specific imports.
+**Registry Tests**:
+- Register a component → appears in `registeredComponents()`
+- Register same ID twice → deduplicates (last wins)
+- Unregister → removed from catalog
+- Filter by type → correct subset
+- `isComponentReady` returns false for registered-but-not-downloaded
+- `isComponentReady` returns true after download
+- `pendingComponents` returns only undownloaded registered components
 
----
+**Access Tests**:
+- `withComponentAccess` for downloaded component → handle provides valid URLs
+- `withComponentAccess` for not-downloaded component → throws `componentNotDownloaded`
+- `withComponentAccess` for unregistered component → throws `componentNotRegistered`
+- `handle.url(for:)` for existing file → valid URL
+- `handle.url(for:)` for missing file → throws `componentFileNotFound`
+- `handle.url(matching:)` finds file by suffix
 
-## Download Mechanics
+**Integrity Tests**:
+- Download file with correct checksum → accepted
+- Download file with wrong checksum → rejected, file deleted
+- `verifyComponent` on valid files → true
+- `verifyComponent` on corrupted file → false
+- `withComponentAccess` on corrupted file → throws before closure runs
 
-### HuggingFace URL Pattern
+**Integration Tests**:
+- Register component → download → access → verify lifecycle
+- `ensureComponentsReady` with mix of cached and pending → downloads only pending
+- Registered component appears in both `registeredComponents()` and `listModels()`
 
-```
-https://huggingface.co/{modelId}/resolve/main/{fileName}
-```
+### A11.3 Coverage and CI Stability Requirements
 
-Example:
-```
-https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit/resolve/main/config.json
-```
-
-### Download Flow
-
-```
-Acervo.download("org/repo", files: [...])
-│
-├─ Validate model ID (must contain exactly one "/")
-├─ Compute destination: ~/Library/SharedModels/org_repo/
-├─ Create directory if needed (withIntermediateDirectories: true)
-│
-└─ For each file in the list:
-   ├─ Skip if file already exists (unless force: true)
-   ├─ Construct URL: https://huggingface.co/org/repo/resolve/main/{file}
-   ├─ Download via URLSession.shared.download(from:)
-   ├─ Verify HTTP 200
-   ├─ Move temp file to destination (atomic)
-   └─ Report progress
-```
-
-### Auth Token Support
-
-For gated models (e.g., Llama), pass an optional bearer token:
-
-```swift
-try await Acervo.download(
-    "meta-llama/Llama-3-8B",
-    files: ["config.json", "model.safetensors"],
-    token: hfToken
-)
-```
-
-The token is sent as an `Authorization: Bearer {token}` header. SwiftAcervo does not store, cache, or manage tokens. The caller provides them.
-
-### Subdirectory Downloads
-
-Some models have files in subdirectories (e.g., `speech_tokenizer/config.json`). The caller includes the relative path in the file list:
-
-```swift
-try await Acervo.download(
-    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
-    files: [
-        "config.json",
-        "model.safetensors",
-        "speech_tokenizer/config.json",
-        "speech_tokenizer/model.safetensors"
-    ]
-)
-```
-
-SwiftAcervo creates intermediate directories as needed.
+- All new code must achieve **≥90% line coverage** in unit tests. Coverage is measured per-target and enforced in CI.
+- **No timed tests**: Tests must not use `sleep()`, `Task.sleep()`, `Thread.sleep()`, fixed-duration `XCTestExpectation` timeouts, or any wall-clock assertions. All asynchronous behavior must be validated via deterministic synchronization (`async`/`await`, `AsyncStream`, fulfilled expectations with immediate triggers).
+- **No environment-dependent tests**: Tests must not depend on network access, GPU availability, or specific hardware. Use mock filesystems and injected dependencies for download and integrity verification tests. Tests requiring real HuggingFace downloads are integration tests and must be clearly separated (separate test target or `#if INTEGRATION_TESTS` gate).
+- **Flaky tests are test failures**: A test that passes intermittently is treated as a failing test until fixed. CI must not use retry-on-failure to mask flakiness.
 
 ---
 
-## Migration from Legacy Paths
+## A12. Implementation Order
 
-`Acervo.migrateFromLegacyPaths()` scans these directories:
-
-```
-~/Library/Caches/intrusive-memory/Models/LLM/
-~/Library/Caches/intrusive-memory/Models/TTS/
-~/Library/Caches/intrusive-memory/Models/Audio/
-~/Library/Caches/intrusive-memory/Models/VLM/
-```
-
-For each subdirectory containing `config.json`:
-1. Extract the slug (directory name, e.g., `mlx-community_Qwen2.5-7B-Instruct-4bit`)
-2. If `~/Library/SharedModels/{slug}/` does not exist, **move** the directory
-3. If it already exists, **skip** (prefer the existing copy in the new location)
-4. Return list of migrated `AcervoModel` entries
-
-The old parent directories are not deleted. Consumers clean up their own legacy references.
-
----
-
-## Consumer Integration
-
-### How Each Project Uses SwiftAcervo
-
-**SwiftBruja** (LLM inference):
-```swift
-import SwiftAcervo
-
-// BrujaModelManager replaces its path logic with:
-var modelsDirectory: URL { Acervo.sharedModelsDirectory }
-
-func modelDirectory(for modelId: String) -> URL {
-    Acervo.modelDirectory(for: modelId)
-}
-
-func isModelAvailable(_ modelId: String) -> Bool {
-    Acervo.isModelAvailable(modelId)
-}
-
-// Download still specifies LLM-specific file list:
-try await Acervo.ensureAvailable(modelId, files: [
-    "config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"
-])
-
-// Loading stays in SwiftBruja (MLX-specific):
-let config = ModelConfiguration(directory: Acervo.modelDirectory(for: modelId))
-let container = try await LLMModelFactory.shared.loadContainer(configuration: config)
-```
-
-**mlx-audio-swift** (audio inference):
-```swift
-import SwiftAcervo
-
-// ModelUtils.resolveOrDownloadModel() becomes:
-let modelDir = Acervo.modelDirectory(for: repoID.description)
-if !Acervo.isModelAvailable(repoID.description) {
-    try await Acervo.download(repoID.description, files: requiredFiles)
-}
-return modelDir
-```
-
-**SwiftVoxAlta** (TTS voice design):
-```swift
-import SwiftAcervo
-
-// DigaModelManager replaces its cache logic with:
-let modelsDirectory = Acervo.sharedModelsDirectory
-
-func isModelAvailable(_ modelId: String) -> Bool {
-    Acervo.isModelAvailable(modelId)
-}
-```
-
-**Produciesta** (main app):
-```swift
-// Can delete MLXModelDownloader.swift entirely.
-// Use BrujaModelManager (which now uses SwiftAcervo internally).
-```
-
----
-
-## Thread Safety
-
-`AcervoManager` is a `@globalActor` that provides:
-
-- **Per-model download locks**: Two concurrent downloads of the same model are serialized. Different models download concurrently.
-- **Exclusive model access**: `withModelAccess(_:perform:)` prevents concurrent reads/writes to the same model directory.
-- **Automatic lock release**: `defer` ensures locks are released even on error.
-- **Wait loop**: 50ms sleep between lock checks when a model is locked by another caller.
-- **URL caching**: Thread-safe dictionary for cached model directory URLs.
-- **Statistics**: Thread-safe download and access count tracking.
-
-All closures passed to `AcervoManager` must be `@Sendable`.
-
----
-
-## Platform Requirements
-
-- **macOS 26.0+** / **iOS 26.0+**
-- **Swift 6.2+** with strict concurrency
-- **Zero external dependencies**
-- NEVER add `@available` for older platforms
-- NEVER add `#available` runtime checks for older platforms
-
----
-
-## CI/CD
-
-### GitHub Actions
-
-```yaml
-name: Tests
-
-on:
-  pull_request:
-    branches: [main, development]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  test-macos:
-    name: Test on macOS
-    runs-on: macos-26
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Show Swift version
-        run: swift --version
-      - name: Build
-        run: xcodebuild -scheme SwiftAcervo -destination 'platform=macOS' build
-      - name: Test
-        run: xcodebuild -scheme SwiftAcervo -destination 'platform=macOS' test
-```
-
-### Branch Strategy
-
-- **`development`** -- all work happens here
-- **`main`** -- protected, PR-only, CI must pass
-- NEVER commit directly to `main`
-- NEVER delete `development`
-
-**Flow**: `development` -> PR -> CI passes -> Merge -> Tag -> Release
-
----
-
-## Test Strategy
-
-### Unit Tests (No Network Required)
-
-- Path construction: `slugify()`, `modelDirectory(for:)`, `sharedModelsDirectory`
-- Model availability: Create temp directories with/without `config.json`
-- Model listing: Create multiple temp model directories, verify enumeration
-- Model info: Verify `sizeBytes`, `downloadDate`, `formattedSize`
-- Pattern matching: `findModels(matching:)` with various patterns
-- Error cases: Invalid model IDs, missing directories, missing models
-- Progress math: `overallProgress` computation, `formattedProgress`
-- URL construction: HuggingFace URL building
-- Migration: Create fake legacy directories, verify move logic
-- Manager locking: Verify per-model serialization
-- Manager statistics: Verify count tracking and reset
-
-### Integration Tests (Network Required, Tagged)
-
-- Download a small model's `config.json` from HuggingFace
-- Verify file lands at correct path
-- Verify `force: true` re-downloads
-- Verify `skip-if-exists` behavior
-- Verify auth token header sent when provided
-
----
-
-## What SwiftAcervo is NOT
-
-1. **Not a model loader** -- it does not import MLX, MLXAudioTTS, or any inference framework
-2. **Not a model registry** -- it does not maintain a database of known models or versions
-3. **Not a HuggingFace client** -- it downloads files via direct URLs, not the Hub API
-4. **Not a cache manager** -- it does not evict models or manage disk quotas
-5. **Not a model converter** -- it does not quantize, optimize, or transform model files
-
----
-
-## Future Considerations (Not v1.0)
-
-These are explicitly **out of scope** for v1.0 but may be considered later:
-
-- **Disk quota management**: Alert when SharedModels exceeds a size threshold
-- **Model versioning**: Track which revision of a HuggingFace model is downloaded
-- **Integrity verification**: SHA256 checksums for downloaded files
-- **Partial download recovery**: Resume interrupted downloads instead of restarting
-- **Sandboxed app support**: Fallback path for macOS App Sandbox containers
+1. **ComponentDescriptor, ComponentType, ComponentFile** — Pure types, no logic
+2. **ComponentRegistry** — In-memory dictionary, register/unregister/query
+3. **Registration API on Acervo** — Static methods delegating to registry
+4. **Catalog query API** — `registeredComponents()`, `isComponentReady()`, etc.
+5. **Registry-aware downloads** — `downloadComponent()`, `ensureComponentReady()`
+6. **ComponentHandle** — Abstracted file access
+7. **withComponentAccess on AcervoManager** — Scoped access with locking
+8. **Integrity verification** — SHA-256 on download and access
+9. **New error cases** — Extend AcervoError
