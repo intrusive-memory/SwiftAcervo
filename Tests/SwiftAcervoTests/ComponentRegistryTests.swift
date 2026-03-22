@@ -263,36 +263,37 @@ struct ComponentRegistryTests {
 
     @Test("Acervo.register and Acervo.unregister delegate to shared registry")
     func acervoStaticRegistration() {
-        // Clean up shared registry state
-        ComponentRegistry.shared.removeAll()
+        let uid = UUID().uuidString.prefix(8)
+        let id = "api-test-\(uid)"
 
-        let desc = makeDescriptor(id: "api-test-component")
+        let desc = makeDescriptor(id: id)
         Acervo.register(desc)
 
-        #expect(ComponentRegistry.shared.component("api-test-component") != nil)
+        #expect(ComponentRegistry.shared.component(id) != nil)
 
-        Acervo.unregister("api-test-component")
+        Acervo.unregister(id)
 
-        #expect(ComponentRegistry.shared.component("api-test-component") == nil)
-
-        // Clean up
-        ComponentRegistry.shared.removeAll()
+        #expect(ComponentRegistry.shared.component(id) == nil)
     }
 
     @Test("Acervo.register array delegates to shared registry")
     func acervoStaticRegistrationArray() {
-        ComponentRegistry.shared.removeAll()
+        let uid = UUID().uuidString.prefix(8)
+        let id1 = "batch-1-\(uid)"
+        let id2 = "batch-2-\(uid)"
 
         let descriptors = [
-            makeDescriptor(id: "batch-1"),
-            makeDescriptor(id: "batch-2"),
+            makeDescriptor(id: id1),
+            makeDescriptor(id: id2),
         ]
         Acervo.register(descriptors)
 
-        #expect(ComponentRegistry.shared.allComponents().count == 2)
+        #expect(ComponentRegistry.shared.component(id1) != nil)
+        #expect(ComponentRegistry.shared.component(id2) != nil)
 
         // Clean up
-        ComponentRegistry.shared.removeAll()
+        Acervo.unregister(id1)
+        Acervo.unregister(id2)
     }
 
     // MARK: - Helpers

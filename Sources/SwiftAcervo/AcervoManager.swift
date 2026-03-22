@@ -383,3 +383,112 @@ extension AcervoManager {
         return try perform(modelDir)
     }
 }
+
+// MARK: - Component Access
+
+extension AcervoManager {
+
+    /// Provides scoped, exclusive access to a downloaded component's files.
+    ///
+    /// This method looks up the component in the registry, verifies it is
+    /// downloaded and passes integrity checks, then provides a `ComponentHandle`
+    /// to the closure for path-agnostic file access. The closure is executed
+    /// while holding an exclusive per-component lock, serializing access to
+    /// the same component across concurrent callers.
+    ///
+    /// - Parameters:
+    ///   - componentId: The ID of the registered component to access.
+    ///   - perform: A `@Sendable` closure that receives a `ComponentHandle`
+    ///     and returns a value. The handle's URLs are valid only within this closure.
+    /// - Returns: The value returned by the `perform` closure.
+    /// - Throws: `AcervoError.componentNotRegistered` if the component ID is not
+    ///   in the registry.
+    /// - Throws: `AcervoError.componentNotDownloaded` if the component's files
+    ///   are not present on disk.
+    /// - Throws: `AcervoError.integrityCheckFailed` if any file with a declared
+    ///   checksum fails verification.
+    ///
+    /// ```swift
+    /// let weights = try await AcervoManager.shared.withComponentAccess("t5-xxl-encoder-int4") { handle in
+    ///     let url = try handle.url(matching: ".safetensors")
+    ///     return try Data(contentsOf: url)
+    /// }
+    /// ```
+    public func withComponentAccess<T: Sendable>(
+        _ componentId: String,
+        perform: @Sendable (ComponentHandle) throws -> T
+    ) async throws -> T {
+        try await withComponentAccess(
+            componentId,
+            in: Acervo.sharedModelsDirectory,
+            perform: perform
+        )
+    }
+
+    /// Provides scoped, exclusive access to a downloaded component's files,
+    /// using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories
+    /// without touching the real `sharedModelsDirectory`.
+    ///
+    /// - Parameters:
+    ///   - componentId: The ID of the registered component to access.
+    ///   - baseDirectory: The base directory to resolve component paths against.
+    ///   - perform: A `@Sendable` closure that receives a `ComponentHandle`
+    ///     and returns a value.
+    /// - Returns: The value returned by the `perform` closure.
+    /// - Throws: `AcervoError.componentNotRegistered`, `AcervoError.componentNotDownloaded`,
+    ///   or `AcervoError.integrityCheckFailed`.
+    func withComponentAccess<T: Sendable>(
+        _ componentId: String,
+        in baseDirectory: URL,
+        perform: @Sendable (ComponentHandle) throws -> T
+    ) async throws -> T {
+        // Look up descriptor in registry
+        guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+            throw AcervoError.componentNotRegistered(componentId)
+        }
+
+        // Resolve the component directory
+        let componentDir = baseDirectory.appendingPathComponent(
+            Acervo.slugify(descriptor.huggingFaceRepo)
+        )
+
+        // Verify all files are present
+        let fm = FileManager.default
+        for file in descriptor.files {
+            let filePath = componentDir.appendingPathComponent(file.relativePath).path
+            guard fm.fileExists(atPath: filePath) else {
+                throw AcervoError.componentNotDownloaded(componentId)
+            }
+        }
+
+        // Verify integrity (files with checksums)
+        for file in descriptor.files {
+            guard let expectedHash = file.sha256 else { continue }
+            let fileURL = componentDir.appendingPathComponent(file.relativePath)
+            let actualHash = try IntegrityVerification.sha256(of: fileURL)
+            if actualHash != expectedHash {
+                throw AcervoError.integrityCheckFailed(
+                    file: file.relativePath,
+                    expected: expectedHash,
+                    actual: actualHash
+                )
+            }
+        }
+
+        // Acquire per-component lock (uses same lock pool as model access)
+        await acquireLock(for: componentId)
+        defer { releaseLock(for: componentId) }
+
+        // Track access statistics
+        trackAccess(for: componentId)
+
+        // Construct handle and invoke closure
+        let handle = ComponentHandle(
+            descriptor: descriptor,
+            baseDirectory: componentDir
+        )
+        return try perform(handle)
+    }
+}

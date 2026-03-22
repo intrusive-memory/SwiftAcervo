@@ -1233,3 +1233,216 @@ extension Acervo {
         return failures
     }
 }
+
+// MARK: - Component Downloads
+
+extension Acervo {
+
+    /// Downloads a registered component using the registry's file list and HuggingFace repo.
+    ///
+    /// The caller does not need to specify which files to download -- the registry
+    /// knows. After downloading, files with declared SHA-256 checksums are verified.
+    /// If any file fails verification, it is deleted and an error is thrown.
+    ///
+    /// - Parameters:
+    ///   - componentId: The ID of the registered component to download.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - force: When `true`, re-downloads files even if they already exist. Defaults to `false`.
+    ///   - progress: A callback invoked periodically with download progress.
+    /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
+    ///   `AcervoError.integrityCheckFailed` if a downloaded file fails checksum verification.
+    public static func downloadComponent(
+        _ componentId: String,
+        token: String? = nil,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        try await downloadComponent(
+            componentId,
+            token: token,
+            force: force,
+            progress: progress,
+            in: sharedModelsDirectory
+        )
+    }
+
+    /// Downloads a registered component using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    static func downloadComponent(
+        _ componentId: String,
+        token: String? = nil,
+        force: Bool = false,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+        in baseDirectory: URL
+    ) async throws {
+        guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+            throw AcervoError.componentNotRegistered(componentId)
+        }
+
+        let fileList = descriptor.files.map(\.relativePath)
+
+        // Delegate to the existing v1 download infrastructure
+        try await download(
+            descriptor.huggingFaceRepo,
+            files: fileList,
+            token: token,
+            force: force,
+            progress: progress,
+            in: baseDirectory
+        )
+
+        // Verify integrity for files with checksums
+        let componentDir = baseDirectory.appendingPathComponent(
+            slugify(descriptor.huggingFaceRepo)
+        )
+        for file in descriptor.files {
+            guard let expectedHash = file.sha256 else { continue }
+            let fileURL = componentDir.appendingPathComponent(file.relativePath)
+            let actualHash = try IntegrityVerification.sha256(of: fileURL)
+            if actualHash != expectedHash {
+                // Delete the corrupt file and throw
+                try? FileManager.default.removeItem(at: fileURL)
+                throw AcervoError.integrityCheckFailed(
+                    file: file.relativePath,
+                    expected: expectedHash,
+                    actual: actualHash
+                )
+            }
+        }
+    }
+
+    /// Ensures a registered component is downloaded and ready.
+    ///
+    /// If the component is already fully downloaded and verified (via `isComponentReady`),
+    /// this method returns immediately without performing any downloads. Otherwise,
+    /// it downloads the component using the registry's file list.
+    ///
+    /// - Parameters:
+    ///   - componentId: The ID of the registered component.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - progress: A callback invoked periodically with download progress.
+    /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
+    public static func ensureComponentReady(
+        _ componentId: String,
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        try await ensureComponentReady(
+            componentId,
+            token: token,
+            progress: progress,
+            in: sharedModelsDirectory
+        )
+    }
+
+    /// Ensures a registered component is downloaded and ready, using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    static func ensureComponentReady(
+        _ componentId: String,
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+        in baseDirectory: URL
+    ) async throws {
+        // Check registration first
+        guard ComponentRegistry.shared.component(componentId) != nil else {
+            throw AcervoError.componentNotRegistered(componentId)
+        }
+
+        // If already ready, no-op
+        if isComponentReady(componentId, in: baseDirectory) {
+            return
+        }
+
+        // Download the component
+        try await downloadComponent(
+            componentId,
+            token: token,
+            force: false,
+            progress: progress,
+            in: baseDirectory
+        )
+    }
+
+    /// Ensures multiple registered components are downloaded and ready.
+    ///
+    /// Iterates through the component IDs and ensures each one is ready,
+    /// downloading any that are missing. Components already cached are skipped.
+    ///
+    /// - Parameters:
+    ///   - componentIds: The IDs of the registered components to ensure.
+    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - progress: A callback invoked periodically with download progress.
+    /// - Throws: `AcervoError.componentNotRegistered` if any ID is not in the registry.
+    public static func ensureComponentsReady(
+        _ componentIds: [String],
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    ) async throws {
+        try await ensureComponentsReady(
+            componentIds,
+            token: token,
+            progress: progress,
+            in: sharedModelsDirectory
+        )
+    }
+
+    /// Ensures multiple registered components are downloaded and ready,
+    /// using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    static func ensureComponentsReady(
+        _ componentIds: [String],
+        token: String? = nil,
+        progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+        in baseDirectory: URL
+    ) async throws {
+        for componentId in componentIds {
+            try await ensureComponentReady(
+                componentId,
+                token: token,
+                progress: progress,
+                in: baseDirectory
+            )
+        }
+    }
+}
+
+// MARK: - Component Deletion
+
+extension Acervo {
+
+    /// Deletes a downloaded component's files from disk.
+    ///
+    /// Does NOT unregister the component -- it remains in the registry as
+    /// "not downloaded." If the component is registered but not downloaded,
+    /// this is a no-op (nothing to delete).
+    ///
+    /// - Parameter componentId: The ID of the registered component to delete.
+    /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
+    public static func deleteComponent(_ componentId: String) throws {
+        try deleteComponent(componentId, in: sharedModelsDirectory)
+    }
+
+    /// Deletes a downloaded component's files from disk, using a custom base directory.
+    ///
+    /// This internal overload enables testing with temporary directories.
+    static func deleteComponent(_ componentId: String, in baseDirectory: URL) throws {
+        guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+            throw AcervoError.componentNotRegistered(componentId)
+        }
+
+        let componentDir = baseDirectory.appendingPathComponent(
+            slugify(descriptor.huggingFaceRepo)
+        )
+
+        // If the directory doesn't exist, nothing to delete -- no-op
+        guard FileManager.default.fileExists(atPath: componentDir.path) else {
+            return
+        }
+
+        // Remove the entire component directory
+        try FileManager.default.removeItem(at: componentDir)
+    }
+}
