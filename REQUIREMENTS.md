@@ -89,6 +89,16 @@ public struct ComponentFile: Sendable {
 
 **Quantization variants**: Each quantization level is a separate `ComponentDescriptor` with its own ID. Different quantizations produce different files with different sizes and checksums. Naming pattern: `{model}-{quantization}`, e.g., `flux2-klein-4b-dit-bf16`, `flux2-klein-4b-dit-int4`, `flux2-klein-4b-dit-qint8`. Pre-quantized safetensors are the norm; on-the-fly quantization by WeightLoader is a fallback, not the default path.
 
+**Well-known metadata keys**: To ensure consistency across model plugins, the following metadata keys are standardized:
+
+| Key | Values | Purpose |
+|---|---|---|
+| `deprecated` | `"true"` | Component should be hidden from default UI/CLI |
+| `quantization` | `"int4"`, `"int8"`, `"bf16"`, `"fp16"` | Quantization level (informational, not used by WeightLoader) |
+| `architecture` | e.g., `"dit"`, `"unet"`, `"llm"` | Model architecture family |
+
+Plugins MAY add additional keys beyond this list. Unknown keys are preserved and passed through — Acervo does not validate metadata contents.
+
 ```swift
 public enum ComponentType: String, Sendable, CaseIterable {
     case encoder        // text encoders (T5, CLIP, Qwen3, Mistral)
@@ -97,8 +107,11 @@ public enum ComponentType: String, Sendable, CaseIterable {
     case scheduler      // noise scheduling (weights are rare, but some are learned)
     case tokenizer      // tokenizer files (often bundled with encoder, but separable)
     case auxiliary      // anything else (LoRA adapters, config files, etc.)
+    case languageModel  // autoregressive LLMs used for non-diffusion inference (e.g., TTS)
 }
 ```
+
+**`ComponentType` guidance**: Use `.backbone` for the primary neural network in diffusion pipelines (DiT, U-Net). Use `.languageModel` for autoregressive models that don't participate in diffusion (e.g., Qwen3-TTS). Use `.encoder` for text encoders regardless of their underlying architecture (T5, CLIP, Qwen3-as-encoder, Mistral-as-encoder).
 
 ### A1.2 Registration API
 
@@ -124,6 +137,8 @@ extension Acervo {
 - `estimatedSizeBytes` and `minimumMemoryBytes` take the max of both values
 
 **Registration timing**: Standardized on import time via Swift static `let` initialization. Each plugin defines a static registration block that runs exactly once, thread-safely, when the module is first imported. Pipeline assembly can call `_ = PluginComponents.registered` as a defensive trigger.
+
+**Thread safety**: All `Acervo` static methods (`register`, `registeredComponents`, `isComponentReady`, etc.) are thread-safe. The underlying `ComponentRegistry` uses internal synchronization (a lock or serial queue) to protect concurrent reads and writes. Callers can safely invoke these methods from any thread or task without external coordination. `AcervoManager` remains an actor for stateful operations (`withComponentAccess`, download tracking).
 
 ### A1.3 Catalog Queries
 
@@ -266,6 +281,17 @@ A pipeline recipe declares which components it needs (e.g., T5 encoder + PixArt 
 let componentIds = recipe.allComponentIds  // ["t5-xxl-encoder-int4", "pixart-dit-int4", "sdxl-vae-fp16"]
 try await Acervo.ensureComponentsReady(componentIds) { progress in
     reportProgress(.downloading(component: progress.fileName, fraction: progress.overallProgress))
+}
+```
+
+### A3.3 Component Deletion
+
+```swift
+extension Acervo {
+    /// Delete a downloaded component's files from disk.
+    /// Does NOT unregister the component — it remains in the registry as "not downloaded."
+    /// Throws AcervoError.componentNotRegistered if the ID is unknown.
+    public static func deleteComponent(_ componentId: String) throws
 }
 ```
 
