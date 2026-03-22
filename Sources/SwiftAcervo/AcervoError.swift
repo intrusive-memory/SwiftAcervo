@@ -36,6 +36,18 @@ public enum AcervoError: LocalizedError, Sendable {
     /// The provided model ID is not in the expected "org/repo" format.
     case invalidModelId(String)
 
+    /// A component ID was not found in the registry.
+    case componentNotRegistered(String)
+
+    /// A registered component's files are not yet downloaded.
+    case componentNotDownloaded(String)
+
+    /// A file failed SHA-256 integrity verification.
+    case integrityCheckFailed(file: String, expected: String, actual: String)
+
+    /// A specific file is missing from a downloaded component's directory.
+    case componentFileNotFound(component: String, file: String)
+
     public var errorDescription: String? {
         switch self {
         case .directoryCreationFailed(let path):
@@ -58,6 +70,18 @@ public enum AcervoError: LocalizedError, Sendable {
 
         case .invalidModelId(let modelId):
             return "Invalid model ID '\(modelId)'. Expected format: 'org/repo'"
+
+        case .componentNotRegistered(let componentId):
+            return "Component not registered: '\(componentId)'"
+
+        case .componentNotDownloaded(let componentId):
+            return "Component not downloaded: '\(componentId)'"
+
+        case .integrityCheckFailed(let file, let expected, let actual):
+            return "Integrity check failed for '\(file)': expected SHA-256 '\(expected)', got '\(actual)'"
+
+        case .componentFileNotFound(let component, let file):
+            return "File '\(file)' not found in component '\(component)'"
         }
     }
 }

@@ -15,6 +15,10 @@ struct AcervoErrorTests {
             .modelAlreadyExists("org/repo"),
             .migrationFailed(source: "/old/path", reason: "permission denied"),
             .invalidModelId("bad-id"),
+            .componentNotRegistered("test-component"),
+            .componentNotDownloaded("test-component"),
+            .integrityCheckFailed(file: "model.safetensors", expected: "abc123", actual: "xyz789"),
+            .componentFileNotFound(component: "test-component", file: "weights.bin"),
         ]
 
         for error in errors {
@@ -41,5 +45,49 @@ struct AcervoErrorTests {
 
         #expect(description.contains(fileName))
         #expect(description.contains(String(statusCode)))
+    }
+
+    // MARK: - Component Registry Error Cases
+
+    @Test("componentNotRegistered includes component ID in description")
+    func componentNotRegisteredIncludesId() {
+        let componentId = "t5-xxl-encoder-int4"
+        let error = AcervoError.componentNotRegistered(componentId)
+        let description = error.errorDescription!
+
+        #expect(description.contains(componentId))
+    }
+
+    @Test("componentNotDownloaded includes component ID in description")
+    func componentNotDownloadedIncludesId() {
+        let componentId = "pixart-dit-int4"
+        let error = AcervoError.componentNotDownloaded(componentId)
+        let description = error.errorDescription!
+
+        #expect(description.contains(componentId))
+    }
+
+    @Test("integrityCheckFailed includes file, expected, and actual in description")
+    func integrityCheckFailedIncludesAllValues() {
+        let file = "model.safetensors"
+        let expected = "abc123def456"
+        let actual = "xyz789ghi012"
+        let error = AcervoError.integrityCheckFailed(file: file, expected: expected, actual: actual)
+        let description = error.errorDescription!
+
+        #expect(description.contains(file))
+        #expect(description.contains(expected))
+        #expect(description.contains(actual))
+    }
+
+    @Test("componentFileNotFound includes component and file in description")
+    func componentFileNotFoundIncludesBothValues() {
+        let component = "sdxl-vae-decoder-fp16"
+        let file = "diffusion_pytorch_model.safetensors"
+        let error = AcervoError.componentFileNotFound(component: component, file: file)
+        let description = error.errorDescription!
+
+        #expect(description.contains(component))
+        #expect(description.contains(file))
     }
 }
