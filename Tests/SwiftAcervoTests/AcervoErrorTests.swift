@@ -19,6 +19,13 @@ struct AcervoErrorTests {
             .componentNotDownloaded("test-component"),
             .integrityCheckFailed(file: "model.safetensors", expected: "abc123", actual: "xyz789"),
             .componentFileNotFound(component: "test-component", file: "weights.bin"),
+            .manifestDownloadFailed(statusCode: 404),
+            .manifestDecodingFailed(URLError(.cannotParseResponse)),
+            .manifestIntegrityFailed(expected: "abc", actual: "def"),
+            .manifestVersionUnsupported(99),
+            .manifestModelIdMismatch(expected: "org/repo", actual: "other/model"),
+            .downloadSizeMismatch(fileName: "model.safetensors", expected: 1000, actual: 500),
+            .fileNotInManifest(fileName: "missing.json", modelId: "org/repo"),
         ]
 
         for error in errors {

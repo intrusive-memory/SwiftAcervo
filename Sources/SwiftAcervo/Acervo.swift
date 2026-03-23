@@ -711,26 +711,27 @@ extension Acervo {
 
 extension Acervo {
 
-    /// Downloads specific files for a HuggingFace model to the canonical
-    /// shared models directory.
+    /// Downloads specific files for a model from the CDN.
     ///
-    /// Validates the model ID format, creates the model directory if needed,
-    /// and delegates file-level downloading to `AcervoDownloader`. Files that
-    /// already exist at the destination are skipped unless `force` is `true`.
+    /// Validates the model ID format, fetches the CDN manifest, creates
+    /// the model directory if needed, and downloads each file with
+    /// per-file SHA-256 verification. Files that already exist at the
+    /// destination and match the manifest size are skipped unless
+    /// `force` is `true`.
     ///
     /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///   - modelId: A model identifier in "org/repo" format
     ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
     ///   - files: An array of file names or relative paths within the model
-    ///     repository (e.g., `["config.json", "speech_tokenizer/config.json"]`).
-    ///   - token: An optional HuggingFace API token for gated model access.
+    ///     (e.g., `["config.json", "speech_tokenizer/config.json"]`).
     ///   - force: When `true`, re-downloads files even if they already exist.
     ///     Defaults to `false`.
     ///   - progress: An optional callback invoked periodically with download
     ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
     ///   `AcervoError.directoryCreationFailed` if the model directory cannot be
-    ///   created, or download-related errors from `AcervoDownloader`.
+    ///   created, manifest errors if the CDN manifest is invalid, or
+    ///   download/verification errors from `AcervoDownloader`.
     ///
     /// ```swift
     /// try await Acervo.download(
@@ -742,39 +743,34 @@ extension Acervo {
     public static func download(
         _ modelId: String,
         files: [String],
-        token: String? = nil,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
         try await download(
             modelId,
             files: files,
-            token: token,
             force: force,
             progress: progress,
             in: sharedModelsDirectory
         )
     }
 
-    /// Downloads specific files for a HuggingFace model to the specified
-    /// base directory.
+    /// Downloads specific files for a model to the specified base directory.
     ///
     /// This internal overload enables testing with temporary directories
     /// without touching the real `sharedModelsDirectory`.
     ///
     /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier in "org/repo" format.
-    ///   - files: An array of file names or relative paths within the model repository.
-    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - modelId: A model identifier in "org/repo" format.
+    ///   - files: An array of file names or relative paths within the model.
     ///   - force: When `true`, re-downloads files even if they already exist.
     ///   - progress: An optional progress callback.
     ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
-    ///   or download-related errors from `AcervoDownloader`.
+    ///   or download/manifest-related errors from `AcervoDownloader`.
     static func download(
         _ modelId: String,
         files: [String],
-        token: String? = nil,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
         in baseDirectory: URL
@@ -791,12 +787,11 @@ extension Acervo {
         // Create directory if needed
         try AcervoDownloader.ensureDirectory(at: destination)
 
-        // Delegate to AcervoDownloader for actual file downloads
+        // Manifest-driven download with per-file integrity verification
         try await AcervoDownloader.downloadFiles(
             modelId: modelId,
-            files: files,
+            requestedFiles: files,
             destination: destination,
-            token: token,
             force: force,
             progress: progress
         )
@@ -830,14 +825,13 @@ extension Acervo {
     /// Otherwise, it calls `download()` with `force: false`.
     ///
     /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///   - modelId: A model identifier in "org/repo" format
     ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-    ///   - files: An array of file names or relative paths within the model repository.
-    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - files: An array of file names or relative paths within the model.
     ///   - progress: An optional callback invoked periodically with download progress.
     ///     Must be `@Sendable` for Swift 6 strict concurrency.
     /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
-    ///   or download-related errors from `AcervoDownloader`.
+    ///   or download/manifest-related errors from `AcervoDownloader`.
     ///
     /// ```swift
     /// try await Acervo.ensureAvailable(
@@ -849,13 +843,11 @@ extension Acervo {
     public static func ensureAvailable(
         _ modelId: String,
         files: [String],
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
         try await ensureAvailable(
             modelId,
             files: files,
-            token: token,
             progress: progress,
             in: sharedModelsDirectory
         )
@@ -866,19 +858,9 @@ extension Acervo {
     ///
     /// This internal overload enables testing with temporary directories
     /// without touching the real `sharedModelsDirectory`.
-    ///
-    /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier in "org/repo" format.
-    ///   - files: An array of file names or relative paths within the model repository.
-    ///   - token: An optional HuggingFace API token for gated model access.
-    ///   - progress: An optional progress callback.
-    ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
-    /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
-    ///   or download-related errors from `AcervoDownloader`.
     static func ensureAvailable(
         _ modelId: String,
         files: [String],
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
         in baseDirectory: URL
     ) async throws {
@@ -891,7 +873,6 @@ extension Acervo {
         try await download(
             modelId,
             files: files,
-            token: token,
             force: false,
             progress: progress,
             in: baseDirectory
@@ -1238,28 +1219,25 @@ extension Acervo {
 
 extension Acervo {
 
-    /// Downloads a registered component using the registry's file list and HuggingFace repo.
+    /// Downloads a registered component using the registry's file list and CDN manifest.
     ///
     /// The caller does not need to specify which files to download -- the registry
-    /// knows. After downloading, files with declared SHA-256 checksums are verified.
-    /// If any file fails verification, it is deleted and an error is thrown.
+    /// knows. The CDN manifest provides SHA-256 checksums for per-file verification
+    /// during download. Registry-level checksums are verified as an additional check.
     ///
     /// - Parameters:
     ///   - componentId: The ID of the registered component to download.
-    ///   - token: An optional HuggingFace API token for gated model access.
     ///   - force: When `true`, re-downloads files even if they already exist. Defaults to `false`.
     ///   - progress: A callback invoked periodically with download progress.
     /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
     ///   `AcervoError.integrityCheckFailed` if a downloaded file fails checksum verification.
     public static func downloadComponent(
         _ componentId: String,
-        token: String? = nil,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
         try await downloadComponent(
             componentId,
-            token: token,
             force: force,
             progress: progress,
             in: sharedModelsDirectory
@@ -1271,7 +1249,6 @@ extension Acervo {
     /// This internal overload enables testing with temporary directories.
     static func downloadComponent(
         _ componentId: String,
-        token: String? = nil,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
         in baseDirectory: URL
@@ -1282,17 +1259,16 @@ extension Acervo {
 
         let fileList = descriptor.files.map(\.relativePath)
 
-        // Delegate to the existing v1 download infrastructure
+        // Manifest-driven download with CDN integrity verification
         try await download(
             descriptor.huggingFaceRepo,
             files: fileList,
-            token: token,
             force: force,
             progress: progress,
             in: baseDirectory
         )
 
-        // Verify integrity for files with checksums
+        // Additional registry-level checksum verification
         let componentDir = baseDirectory.appendingPathComponent(
             slugify(descriptor.huggingFaceRepo)
         )
@@ -1301,7 +1277,6 @@ extension Acervo {
             let fileURL = componentDir.appendingPathComponent(file.relativePath)
             let actualHash = try IntegrityVerification.sha256(of: fileURL)
             if actualHash != expectedHash {
-                // Delete the corrupt file and throw
                 try? FileManager.default.removeItem(at: fileURL)
                 throw AcervoError.integrityCheckFailed(
                     file: file.relativePath,
@@ -1320,17 +1295,14 @@ extension Acervo {
     ///
     /// - Parameters:
     ///   - componentId: The ID of the registered component.
-    ///   - token: An optional HuggingFace API token for gated model access.
     ///   - progress: A callback invoked periodically with download progress.
     /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
     public static func ensureComponentReady(
         _ componentId: String,
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
         try await ensureComponentReady(
             componentId,
-            token: token,
             progress: progress,
             in: sharedModelsDirectory
         )
@@ -1341,7 +1313,6 @@ extension Acervo {
     /// This internal overload enables testing with temporary directories.
     static func ensureComponentReady(
         _ componentId: String,
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
         in baseDirectory: URL
     ) async throws {
@@ -1358,7 +1329,6 @@ extension Acervo {
         // Download the component
         try await downloadComponent(
             componentId,
-            token: token,
             force: false,
             progress: progress,
             in: baseDirectory
@@ -1372,17 +1342,14 @@ extension Acervo {
     ///
     /// - Parameters:
     ///   - componentIds: The IDs of the registered components to ensure.
-    ///   - token: An optional HuggingFace API token for gated model access.
     ///   - progress: A callback invoked periodically with download progress.
     /// - Throws: `AcervoError.componentNotRegistered` if any ID is not in the registry.
     public static func ensureComponentsReady(
         _ componentIds: [String],
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
         try await ensureComponentsReady(
             componentIds,
-            token: token,
             progress: progress,
             in: sharedModelsDirectory
         )
@@ -1394,14 +1361,12 @@ extension Acervo {
     /// This internal overload enables testing with temporary directories.
     static func ensureComponentsReady(
         _ componentIds: [String],
-        token: String? = nil,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
         in baseDirectory: URL
     ) async throws {
         for componentId in componentIds {
             try await ensureComponentReady(
                 componentId,
-                token: token,
                 progress: progress,
                 in: baseDirectory
             )

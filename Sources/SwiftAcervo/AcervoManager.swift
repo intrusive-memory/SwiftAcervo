@@ -287,7 +287,7 @@ extension AcervoManager {
 
 extension AcervoManager {
 
-    /// Downloads specific files for a HuggingFace model with per-model locking.
+    /// Downloads specific files for a model with per-model locking.
     ///
     /// If another download or access operation is in progress for the same model,
     /// this method waits until the lock is released before proceeding. Downloads
@@ -297,10 +297,9 @@ extension AcervoManager {
     /// via `defer`.
     ///
     /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier in "org/repo" format
+    ///   - modelId: A model identifier in "org/repo" format
     ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-    ///   - files: An array of file names or relative paths within the model repository.
-    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - files: An array of file names or relative paths within the model.
     ///   - force: When `true`, re-downloads files even if they already exist.
     ///     Defaults to `false`.
     ///   - progress: An optional callback invoked periodically with download
@@ -318,7 +317,6 @@ extension AcervoManager {
     public func download(
         _ modelId: String,
         files: [String],
-        token: String? = nil,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
@@ -330,7 +328,6 @@ extension AcervoManager {
         try await Acervo.download(
             modelId,
             files: files,
-            token: token,
             force: force,
             progress: progress
         )

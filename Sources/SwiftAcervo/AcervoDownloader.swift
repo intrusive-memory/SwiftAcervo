@@ -1,29 +1,29 @@
 // AcervoDownloader.swift
 // SwiftAcervo
 //
-// Internal download infrastructure for fetching HuggingFace model files.
+// Internal download infrastructure for fetching model files from the CDN.
 //
-// AcervoDownloader provides static helpers for constructing HuggingFace
-// download URLs, ensuring local directories exist, and downloading
-// individual files with optional authentication. This type is internal
-// to the package; the public download API lives on `Acervo`.
+// AcervoDownloader provides static helpers for constructing CDN
+// download URLs, fetching and validating manifests, downloading
+// individual files with integrity verification, and orchestrating
+// multi-file manifest-driven downloads.
 //
-// URL format:
-//   https://huggingface.co/{modelId}/resolve/main/{fileName}
+// CDN URL format:
+//   https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/{slug}/{fileName}
 //
-// Auth header (for gated models):
-//   Authorization: Bearer {token}
+// All downloads use SecureDownloadSession which rejects redirects
+// to non-CDN domains.
 
 import Foundation
 
-/// Internal download infrastructure for fetching HuggingFace model files.
+/// Internal download infrastructure for fetching model files from the CDN.
 ///
 /// All methods are static. This struct is not publicly exposed; consumers
 /// use `Acervo.download()` and related public API instead.
 struct AcervoDownloader: Sendable {
 
-    /// The base URL for the HuggingFace model repository.
-    static let huggingFaceBaseURL = "https://huggingface.co"
+    /// The base URL for the CDN model repository.
+    static let cdnBaseURL = "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models"
 
     private init() {}
 }
@@ -32,27 +32,24 @@ struct AcervoDownloader: Sendable {
 
 extension AcervoDownloader {
 
-    /// Constructs the HuggingFace download URL for a specific file in a model repository.
+    /// Constructs the CDN download URL for a specific file in a model.
     ///
-    /// The URL follows the HuggingFace pattern:
-    /// `https://huggingface.co/{modelId}/resolve/main/{fileName}`
+    /// The URL follows the pattern:
+    /// `https://{cdn}/models/{slug}/{fileName}`
     ///
     /// Subdirectory files are supported. For example, a `fileName` of
     /// `"speech_tokenizer/config.json"` produces a URL with the subdirectory
     /// path preserved in the URL path.
     ///
     /// - Parameters:
-    ///   - modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-    ///   - fileName: The file name or relative path within the model repository
+    ///   - modelId: A model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - fileName: The file name or relative path within the model
     ///     (e.g., "config.json" or "speech_tokenizer/config.json").
-    /// - Returns: The fully qualified download URL.
+    /// - Returns: The fully qualified CDN download URL.
     static func buildURL(modelId: String, fileName: String) -> URL {
-        // Build the URL by appending path components to avoid encoding issues.
-        // modelId contains a "/" (e.g., "org/repo") which is a valid path separator.
-        var url = URL(string: huggingFaceBaseURL)!
-            .appendingPathComponent(modelId)
-            .appendingPathComponent("resolve")
-            .appendingPathComponent("main")
+        let slug = Acervo.slugify(modelId)
+        var url = URL(string: cdnBaseURL)!
+            .appendingPathComponent(slug)
 
         // Handle subdirectory files by appending each path component separately
         let pathComponents = fileName.split(separator: "/").map(String.init)
@@ -61,6 +58,17 @@ extension AcervoDownloader {
         }
 
         return url
+    }
+
+    /// Constructs the CDN URL for a model's manifest.
+    ///
+    /// - Parameter modelId: A model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Returns: The URL of `manifest.json` on the CDN.
+    static func buildManifestURL(modelId: String) -> URL {
+        let slug = Acervo.slugify(modelId)
+        return URL(string: cdnBaseURL)!
+            .appendingPathComponent(slug)
+            .appendingPathComponent("manifest.json")
     }
 }
 
@@ -99,59 +107,117 @@ extension AcervoDownloader {
     }
 }
 
+// MARK: - Manifest Download
+
+extension AcervoDownloader {
+
+    /// Constructs a `URLRequest` for downloading a file from the CDN.
+    ///
+    /// - Parameter url: The remote URL to download from.
+    /// - Returns: A configured `URLRequest`.
+    static func buildRequest(from url: URL) -> URLRequest {
+        URLRequest(url: url)
+    }
+
+    /// Downloads and validates the CDN manifest for a model.
+    ///
+    /// This method:
+    /// 1. Downloads `manifest.json` from the CDN
+    /// 2. Decodes the JSON
+    /// 3. Validates the manifest version
+    /// 4. Validates the model ID matches the request
+    /// 5. Verifies the manifest's checksum-of-checksums
+    ///
+    /// - Parameter modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    /// - Returns: The validated manifest.
+    /// - Throws: `AcervoError` for download, decoding, or validation failures.
+    static func downloadManifest(for modelId: String) async throws -> CDNManifest {
+        let url = buildManifestURL(modelId: modelId)
+        let request = buildRequest(from: url)
+
+        // Download manifest using secure session
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await SecureDownloadSession.shared.data(for: request)
+        } catch {
+            throw AcervoError.networkError(error)
+        }
+
+        // Verify HTTP 200
+        if let httpResponse = response as? HTTPURLResponse,
+           httpResponse.statusCode != 200 {
+            throw AcervoError.manifestDownloadFailed(statusCode: httpResponse.statusCode)
+        }
+
+        // Decode JSON
+        let manifest: CDNManifest
+        do {
+            manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
+        } catch {
+            throw AcervoError.manifestDecodingFailed(error)
+        }
+
+        // Validate version
+        guard manifest.manifestVersion == CDNManifest.supportedVersion else {
+            throw AcervoError.manifestVersionUnsupported(manifest.manifestVersion)
+        }
+
+        // Validate model ID matches
+        guard manifest.modelId == modelId else {
+            throw AcervoError.manifestModelIdMismatch(
+                expected: modelId,
+                actual: manifest.modelId
+            )
+        }
+
+        // Verify manifest integrity (checksum-of-checksums)
+        let computedChecksum = CDNManifest.computeChecksum(from: manifest.files.map(\.sha256))
+        guard manifest.manifestChecksum == computedChecksum else {
+            throw AcervoError.manifestIntegrityFailed(
+                expected: manifest.manifestChecksum,
+                actual: computedChecksum
+            )
+        }
+
+        return manifest
+    }
+}
+
 // MARK: - File Download
 
 extension AcervoDownloader {
 
-    /// Constructs a `URLRequest` for downloading a file, optionally including
-    /// a Bearer authorization header.
-    ///
-    /// This is extracted as a separate method to enable unit testing of
-    /// request construction without making network calls.
-    ///
-    /// - Parameters:
-    ///   - url: The remote URL to download from.
-    ///   - token: An optional HuggingFace API token for gated model access.
-    /// - Returns: A configured `URLRequest`.
-    static func buildRequest(from url: URL, token: String?) -> URLRequest {
-        var request = URLRequest(url: url)
-        if let token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        return request
-    }
-
-    /// Downloads a single file from a remote URL to a local destination.
+    /// Downloads a single file from the CDN to a local destination.
     ///
     /// The file is first downloaded to a temporary location, then moved
     /// atomically to the destination. Intermediate directories at the
     /// destination are created automatically if they do not exist.
     ///
-    /// If the server responds with a non-200 HTTP status code, this method
-    /// throws `AcervoError.downloadFailed`. Network-level errors are wrapped
-    /// in `AcervoError.networkError`.
+    /// After download, the file is verified against the manifest entry
+    /// (size + SHA-256). If verification fails, the file is deleted
+    /// and an error is thrown.
     ///
     /// - Parameters:
-    ///   - url: The remote URL to download from.
+    ///   - url: The remote CDN URL to download from.
     ///   - destination: The local file URL where the downloaded file should be placed.
-    ///   - token: An optional HuggingFace API token for gated model access.
-    ///     When provided, an `Authorization: Bearer {token}` header is added.
+    ///   - manifestFile: The manifest entry for this file, used for integrity verification.
     /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
     ///   `AcervoError.networkError` for connection failures,
-    ///   `AcervoError.directoryCreationFailed` if intermediate directories
-    ///   cannot be created.
+    ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
+    ///   if post-download verification fails.
     static func downloadFile(
         from url: URL,
         to destination: URL,
-        token: String?
+        manifestFile: CDNManifestFile
     ) async throws {
-        let request = buildRequest(from: url, token: token)
+        let request = buildRequest(from: url)
 
-        // Download the file
+        // Download the file using secure session
         let tempFileURL: URL
         let response: URLResponse
         do {
-            (tempFileURL, response) = try await URLSession.shared.download(for: request)
+            (tempFileURL, response) = try await SecureDownloadSession.shared.download(for: request)
         } catch {
             throw AcervoError.networkError(error)
         }
@@ -180,49 +246,43 @@ extension AcervoDownloader {
 
         // Move temp file to destination atomically
         try fm.moveItem(at: tempFileURL, to: destination)
+
+        // Verify integrity: size then SHA-256
+        try IntegrityVerification.verifyAgainstManifest(
+            fileURL: destination,
+            manifestFile: manifestFile
+        )
     }
 
-    /// Downloads a single file from a remote URL to a local destination,
-    /// reporting progress via a callback.
+    /// Downloads a single file from the CDN with progress reporting.
     ///
-    /// Uses `URLSession.bytes(for:)` to stream the response, writing chunks
-    /// to a temporary file and reporting byte-level progress along the way.
-    /// Once the download is complete, the temporary file is moved atomically
-    /// to the final destination.
-    ///
-    /// If the server responds with a non-200 HTTP status code, this method
-    /// throws `AcervoError.downloadFailed`. Network-level errors are wrapped
-    /// in `AcervoError.networkError`.
+    /// Uses the same download-then-verify pattern as the non-progress variant.
     ///
     /// - Parameters:
-    ///   - url: The remote URL to download from.
+    ///   - url: The remote CDN URL to download from.
     ///   - destination: The local file URL where the downloaded file should be placed.
-    ///   - token: An optional HuggingFace API token for gated model access.
+    ///   - manifestFile: The manifest entry for this file.
     ///   - fileName: The display name for the file (used in progress reporting).
     ///   - fileIndex: The zero-based index of this file in a multi-file download.
     ///   - totalFiles: The total number of files in the download operation.
-    ///   - progress: An optional callback invoked periodically with download progress.
-    ///     Must be `@Sendable` for Swift 6 strict concurrency.
-    /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
-    ///   `AcervoError.networkError` for connection failures,
-    ///   `AcervoError.directoryCreationFailed` if intermediate directories
-    ///   cannot be created.
+    ///   - progress: An optional callback invoked with download progress.
+    /// - Throws: Download, verification, or directory creation errors.
     static func downloadFile(
         from url: URL,
         to destination: URL,
-        token: String?,
+        manifestFile: CDNManifestFile,
         fileName: String,
         fileIndex: Int,
         totalFiles: Int,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)?
     ) async throws {
-        let request = buildRequest(from: url, token: token)
+        let request = buildRequest(from: url)
 
-        // Download the file to a temp location
+        // Download the file to a temp location using secure session
         let tempFileURL: URL
         let response: URLResponse
         do {
-            (tempFileURL, response) = try await URLSession.shared.download(for: request)
+            (tempFileURL, response) = try await SecureDownloadSession.shared.download(for: request)
         } catch {
             throw AcervoError.networkError(error)
         }
@@ -239,20 +299,14 @@ extension AcervoDownloader {
             )
         }
 
-        // Get file size from response or temp file
-        let totalBytes: Int64
-        if response.expectedContentLength > 0 {
-            totalBytes = response.expectedContentLength
-        } else {
-            let attrs = try FileManager.default.attributesOfItem(atPath: tempFileURL.path)
-            totalBytes = attrs[.size] as? Int64 ?? 0
-        }
+        // Use manifest size for accurate progress (don't rely on Content-Length)
+        let totalBytes = manifestFile.sizeBytes
 
         // Report initial progress
         progress?(AcervoDownloadProgress(
             fileName: fileName,
             bytesDownloaded: 0,
-            totalBytes: totalBytes > 0 ? totalBytes : nil,
+            totalBytes: totalBytes,
             fileIndex: fileIndex,
             totalFiles: totalFiles
         ))
@@ -260,15 +314,6 @@ extension AcervoDownloader {
         // Ensure the destination's parent directory exists
         let parentDirectory = destination.deletingLastPathComponent()
         try ensureDirectory(at: parentDirectory)
-
-        // Report completion
-        progress?(AcervoDownloadProgress(
-            fileName: fileName,
-            bytesDownloaded: totalBytes,
-            totalBytes: totalBytes > 0 ? totalBytes : nil,
-            fileIndex: fileIndex,
-            totalFiles: totalFiles
-        ))
 
         // Remove any existing file at the destination
         let fm = FileManager.default
@@ -278,73 +323,108 @@ extension AcervoDownloader {
 
         // Move temp file to destination atomically
         try fm.moveItem(at: tempFileURL, to: destination)
+
+        // Verify integrity: size then SHA-256
+        try IntegrityVerification.verifyAgainstManifest(
+            fileURL: destination,
+            manifestFile: manifestFile
+        )
+
+        // Report completion
+        progress?(AcervoDownloadProgress(
+            fileName: fileName,
+            bytesDownloaded: totalBytes,
+            totalBytes: totalBytes,
+            fileIndex: fileIndex,
+            totalFiles: totalFiles
+        ))
     }
 }
 
-// MARK: - Multi-File Download
+// MARK: - Multi-File Manifest-Driven Download
 
 extension AcervoDownloader {
 
-    /// Downloads multiple files for a HuggingFace model to a local destination directory.
+    /// Downloads files for a model using the CDN manifest for integrity verification.
     ///
-    /// Iterates through the provided file list, constructing the HuggingFace
-    /// download URL for each file and downloading it to the corresponding
-    /// location within the destination directory. Progress is reported via
-    /// the optional callback, which receives both per-file byte progress and
-    /// overall multi-file progress (via `AcervoDownloadProgress.overallProgress`).
+    /// This is the core download method. It:
+    /// 1. Fetches and validates the CDN manifest
+    /// 2. Filters to the requested files (or all files if none specified)
+    /// 3. Downloads each file from the CDN
+    /// 4. Verifies each file's size and SHA-256 against the manifest
     ///
-    /// Files that already exist at the destination are skipped unless `force`
-    /// is `true`, in which case they are re-downloaded.
+    /// Files that already exist and pass verification are skipped unless `force` is `true`.
     ///
     /// - Parameters:
-    ///   - modelId: The HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-    ///   - files: An array of file names or relative paths within the model repository
-    ///     (e.g., `["config.json", "speech_tokenizer/config.json"]`).
+    ///   - modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+    ///   - requestedFiles: Files to download. If empty, downloads ALL files in the manifest.
     ///   - destination: The local directory URL where files should be placed.
-    ///   - token: An optional HuggingFace API token for gated model access.
-    ///   - force: When `true`, re-downloads files even if they already exist
-    ///     at the destination. Defaults to `false`.
-    ///   - progress: An optional callback invoked periodically with download progress.
-    ///     Must be `@Sendable` for Swift 6 strict concurrency.
-    /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
-    ///   `AcervoError.networkError` for connection failures,
-    ///   `AcervoError.directoryCreationFailed` if directories cannot be created.
+    ///   - force: When `true`, re-downloads files even if they already exist. Defaults to `false`.
+    ///   - progress: An optional callback invoked with download progress.
+    /// - Throws: Manifest, download, or verification errors.
     static func downloadFiles(
         modelId: String,
-        files: [String],
+        requestedFiles: [String],
         destination: URL,
-        token: String?,
         force: Bool = false,
         progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
     ) async throws {
-        // Ensure the top-level destination directory exists
+        // Step 1: Fetch and validate the manifest
+        let manifest = try await downloadManifest(for: modelId)
+
+        // Step 2: Determine which files to download
+        let filesToDownload: [CDNManifestFile]
+        if requestedFiles.isEmpty {
+            // Download everything in the manifest
+            filesToDownload = manifest.files
+        } else {
+            // Download only requested files, validated against manifest
+            filesToDownload = try requestedFiles.map { fileName in
+                guard let entry = manifest.file(at: fileName) else {
+                    throw AcervoError.fileNotInManifest(
+                        fileName: fileName,
+                        modelId: modelId
+                    )
+                }
+                return entry
+            }
+        }
+
+        // Step 3: Ensure the top-level destination directory exists
         try ensureDirectory(at: destination)
 
-        let totalFiles = files.count
+        let totalFiles = filesToDownload.count
 
-        for (fileIndex, fileName) in files.enumerated() {
-            let fileDestination = destination.appendingPathComponent(fileName)
+        // Step 4: Download and verify each file
+        for (fileIndex, manifestFile) in filesToDownload.enumerated() {
+            let fileDestination = destination.appendingPathComponent(manifestFile.path)
 
-            // Skip if file already exists and force is not set
+            // Skip if file already exists, passes size check, and force is not set
             if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
-                // Report completed progress for skipped file
-                progress?(AcervoDownloadProgress(
-                    fileName: fileName,
-                    bytesDownloaded: 1,
-                    totalBytes: 1,
-                    fileIndex: fileIndex,
-                    totalFiles: totalFiles
-                ))
-                continue
+                // Verify existing file against manifest before skipping
+                let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
+                if existingSize == manifestFile.sizeBytes {
+                    // Size matches -- skip (full SHA-256 check on skip is optional;
+                    // use verifyComponent for deep verification)
+                    progress?(AcervoDownloadProgress(
+                        fileName: manifestFile.path,
+                        bytesDownloaded: manifestFile.sizeBytes,
+                        totalBytes: manifestFile.sizeBytes,
+                        fileIndex: fileIndex,
+                        totalFiles: totalFiles
+                    ))
+                    continue
+                }
+                // Size mismatch -- file is corrupt or stale, re-download
             }
 
-            let url = buildURL(modelId: modelId, fileName: fileName)
+            let url = buildURL(modelId: modelId, fileName: manifestFile.path)
 
             try await downloadFile(
                 from: url,
                 to: fileDestination,
-                token: token,
-                fileName: fileName,
+                manifestFile: manifestFile,
+                fileName: manifestFile.path,
                 fileIndex: fileIndex,
                 totalFiles: totalFiles,
                 progress: progress

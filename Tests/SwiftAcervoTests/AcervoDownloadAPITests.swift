@@ -145,23 +145,36 @@ struct AcervoDownloadAPITests {
         #expect(isDirectory.boolValue, "Created path should be a directory")
     }
 
-    @Test("download() with valid model ID and pre-existing files succeeds")
-    func downloadWithExistingFilesSucceeds() async throws {
+    @Test("download() with valid model ID attempts manifest fetch from CDN")
+    func downloadAttemptsManifestFetch() async throws {
         let tempBase = try makeTempBase()
         defer { try? FileManager.default.removeItem(at: tempBase) }
 
-        // Pre-create the model directory with config.json so download skips it
+        // Pre-create the model directory with config.json
         try createFakeModel(modelId: "test-org/existing-model", in: tempBase)
 
-        // download() with force=false should skip existing files
-        try await Acervo.download(
-            "test-org/existing-model",
-            files: ["config.json"],
-            force: false,
-            in: tempBase
-        )
+        // download() now fetches the CDN manifest first, which will fail
+        // for a fake model not on the CDN. This verifies that the manifest
+        // fetch happens even when files exist locally.
+        do {
+            try await Acervo.download(
+                "test-org/existing-model",
+                files: ["config.json"],
+                force: false,
+                in: tempBase
+            )
+            #expect(Bool(false), "Expected download to throw manifest error for fake model")
+        } catch let error as AcervoError {
+            // manifestDownloadFailed or networkError are both valid
+            switch error {
+            case .manifestDownloadFailed, .networkError:
+                break // Expected
+            default:
+                #expect(Bool(false), "Expected manifest/network error but got \(error)")
+            }
+        }
 
-        // Verify file still exists
+        // Verify pre-existing file was NOT deleted by the failed manifest fetch
         let configPath = tempBase
             .appendingPathComponent("test-org_existing-model")
             .appendingPathComponent("config.json")

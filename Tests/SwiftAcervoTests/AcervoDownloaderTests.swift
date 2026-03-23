@@ -26,7 +26,7 @@ struct AcervoDownloaderTests {
 
     // MARK: - URL Construction Tests
 
-    @Test("buildURL constructs correct URL for root file")
+    @Test("buildURL constructs correct CDN URL for root file")
     func buildURLRootFile() {
         let url = AcervoDownloader.buildURL(
             modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
@@ -34,11 +34,11 @@ struct AcervoDownloaderTests {
         )
         #expect(
             url.absoluteString ==
-            "https://huggingface.co/mlx-community/Qwen2.5-7B-Instruct-4bit/resolve/main/config.json"
+            "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen2.5-7B-Instruct-4bit/config.json"
         )
     }
 
-    @Test("buildURL constructs correct URL for subdirectory file")
+    @Test("buildURL constructs correct CDN URL for subdirectory file")
     func buildURLSubdirectoryFile() {
         let url = AcervoDownloader.buildURL(
             modelId: "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
@@ -46,11 +46,11 @@ struct AcervoDownloaderTests {
         )
         #expect(
             url.absoluteString ==
-            "https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16/resolve/main/speech_tokenizer/config.json"
+            "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/speech_tokenizer/config.json"
         )
     }
 
-    @Test("buildURL has correct URL components")
+    @Test("buildURL has correct URL components for CDN")
     func buildURLComponents() {
         let url = AcervoDownloader.buildURL(
             modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
@@ -59,10 +59,10 @@ struct AcervoDownloaderTests {
 
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         #expect(components?.scheme == "https")
-        #expect(components?.host == "huggingface.co")
+        #expect(components?.host == "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev")
         #expect(
             components?.path ==
-            "/mlx-community/Qwen2.5-7B-Instruct-4bit/resolve/main/tokenizer.json"
+            "/models/mlx-community_Qwen2.5-7B-Instruct-4bit/tokenizer.json"
         )
     }
 
@@ -74,27 +74,30 @@ struct AcervoDownloaderTests {
         )
         #expect(
             url.absoluteString ==
-            "https://huggingface.co/org/repo/resolve/main/sub1/sub2/model.safetensors"
+            "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/sub1/sub2/model.safetensors"
+        )
+    }
+
+    @Test("buildManifestURL constructs correct manifest URL")
+    func buildManifestURL() {
+        let url = AcervoDownloader.buildManifestURL(
+            modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit"
+        )
+        #expect(
+            url.absoluteString ==
+            "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen2.5-7B-Instruct-4bit/manifest.json"
         )
     }
 
     // MARK: - Request Construction Tests
 
-    @Test("buildRequest includes Authorization header when token provided")
-    func buildRequestWithToken() {
-        let url = URL(string: "https://huggingface.co/org/repo/resolve/main/config.json")!
-        let request = AcervoDownloader.buildRequest(from: url, token: "hf_testtoken123")
+    @Test("buildRequest creates a request with correct URL")
+    func buildRequestCorrectURL() {
+        let url = URL(string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/config.json")!
+        let request = AcervoDownloader.buildRequest(from: url)
 
         #expect(request.url == url)
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer hf_testtoken123")
-    }
-
-    @Test("buildRequest has no Authorization header when token is nil")
-    func buildRequestWithoutToken() {
-        let url = URL(string: "https://huggingface.co/org/repo/resolve/main/config.json")!
-        let request = AcervoDownloader.buildRequest(from: url, token: nil)
-
-        #expect(request.url == url)
+        // CDN requests should not have Authorization headers
         #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
     }
 
@@ -161,11 +164,17 @@ struct AcervoDownloaderTests {
             .appendingPathComponent("output.json")
         defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
 
+        let manifestFile = CDNManifestFile(
+            path: "file.json",
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            sizeBytes: 100
+        )
+
         do {
             try await AcervoDownloader.downloadFile(
                 from: unreachableURL,
                 to: destination,
-                token: nil
+                manifestFile: manifestFile
             )
             #expect(Bool(false), "Expected downloadFile to throw an error")
         } catch let error as AcervoError {
@@ -188,12 +197,18 @@ struct AcervoDownloaderTests {
             .appendingPathComponent("output.json")
         defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
 
+        let manifestFile = CDNManifestFile(
+            path: "file.json",
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+            sizeBytes: 100
+        )
+
         let collector = ProgressCollector()
         do {
             try await AcervoDownloader.downloadFile(
                 from: unreachableURL,
                 to: destination,
-                token: nil,
+                manifestFile: manifestFile,
                 fileName: "file.json",
                 fileIndex: 0,
                 totalFiles: 1,
@@ -322,269 +337,5 @@ struct AcervoDownloaderTests {
         // (1 + 0.0) / 3 = 0.333
         let expected = 1.0 / 3.0
         #expect(abs(progress.overallProgress - expected) < 0.001)
-    }
-
-    // MARK: - Skip-If-Exists Tests
-
-    @Test("downloadFiles skips existing files when force is false")
-    func downloadFilesSkipsExisting() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-skip-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        // Create destination directory with a pre-existing file
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-        let existingContent = "existing content"
-        let existingFile = tempBase.appendingPathComponent("config.json")
-        try existingContent.write(to: existingFile, atomically: true, encoding: .utf8)
-
-        let collector = ProgressCollector()
-
-        // downloadFiles should skip the existing file (force=false)
-        // We use a model ID that will fail if actually downloaded (localhost),
-        // so if it tries to download, the test will fail with a network error.
-        // The file "config.json" exists, so it should be skipped.
-        try await AcervoDownloader.downloadFiles(
-            modelId: "test/skip-model",
-            files: ["config.json"],
-            destination: tempBase,
-            token: nil,
-            force: false,
-            progress: { report in
-                Task { await collector.append(report) }
-            }
-        )
-
-        // The file should not have been re-downloaded; content should be unchanged
-        let content = try String(contentsOf: existingFile, encoding: .utf8)
-        #expect(content == existingContent)
-
-        // Allow a moment for async Task to complete
-        try await Task.sleep(for: .milliseconds(50))
-
-        // Progress should have been reported for the skipped file
-        let reports = await collector.getReports()
-        #expect(reports.count == 1)
-        #expect(reports[0].fileName == "config.json")
-        #expect(reports[0].fileIndex == 0)
-        #expect(reports[0].totalFiles == 1)
-        // Skipped file reports as complete
-        #expect(reports[0].bytesDownloaded == 1)
-        #expect(reports[0].totalBytes == 1)
-    }
-
-    @Test("downloadFiles re-downloads when force is true")
-    func downloadFilesForceRedownload() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-force-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        // Create destination directory with a pre-existing file
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-        let existingFile = tempBase.appendingPathComponent("config.json")
-        try "existing content".write(to: existingFile, atomically: true, encoding: .utf8)
-
-        // With force=true, it should attempt to re-download even though the file exists.
-        // We use a nonexistent model ID so the download will fail with either
-        // networkError or downloadFailed -- either way proves it attempted the download
-        // rather than skipping the existing file.
-        var didAttemptDownload = false
-        do {
-            try await AcervoDownloader.downloadFiles(
-                modelId: "nonexistent-org/nonexistent-model-xyzzy",
-                files: ["config.json"],
-                destination: tempBase,
-                token: nil,
-                force: true,
-                progress: nil
-            )
-            // If it somehow succeeded, the file would have been replaced
-            // which also proves force=true worked
-            didAttemptDownload = true
-        } catch {
-            // Any error (networkError or downloadFailed) proves the download was attempted
-            didAttemptDownload = true
-        }
-        #expect(didAttemptDownload, "force=true should attempt download even when file exists")
-    }
-
-    @Test("downloadFiles skips multiple existing files with correct indices")
-    func downloadFilesSkipsMultipleExisting() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-multi-skip-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        // Create destination directory with multiple pre-existing files
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-        try "a".write(
-            to: tempBase.appendingPathComponent("file1.json"),
-            atomically: true,
-            encoding: .utf8
-        )
-        try "b".write(
-            to: tempBase.appendingPathComponent("file2.json"),
-            atomically: true,
-            encoding: .utf8
-        )
-        try "c".write(
-            to: tempBase.appendingPathComponent("file3.json"),
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let collector = ProgressCollector()
-
-        try await AcervoDownloader.downloadFiles(
-            modelId: "test/multi-model",
-            files: ["file1.json", "file2.json", "file3.json"],
-            destination: tempBase,
-            token: nil,
-            force: false,
-            progress: { report in
-                Task { await collector.append(report) }
-            }
-        )
-
-        // Allow a moment for async Tasks to complete
-        try await Task.sleep(for: .milliseconds(50))
-
-        // All three files should be skipped
-        let reports = await collector.getReports()
-        #expect(reports.count == 3)
-
-        // Verify file indices are correct
-        #expect(reports[0].fileIndex == 0)
-        #expect(reports[0].fileName == "file1.json")
-        #expect(reports[0].totalFiles == 3)
-
-        #expect(reports[1].fileIndex == 1)
-        #expect(reports[1].fileName == "file2.json")
-        #expect(reports[1].totalFiles == 3)
-
-        #expect(reports[2].fileIndex == 2)
-        #expect(reports[2].fileName == "file3.json")
-        #expect(reports[2].totalFiles == 3)
-    }
-
-    @Test("downloadFiles skips existing file and preserves its content")
-    func downloadFilesSkipsPreservesContent() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-preserve-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-
-        // Write known content to the file
-        let knownContent = "{\"key\": \"preserved_value\"}"
-        let file = tempBase.appendingPathComponent("data.json")
-        try knownContent.write(to: file, atomically: true, encoding: .utf8)
-
-        // Get the modification date before the call
-        let attrs = try FileManager.default.attributesOfItem(atPath: file.path)
-        let modDateBefore = attrs[.modificationDate] as? Date
-
-        // Small delay to ensure any re-download would produce a different mod date
-        try await Task.sleep(for: .milliseconds(50))
-
-        // Skip since file exists
-        try await AcervoDownloader.downloadFiles(
-            modelId: "test/preserve-model",
-            files: ["data.json"],
-            destination: tempBase,
-            token: nil,
-            force: false,
-            progress: nil
-        )
-
-        // Verify content is unchanged
-        let afterContent = try String(contentsOf: file, encoding: .utf8)
-        #expect(afterContent == knownContent)
-
-        // Verify modification date is unchanged (file was not touched)
-        let attrsAfter = try FileManager.default.attributesOfItem(atPath: file.path)
-        let modDateAfter = attrsAfter[.modificationDate] as? Date
-        #expect(modDateBefore == modDateAfter)
-    }
-
-    @Test("downloadFiles skips subdirectory file when it exists")
-    func downloadFilesSkipsSubdirectoryFile() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-subdir-skip-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        // Create destination with a subdirectory file
-        let subdir = tempBase.appendingPathComponent("speech_tokenizer")
-        try FileManager.default.createDirectory(
-            at: subdir,
-            withIntermediateDirectories: true
-        )
-        let subdirFile = subdir.appendingPathComponent("config.json")
-        try "subdir content".write(to: subdirFile, atomically: true, encoding: .utf8)
-
-        let collector = ProgressCollector()
-
-        // Should skip the subdirectory file since it exists
-        try await AcervoDownloader.downloadFiles(
-            modelId: "test/subdir-model",
-            files: ["speech_tokenizer/config.json"],
-            destination: tempBase,
-            token: nil,
-            force: false,
-            progress: { report in
-                Task { await collector.append(report) }
-            }
-        )
-
-        // Content should be unchanged
-        let content = try String(contentsOf: subdirFile, encoding: .utf8)
-        #expect(content == "subdir content")
-
-        // Allow async tasks to complete
-        try await Task.sleep(for: .milliseconds(50))
-
-        let reports = await collector.getReports()
-        #expect(reports.count == 1)
-        #expect(reports[0].fileName == "speech_tokenizer/config.json")
-    }
-
-    @Test("downloadFiles does not skip missing files when force is false")
-    func downloadFilesDoesNotSkipMissing() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloaderTests-no-skip-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-
-        // File does NOT exist, so even with force=false it should try to download.
-        // The download will fail because the model doesn't exist, proving the attempt.
-        var downloadAttempted = false
-        do {
-            try await AcervoDownloader.downloadFiles(
-                modelId: "nonexistent-org/missing-model-xyz",
-                files: ["missing.json"],
-                destination: tempBase,
-                token: nil,
-                force: false,
-                progress: nil
-            )
-        } catch {
-            downloadAttempted = true
-        }
-        #expect(downloadAttempted, "Missing files should trigger download even with force=false")
     }
 }

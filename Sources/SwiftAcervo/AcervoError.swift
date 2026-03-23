@@ -48,6 +48,27 @@ public enum AcervoError: LocalizedError, Sendable {
     /// A specific file is missing from a downloaded component's directory.
     case componentFileNotFound(component: String, file: String)
 
+    /// The CDN manifest could not be downloaded.
+    case manifestDownloadFailed(statusCode: Int)
+
+    /// The CDN manifest JSON could not be decoded.
+    case manifestDecodingFailed(Error)
+
+    /// The manifest's checksum-of-checksums does not match the computed value.
+    case manifestIntegrityFailed(expected: String, actual: String)
+
+    /// The manifest declares a version this client does not support.
+    case manifestVersionUnsupported(Int)
+
+    /// The manifest's `modelId` field does not match the requested model.
+    case manifestModelIdMismatch(expected: String, actual: String)
+
+    /// A downloaded file's size does not match the manifest.
+    case downloadSizeMismatch(fileName: String, expected: Int64, actual: Int64)
+
+    /// A requested file is not listed in the CDN manifest.
+    case fileNotInManifest(fileName: String, modelId: String)
+
     public var errorDescription: String? {
         switch self {
         case .directoryCreationFailed(let path):
@@ -82,6 +103,27 @@ public enum AcervoError: LocalizedError, Sendable {
 
         case .componentFileNotFound(let component, let file):
             return "File '\(file)' not found in component '\(component)'"
+
+        case .manifestDownloadFailed(let statusCode):
+            return "CDN manifest download failed with HTTP status code \(statusCode)"
+
+        case .manifestDecodingFailed(let error):
+            return "CDN manifest JSON decoding failed: \(error.localizedDescription)"
+
+        case .manifestIntegrityFailed(let expected, let actual):
+            return "CDN manifest integrity check failed: expected checksum '\(expected)', got '\(actual)'"
+
+        case .manifestVersionUnsupported(let version):
+            return "CDN manifest version \(version) is not supported by this client"
+
+        case .manifestModelIdMismatch(let expected, let actual):
+            return "CDN manifest model ID mismatch: expected '\(expected)', got '\(actual)'"
+
+        case .downloadSizeMismatch(let fileName, let expected, let actual):
+            return "Downloaded file '\(fileName)' size mismatch: expected \(expected) bytes, got \(actual) bytes"
+
+        case .fileNotInManifest(let fileName, let modelId):
+            return "File '\(fileName)' is not listed in the CDN manifest for '\(modelId)'"
         }
     }
 }
