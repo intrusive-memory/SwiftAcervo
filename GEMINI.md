@@ -4,7 +4,7 @@
 
 **SwiftAcervo** -- Shared AI model discovery and management.
 
-**Version**: 0.3.0
+**Version**: 0.4.0
 
 Canonical model path: `~/Library/SharedModels/{org}_{repo}/`
 

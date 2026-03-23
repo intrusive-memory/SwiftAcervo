@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.3.0 (March 2026)
+**Current Version**: 0.4.0 (March 2026)
 
 ---
 
@@ -36,7 +36,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/Acervo.swift` -- Static discovery + download API (version constant)
 - `Sources/SwiftAcervo/AcervoManager.swift` -- Actor-based thread-safe manager
 - `Sources/SwiftAcervo/AcervoModel.swift` -- Model metadata struct
-- `Sources/SwiftAcervo/AcervoError.swift` -- Error types (7 manifest/CDN errors added in v0.3.0)
+- `Sources/SwiftAcervo/AcervoError.swift` -- Error types (7 manifest/CDN errors added in v0.4.0)
 - `Sources/SwiftAcervo/AcervoDownloader.swift` -- CDN download logic with manifest verification
 - `Sources/SwiftAcervo/AcervoDownloadProgress.swift` -- Download progress tracking
 - `Sources/SwiftAcervo/AcervoMigration.swift` -- Legacy path migration
@@ -49,7 +49,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
 - `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
 - `Tools/upload-model.sh` -- Full HuggingFace → manifest → R2 upload workflow
-- `Tests/SwiftAcervoTests/` -- 349 unit tests
+- `Tests/SwiftAcervoTests/` -- 366 unit tests
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
 ## CDN Download Architecture
@@ -153,8 +153,11 @@ SwiftAcervo has **zero external dependencies**. It uses only Foundation and Cryp
 ## Build and Test
 
 ```bash
-xcodebuild build -scheme SwiftAcervo -destination 'platform=macOS'
-xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
+make build    # Build the SwiftAcervo scheme
+make test     # Run all tests
+make lint     # Format all Swift source files
+make clean    # Clean build artifacts
+make resolve  # Resolve Swift package dependencies
 ```
 
 ## CDN Upload Workflow
