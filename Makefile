@@ -1,5 +1,5 @@
 SCHEME = SwiftAcervo
-DESTINATION = 'platform=macOS'
+DESTINATION = 'platform=macOS,arch=arm64'
 
 .PHONY: build test clean resolve lint help
 
