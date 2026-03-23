@@ -16,23 +16,23 @@ import Foundation
 /// original 3xx response (which then fails our HTTP 200 check).
 final class SecureDownloadDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
 
-    /// The allowed CDN host for all model downloads.
-    static let allowedHost = "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev"
+  /// The allowed CDN host for all model downloads.
+  static let allowedHost = "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev"
 
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
-        if let host = request.url?.host, host == Self.allowedHost {
-            completionHandler(request)
-        } else {
-            // Reject redirect to non-CDN domain
-            completionHandler(nil)
-        }
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    if let host = request.url?.host, host == Self.allowedHost {
+      completionHandler(request)
+    } else {
+      // Reject redirect to non-CDN domain
+      completionHandler(nil)
     }
+  }
 }
 
 /// Provides a singleton URLSession locked to the CDN domain.
@@ -42,18 +42,18 @@ final class SecureDownloadDelegate: NSObject, URLSessionTaskDelegate, @unchecked
 /// host are permitted.
 enum SecureDownloadSession {
 
-    private static let delegate = SecureDownloadDelegate()
+  private static let delegate = SecureDownloadDelegate()
 
-    /// The configured URLSession. Thread-safe, reusable.
-    static let shared: URLSession = {
-        let config = URLSessionConfiguration.default
-        // No local caching for model files; we verify integrity ourselves
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.httpMaximumConnectionsPerHost = 4
-        return URLSession(
-            configuration: config,
-            delegate: delegate,
-            delegateQueue: nil
-        )
-    }()
+  /// The configured URLSession. Thread-safe, reusable.
+  static let shared: URLSession = {
+    let config = URLSessionConfiguration.default
+    // No local caching for model files; we verify integrity ourselves
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    config.httpMaximumConnectionsPerHost = 4
+    return URLSession(
+      configuration: config,
+      delegate: delegate,
+      delegateQueue: nil
+    )
+  }()
 }

@@ -60,7 +60,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.1.0")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.3.0")
     ],
     targets: [
         .target(
@@ -82,7 +82,7 @@ Or add it through Xcode: **File > Add Package Dependencies** and enter the repos
 | Swift      | 6.2+           |
 | Xcode      | 26+            |
 
-SwiftAcervo has **zero external dependencies**. It uses only Foundation framework APIs -- `URLSession` for downloads, `FileManager` for discovery. No HuggingFace Hub library, no MLX, no model-specific imports.
+SwiftAcervo has **zero external dependencies**. It uses only Foundation and CryptoKit (system frameworks) -- `URLSession` for downloads, `FileManager` for discovery, `SHA256` for integrity verification. No HuggingFace Hub library, no MLX, no model-specific imports.
 
 ## Quick Start
 
@@ -201,9 +201,19 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 | Method | Description |
 |--------|-------------|
-| `download(_:files:token:force:progress:)` | Downloads specified files from HuggingFace |
-| `ensureAvailable(_:files:token:progress:)` | Downloads only if model is not already available |
+| `download(_:files:force:progress:)` | Downloads specified files from CDN with manifest verification |
+| `ensureAvailable(_:files:progress:)` | Downloads only if model is not already available |
 | `deleteModel(_:)` | Removes a model directory from disk |
+
+#### Component Registry
+
+| Method | Description |
+|--------|-------------|
+| `register(_:)` | Registers a component descriptor with the global registry |
+| `downloadComponent(_:force:progress:)` | Downloads a registered component using registry file list |
+| `ensureComponentReady(_:progress:)` | Ensures a component is downloaded and verified |
+| `verifyComponent(_:)` | Verifies a component's files against SHA-256 checksums |
+| `registeredComponents()` | Returns all registered component descriptors |
 
 #### Migration
 
@@ -217,7 +227,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 | Method | Description |
 |--------|-------------|
-| `download(_:files:token:force:progress:)` | Download with per-model serialization |
+| `download(_:files:force:progress:)` | Download with per-model serialization |
 | `withModelAccess(_:perform:)` | Exclusive access to a model directory while holding the lock |
 | `clearCache()` | Clear the URL cache |
 | `preloadModels()` | Preload all model metadata into the cache |
@@ -246,6 +256,13 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 - `totalFiles: Int` -- Total files being downloaded
 - `overallProgress: Double` -- Combined progress from 0.0 to 1.0
 
+**`ComponentDescriptor`** -- Declarative model component description (`Sendable`, `Identifiable`):
+- `id: String` -- Unique component identifier
+- `type: ComponentType` -- Functional role (`.encoder`, `.backbone`, `.decoder`, etc.)
+- `huggingFaceRepo: String` -- The origin repository identifier
+- `files: [ComponentFile]` -- Required files with optional checksums
+- `estimatedSizeBytes: Int64` -- Total expected download size
+
 **`AcervoError`** -- Error types (`LocalizedError`, `Sendable`):
 - `directoryCreationFailed(String)`
 - `modelNotFound(String)`
@@ -254,14 +271,20 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 - `modelAlreadyExists(String)`
 - `migrationFailed(source:reason:)`
 - `invalidModelId(String)`
+- `manifestDownloadFailed(statusCode:)` -- CDN manifest unavailable
+- `manifestIntegrityFailed(expected:actual:)` -- Manifest checksum mismatch
+- `integrityCheckFailed(file:expected:actual:)` -- File SHA-256 mismatch
+- `downloadSizeMismatch(fileName:expected:actual:)` -- File size mismatch
+- `fileNotInManifest(fileName:modelId:)` -- Requested file not in CDN manifest
 
 ## Design Principles
 
 - **Stability first.** The API surface is intentionally small. Once set, it should rarely change.
-- **Zero dependencies.** Foundation only. No HuggingFace Hub library, no MLX, no model-specific logic.
+- **Zero dependencies.** Foundation + CryptoKit only. No HuggingFace Hub library, no MLX, no model-specific logic.
 - **Not a model loader.** SwiftAcervo finds and downloads models. Loading is the consumer's job.
-- **Caller-specified file lists.** Different model types need different files. The caller provides the list.
-- **config.json as validity marker.** Universal across all HuggingFace model types.
+- **CDN-only downloads.** All models are served from a private CDN with per-file SHA-256 verification.
+- **Integrity by default.** Every download is verified against a CDN manifest. Corrupt files are rejected immediately.
+- **config.json as validity marker.** Universal across all model types.
 - **Swift 6 strict concurrency.** All closures are `@Sendable`. `AcervoManager` is an actor.
 
 ## Consumer Integration

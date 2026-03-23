@@ -14,45 +14,45 @@ import Foundation
 /// (e.g., Qwen3-TTS). Use `.encoder` for text encoders regardless of their underlying
 /// architecture (T5, CLIP, Qwen3-as-encoder, Mistral-as-encoder).
 public enum ComponentType: String, Sendable, CaseIterable, Codable {
-    /// Text encoders (T5, CLIP, Qwen3, Mistral).
-    case encoder
-    /// Core model (DiT, autoregressive, etc.).
-    case backbone
-    /// Latent-to-data conversion (VAE, vocoder).
-    case decoder
-    /// Noise scheduling (weights are rare, but some are learned).
-    case scheduler
-    /// Tokenizer files (often bundled with encoder, but separable).
-    case tokenizer
-    /// Anything else (LoRA adapters, config files, etc.).
-    case auxiliary
-    /// Autoregressive LLMs used for non-diffusion inference (e.g., TTS).
-    case languageModel
+  /// Text encoders (T5, CLIP, Qwen3, Mistral).
+  case encoder
+  /// Core model (DiT, autoregressive, etc.).
+  case backbone
+  /// Latent-to-data conversion (VAE, vocoder).
+  case decoder
+  /// Noise scheduling (weights are rare, but some are learned).
+  case scheduler
+  /// Tokenizer files (often bundled with encoder, but separable).
+  case tokenizer
+  /// Anything else (LoRA adapters, config files, etc.).
+  case auxiliary
+  /// Autoregressive LLMs used for non-diffusion inference (e.g., TTS).
+  case languageModel
 }
 
 /// A file within a downloadable component, with optional size and integrity metadata.
 public struct ComponentFile: Sendable, Equatable {
-    /// The file path relative to the component's root directory
-    /// (e.g., "model.safetensors" or "speech_tokenizer/config.json").
-    public let relativePath: String
+  /// The file path relative to the component's root directory
+  /// (e.g., "model.safetensors" or "speech_tokenizer/config.json").
+  public let relativePath: String
 
-    /// Expected file size in bytes, or `nil` if unknown.
-    public let expectedSizeBytes: Int64?
+  /// Expected file size in bytes, or `nil` if unknown.
+  public let expectedSizeBytes: Int64?
 
-    /// Expected SHA-256 hex digest, or `nil` to skip verification.
-    public let sha256: String?
+  /// Expected SHA-256 hex digest, or `nil` to skip verification.
+  public let sha256: String?
 
-    /// Creates a new component file descriptor.
-    ///
-    /// - Parameters:
-    ///   - relativePath: The file path relative to the component root.
-    ///   - expectedSizeBytes: Expected size in bytes, or `nil` if unknown.
-    ///   - sha256: Expected SHA-256 hex digest, or `nil` to skip verification.
-    public init(relativePath: String, expectedSizeBytes: Int64? = nil, sha256: String? = nil) {
-        self.relativePath = relativePath
-        self.expectedSizeBytes = expectedSizeBytes
-        self.sha256 = sha256
-    }
+  /// Creates a new component file descriptor.
+  ///
+  /// - Parameters:
+  ///   - relativePath: The file path relative to the component root.
+  ///   - expectedSizeBytes: Expected size in bytes, or `nil` if unknown.
+  ///   - sha256: Expected SHA-256 hex digest, or `nil` to skip verification.
+  public init(relativePath: String, expectedSizeBytes: Int64? = nil, sha256: String? = nil) {
+    self.relativePath = relativePath
+    self.expectedSizeBytes = expectedSizeBytes
+    self.sha256 = sha256
+  }
 }
 
 /// A declarative description of a downloadable model component.
@@ -65,78 +65,78 @@ public struct ComponentFile: Sendable, Equatable {
 /// This supports deduplication semantics: registering the same component ID twice
 /// updates the existing entry rather than creating a duplicate.
 public struct ComponentDescriptor: Sendable, Identifiable {
-    /// Unique identifier for this component (e.g., "t5-xxl-encoder-int4").
-    public let id: String
+  /// Unique identifier for this component (e.g., "t5-xxl-encoder-int4").
+  public let id: String
 
-    /// The functional role of this component within a pipeline.
-    public let type: ComponentType
+  /// The functional role of this component within a pipeline.
+  public let type: ComponentType
 
-    /// Human-readable name for display (e.g., "T5-XXL Text Encoder (int4)").
-    public let displayName: String
+  /// Human-readable name for display (e.g., "T5-XXL Text Encoder (int4)").
+  public let displayName: String
 
-    /// The HuggingFace repository this component is downloaded from
-    /// (e.g., "intrusive-memory/t5-xxl-int4-mlx").
-    public let huggingFaceRepo: String
+  /// The HuggingFace repository this component is downloaded from
+  /// (e.g., "intrusive-memory/t5-xxl-int4-mlx").
+  public let huggingFaceRepo: String
 
-    /// The files that comprise this component, with optional size and checksum metadata.
-    public let files: [ComponentFile]
+  /// The files that comprise this component, with optional size and checksum metadata.
+  public let files: [ComponentFile]
 
-    /// Total expected download size in bytes.
-    public let estimatedSizeBytes: Int64
+  /// Total expected download size in bytes.
+  public let estimatedSizeBytes: Int64
 
-    /// Minimum RAM needed to load this component into memory.
-    public let minimumMemoryBytes: Int64
+  /// Minimum RAM needed to load this component into memory.
+  public let minimumMemoryBytes: Int64
 
-    /// Model-specific key-value metadata. Well-known keys include "deprecated",
-    /// "quantization", and "architecture". Unknown keys are preserved as-is.
-    public let metadata: [String: String]
+  /// Model-specific key-value metadata. Well-known keys include "deprecated",
+  /// "quantization", and "architecture". Unknown keys are preserved as-is.
+  public let metadata: [String: String]
 
-    /// Creates a new component descriptor.
-    ///
-    /// - Parameters:
-    ///   - id: Unique identifier for this component.
-    ///   - type: The functional role of this component.
-    ///   - displayName: Human-readable name for display.
-    ///   - huggingFaceRepo: The HuggingFace repository identifier.
-    ///   - files: Required files with optional size and checksum metadata.
-    ///   - estimatedSizeBytes: Total expected download size in bytes.
-    ///   - minimumMemoryBytes: Minimum RAM needed to load this component.
-    ///   - metadata: Model-specific key-value pairs. Defaults to empty.
-    public init(
-        id: String,
-        type: ComponentType,
-        displayName: String,
-        huggingFaceRepo: String,
-        files: [ComponentFile],
-        estimatedSizeBytes: Int64,
-        minimumMemoryBytes: Int64,
-        metadata: [String: String] = [:]
-    ) {
-        self.id = id
-        self.type = type
-        self.displayName = displayName
-        self.huggingFaceRepo = huggingFaceRepo
-        self.files = files
-        self.estimatedSizeBytes = estimatedSizeBytes
-        self.minimumMemoryBytes = minimumMemoryBytes
-        self.metadata = metadata
-    }
+  /// Creates a new component descriptor.
+  ///
+  /// - Parameters:
+  ///   - id: Unique identifier for this component.
+  ///   - type: The functional role of this component.
+  ///   - displayName: Human-readable name for display.
+  ///   - huggingFaceRepo: The HuggingFace repository identifier.
+  ///   - files: Required files with optional size and checksum metadata.
+  ///   - estimatedSizeBytes: Total expected download size in bytes.
+  ///   - minimumMemoryBytes: Minimum RAM needed to load this component.
+  ///   - metadata: Model-specific key-value pairs. Defaults to empty.
+  public init(
+    id: String,
+    type: ComponentType,
+    displayName: String,
+    huggingFaceRepo: String,
+    files: [ComponentFile],
+    estimatedSizeBytes: Int64,
+    minimumMemoryBytes: Int64,
+    metadata: [String: String] = [:]
+  ) {
+    self.id = id
+    self.type = type
+    self.displayName = displayName
+    self.huggingFaceRepo = huggingFaceRepo
+    self.files = files
+    self.estimatedSizeBytes = estimatedSizeBytes
+    self.minimumMemoryBytes = minimumMemoryBytes
+    self.metadata = metadata
+  }
 }
 
 // MARK: - Equatable
 
 extension ComponentDescriptor: Equatable {
-    /// Two descriptors are equal if they share the same `id`.
-    /// This supports deduplication: re-registering the same ID updates the entry.
-    public static func == (lhs: ComponentDescriptor, rhs: ComponentDescriptor) -> Bool {
-        lhs.id == rhs.id
-    }
+  /// Two descriptors are equal if they share the same `id`.
+  /// This supports deduplication: re-registering the same ID updates the entry.
+  public static func == (lhs: ComponentDescriptor, rhs: ComponentDescriptor) -> Bool {
+    lhs.id == rhs.id
+  }
 }
 
 // MARK: - Hashable
 
 extension ComponentDescriptor: Hashable {
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+  }
 }

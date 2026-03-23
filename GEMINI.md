@@ -1,9 +1,18 @@
 # GEMINI.md
 
-See [AGENTS.md](AGENTS.md) for full project documentation.
+**Read [AGENTS.md](AGENTS.md) first** for universal project documentation.
 
-**SwiftAcervo** -- Shared AI model discovery and management for HuggingFace models.
+**SwiftAcervo** -- Shared AI model discovery and management.
+
+**Version**: 0.3.0
 
 Canonical model path: `~/Library/SharedModels/{org}_{repo}/`
 
-Platforms: iOS 26.0+, macOS 26.0+ only. Zero external dependencies.
+Platforms: iOS 26.0+, macOS 26.0+ only. Zero external dependencies (Foundation + CryptoKit).
+
+## Build and Test
+
+```bash
+xcodebuild build -scheme SwiftAcervo -destination 'platform=macOS'
+xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
+```

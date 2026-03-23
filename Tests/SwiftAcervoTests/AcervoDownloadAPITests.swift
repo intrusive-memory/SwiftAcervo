@@ -1,5 +1,6 @@
-import Testing
 import Foundation
+import Testing
+
 @testable import SwiftAcervo
 
 /// Tests for the public download API: Acervo.download(), Acervo.ensureAvailable(),
@@ -10,402 +11,406 @@ import Foundation
 /// Full integration tests with real HuggingFace downloads are in Sprint 14.
 struct AcervoDownloadAPITests {
 
-    // MARK: - Test Helpers
+  // MARK: - Test Helpers
 
-    /// Creates a temporary base directory for testing and returns its URL.
-    private func makeTempBase() throws -> URL {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AcervoDownloadAPITests-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(
-            at: tempBase,
-            withIntermediateDirectories: true
-        )
-        return tempBase
+  /// Creates a temporary base directory for testing and returns its URL.
+  private func makeTempBase() throws -> URL {
+    let tempBase = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AcervoDownloadAPITests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(
+      at: tempBase,
+      withIntermediateDirectories: true
+    )
+    return tempBase
+  }
+
+  /// Creates a fake model directory with config.json in the given base directory.
+  private func createFakeModel(
+    modelId: String,
+    in baseDirectory: URL,
+    files: [String] = ["config.json"]
+  ) throws {
+    let slug = Acervo.slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(
+      at: modelDir,
+      withIntermediateDirectories: true
+    )
+    for file in files {
+      let fileURL = modelDir.appendingPathComponent(file)
+      let parentDir = fileURL.deletingLastPathComponent()
+      try FileManager.default.createDirectory(
+        at: parentDir,
+        withIntermediateDirectories: true
+      )
+      try Data("{}".utf8).write(to: fileURL)
+    }
+  }
+
+  // MARK: - download() Model ID Validation
+
+  @Test("download() throws invalidModelId for ID with no slash")
+  func downloadThrowsForNoSlash() async {
+    do {
+      try await Acervo.download(
+        "no-slash-model",
+        files: ["config.json"],
+        in: FileManager.default.temporaryDirectory
+      )
+      #expect(Bool(false), "Expected download to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId(let id) = error {
+        #expect(id == "no-slash-model")
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
+    } catch {
+      #expect(Bool(false), "Expected AcervoError but got \(error)")
+    }
+  }
+
+  @Test("download() throws invalidModelId for ID with multiple slashes")
+  func downloadThrowsForMultipleSlashes() async {
+    do {
+      try await Acervo.download(
+        "org/sub/model",
+        files: ["config.json"],
+        in: FileManager.default.temporaryDirectory
+      )
+      #expect(Bool(false), "Expected download to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId(let id) = error {
+        #expect(id == "org/sub/model")
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
+    } catch {
+      #expect(Bool(false), "Expected AcervoError but got \(error)")
+    }
+  }
+
+  @Test("download() throws invalidModelId for empty string")
+  func downloadThrowsForEmptyString() async {
+    do {
+      try await Acervo.download(
+        "",
+        files: ["config.json"],
+        in: FileManager.default.temporaryDirectory
+      )
+      #expect(Bool(false), "Expected download to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId = error {
+        // Expected
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
+    } catch {
+      #expect(Bool(false), "Expected AcervoError but got \(error)")
+    }
+  }
+
+  // MARK: - download() Directory Creation
+
+  @Test("download() creates model directory")
+  func downloadCreatesDirectory() async throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/test-model"
+    let slug = Acervo.slugify(modelId)
+    let expectedDir = tempBase.appendingPathComponent(slug)
+
+    // Directory should not exist yet
+    #expect(!FileManager.default.fileExists(atPath: expectedDir.path))
+
+    // download() will create the directory, then attempt to download.
+    // The download will fail (network error) because the model doesn't exist,
+    // but the directory should have been created before the download attempt.
+    do {
+      try await Acervo.download(
+        modelId,
+        files: ["config.json"],
+        in: tempBase
+      )
+    } catch {
+      // Network error expected -- that's fine for this test
     }
 
-    /// Creates a fake model directory with config.json in the given base directory.
-    private func createFakeModel(
-        modelId: String,
-        in baseDirectory: URL,
-        files: [String] = ["config.json"]
-    ) throws {
-        let slug = Acervo.slugify(modelId)
-        let modelDir = baseDirectory.appendingPathComponent(slug)
-        try FileManager.default.createDirectory(
-            at: modelDir,
-            withIntermediateDirectories: true
-        )
-        for file in files {
-            let fileURL = modelDir.appendingPathComponent(file)
-            let parentDir = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: parentDir,
-                withIntermediateDirectories: true
-            )
-            try Data("{}".utf8).write(to: fileURL)
-        }
+    // Directory should have been created
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(
+      atPath: expectedDir.path,
+      isDirectory: &isDirectory
+    )
+    #expect(exists, "download() should create the model directory")
+    #expect(isDirectory.boolValue, "Created path should be a directory")
+  }
+
+  @Test("download() with valid model ID attempts manifest fetch from CDN")
+  func downloadAttemptsManifestFetch() async throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    // Pre-create the model directory with config.json
+    try createFakeModel(modelId: "test-org/existing-model", in: tempBase)
+
+    // download() now fetches the CDN manifest first, which will fail
+    // for a fake model not on the CDN. This verifies that the manifest
+    // fetch happens even when files exist locally.
+    do {
+      try await Acervo.download(
+        "test-org/existing-model",
+        files: ["config.json"],
+        force: false,
+        in: tempBase
+      )
+      #expect(Bool(false), "Expected download to throw manifest error for fake model")
+    } catch let error as AcervoError {
+      // manifestDownloadFailed or networkError are both valid
+      switch error {
+      case .manifestDownloadFailed, .networkError:
+        break  // Expected
+      default:
+        #expect(Bool(false), "Expected manifest/network error but got \(error)")
+      }
     }
 
-    // MARK: - download() Model ID Validation
+    // Verify pre-existing file was NOT deleted by the failed manifest fetch
+    let configPath =
+      tempBase
+      .appendingPathComponent("test-org_existing-model")
+      .appendingPathComponent("config.json")
+    #expect(FileManager.default.fileExists(atPath: configPath.path))
+  }
 
-    @Test("download() throws invalidModelId for ID with no slash")
-    func downloadThrowsForNoSlash() async {
-        do {
-            try await Acervo.download(
-                "no-slash-model",
-                files: ["config.json"],
-                in: FileManager.default.temporaryDirectory
-            )
-            #expect(Bool(false), "Expected download to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId(let id) = error {
-                #expect(id == "no-slash-model")
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        } catch {
-            #expect(Bool(false), "Expected AcervoError but got \(error)")
-        }
+  // MARK: - ensureAvailable() Skip Logic
+
+  @Test("ensureAvailable() skips download when model already has config.json")
+  func ensureAvailableSkipsExistingModel() async throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/already-available"
+
+    // Create fake model with config.json
+    try createFakeModel(modelId: modelId, in: tempBase)
+
+    // Write known content so we can verify it's unchanged
+    let configURL =
+      tempBase
+      .appendingPathComponent(Acervo.slugify(modelId))
+      .appendingPathComponent("config.json")
+    let knownContent = "{\"test\": \"original_content\"}"
+    try knownContent.write(to: configURL, atomically: true, encoding: .utf8)
+
+    // ensureAvailable() should return without downloading
+    // (if it tried to download, it would fail with a network error
+    // for this fake model ID, or it would overwrite the content)
+    try await Acervo.ensureAvailable(
+      modelId,
+      files: ["config.json"],
+      in: tempBase
+    )
+
+    // Verify the file content is unchanged (no download occurred)
+    let afterContent = try String(contentsOf: configURL, encoding: .utf8)
+    #expect(
+      afterContent == knownContent,
+      "ensureAvailable should not modify existing model files")
+  }
+
+  @Test("ensureAvailable() validates model ID")
+  func ensureAvailableValidatesModelId() async {
+    do {
+      try await Acervo.ensureAvailable(
+        "invalid-no-slash",
+        files: ["config.json"],
+        in: FileManager.default.temporaryDirectory
+      )
+      #expect(Bool(false), "Expected ensureAvailable to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId = error {
+        // Expected
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
+    } catch {
+      #expect(Bool(false), "Expected AcervoError but got \(error)")
     }
+  }
 
-    @Test("download() throws invalidModelId for ID with multiple slashes")
-    func downloadThrowsForMultipleSlashes() async {
-        do {
-            try await Acervo.download(
-                "org/sub/model",
-                files: ["config.json"],
-                in: FileManager.default.temporaryDirectory
-            )
-            #expect(Bool(false), "Expected download to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId(let id) = error {
-                #expect(id == "org/sub/model")
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        } catch {
-            #expect(Bool(false), "Expected AcervoError but got \(error)")
-        }
+  @Test("ensureAvailable() attempts download when model is missing")
+  func ensureAvailableDownloadsWhenMissing() async throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/missing-model"
+
+    // Model directory does not exist -- ensureAvailable should attempt download.
+    // Since this is a fake model, the download will fail with a network error.
+    var downloadAttempted = false
+    do {
+      try await Acervo.ensureAvailable(
+        modelId,
+        files: ["config.json"],
+        in: tempBase
+      )
+    } catch {
+      // Any error (networkError or downloadFailed) proves the download was attempted
+      downloadAttempted = true
     }
+    #expect(
+      downloadAttempted,
+      "ensureAvailable should attempt download when model is missing")
+  }
 
-    @Test("download() throws invalidModelId for empty string")
-    func downloadThrowsForEmptyString() async {
-        do {
-            try await Acervo.download(
-                "",
-                files: ["config.json"],
-                in: FileManager.default.temporaryDirectory
-            )
-            #expect(Bool(false), "Expected download to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId = error {
-                // Expected
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        } catch {
-            #expect(Bool(false), "Expected AcervoError but got \(error)")
-        }
+  @Test("isModelAvailable internal overload detects model in custom directory")
+  func isModelAvailableInternalOverload() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/custom-dir-model"
+
+    // Model not yet created
+    #expect(!Acervo.isModelAvailable(modelId, in: tempBase))
+
+    // Create fake model
+    try createFakeModel(modelId: modelId, in: tempBase)
+
+    // Now it should be available
+    #expect(Acervo.isModelAvailable(modelId, in: tempBase))
+  }
+
+  // MARK: - deleteModel() Tests
+
+  @Test("deleteModel() removes model directory")
+  func deleteModelRemovesDirectory() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/deletable-model"
+    let slug = Acervo.slugify(modelId)
+    let modelDir = tempBase.appendingPathComponent(slug)
+
+    // Create fake model
+    try createFakeModel(modelId: modelId, in: tempBase)
+
+    // Verify directory exists
+    #expect(FileManager.default.fileExists(atPath: modelDir.path))
+
+    // Delete the model
+    try Acervo.deleteModel(modelId, in: tempBase)
+
+    // Verify directory no longer exists
+    #expect(!FileManager.default.fileExists(atPath: modelDir.path))
+  }
+
+  @Test("deleteModel() removes directory with multiple files")
+  func deleteModelRemovesMultipleFiles() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/multi-file-model"
+
+    // Create model with multiple files including subdirectory
+    try createFakeModel(
+      modelId: modelId,
+      in: tempBase,
+      files: [
+        "config.json",
+        "tokenizer.json",
+        "model.safetensors",
+        "speech_tokenizer/config.json",
+      ]
+    )
+
+    let slug = Acervo.slugify(modelId)
+    let modelDir = tempBase.appendingPathComponent(slug)
+    #expect(FileManager.default.fileExists(atPath: modelDir.path))
+
+    // Delete the model
+    try Acervo.deleteModel(modelId, in: tempBase)
+
+    // Verify entire directory tree is gone
+    #expect(!FileManager.default.fileExists(atPath: modelDir.path))
+  }
+
+  @Test("deleteModel() throws modelNotFound if directory doesn't exist")
+  func deleteModelThrowsForNonexistent() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
+
+    let modelId = "test-org/nonexistent-model"
+
+    do {
+      try Acervo.deleteModel(modelId, in: tempBase)
+      #expect(Bool(false), "Expected deleteModel to throw modelNotFound")
+    } catch let error as AcervoError {
+      if case .modelNotFound(let id) = error {
+        #expect(id == modelId)
+      } else {
+        #expect(Bool(false), "Expected modelNotFound but got \(error)")
+      }
     }
+  }
 
-    // MARK: - download() Directory Creation
+  @Test("deleteModel() validates model ID")
+  func deleteModelValidatesModelId() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
 
-    @Test("download() creates model directory")
-    func downloadCreatesDirectory() async throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/test-model"
-        let slug = Acervo.slugify(modelId)
-        let expectedDir = tempBase.appendingPathComponent(slug)
-
-        // Directory should not exist yet
-        #expect(!FileManager.default.fileExists(atPath: expectedDir.path))
-
-        // download() will create the directory, then attempt to download.
-        // The download will fail (network error) because the model doesn't exist,
-        // but the directory should have been created before the download attempt.
-        do {
-            try await Acervo.download(
-                modelId,
-                files: ["config.json"],
-                in: tempBase
-            )
-        } catch {
-            // Network error expected -- that's fine for this test
-        }
-
-        // Directory should have been created
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(
-            atPath: expectedDir.path,
-            isDirectory: &isDirectory
-        )
-        #expect(exists, "download() should create the model directory")
-        #expect(isDirectory.boolValue, "Created path should be a directory")
+    do {
+      try Acervo.deleteModel("no-slash", in: tempBase)
+      #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId(let id) = error {
+        #expect(id == "no-slash")
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
     }
+  }
 
-    @Test("download() with valid model ID attempts manifest fetch from CDN")
-    func downloadAttemptsManifestFetch() async throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
+  @Test("deleteModel() throws invalidModelId for multiple slashes")
+  func deleteModelThrowsForMultipleSlashes() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
 
-        // Pre-create the model directory with config.json
-        try createFakeModel(modelId: "test-org/existing-model", in: tempBase)
-
-        // download() now fetches the CDN manifest first, which will fail
-        // for a fake model not on the CDN. This verifies that the manifest
-        // fetch happens even when files exist locally.
-        do {
-            try await Acervo.download(
-                "test-org/existing-model",
-                files: ["config.json"],
-                force: false,
-                in: tempBase
-            )
-            #expect(Bool(false), "Expected download to throw manifest error for fake model")
-        } catch let error as AcervoError {
-            // manifestDownloadFailed or networkError are both valid
-            switch error {
-            case .manifestDownloadFailed, .networkError:
-                break // Expected
-            default:
-                #expect(Bool(false), "Expected manifest/network error but got \(error)")
-            }
-        }
-
-        // Verify pre-existing file was NOT deleted by the failed manifest fetch
-        let configPath = tempBase
-            .appendingPathComponent("test-org_existing-model")
-            .appendingPathComponent("config.json")
-        #expect(FileManager.default.fileExists(atPath: configPath.path))
+    do {
+      try Acervo.deleteModel("a/b/c", in: tempBase)
+      #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
+    } catch let error as AcervoError {
+      if case .invalidModelId(let id) = error {
+        #expect(id == "a/b/c")
+      } else {
+        #expect(Bool(false), "Expected invalidModelId but got \(error)")
+      }
     }
+  }
 
-    // MARK: - ensureAvailable() Skip Logic
+  @Test("deleteModel() does not affect other models")
+  func deleteModelDoesNotAffectOthers() throws {
+    let tempBase = try makeTempBase()
+    defer { try? FileManager.default.removeItem(at: tempBase) }
 
-    @Test("ensureAvailable() skips download when model already has config.json")
-    func ensureAvailableSkipsExistingModel() async throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
+    let modelToDelete = "test-org/to-delete"
+    let modelToKeep = "test-org/to-keep"
 
-        let modelId = "test-org/already-available"
+    // Create both models
+    try createFakeModel(modelId: modelToDelete, in: tempBase)
+    try createFakeModel(modelId: modelToKeep, in: tempBase)
 
-        // Create fake model with config.json
-        try createFakeModel(modelId: modelId, in: tempBase)
+    // Delete one model
+    try Acervo.deleteModel(modelToDelete, in: tempBase)
 
-        // Write known content so we can verify it's unchanged
-        let configURL = tempBase
-            .appendingPathComponent(Acervo.slugify(modelId))
-            .appendingPathComponent("config.json")
-        let knownContent = "{\"test\": \"original_content\"}"
-        try knownContent.write(to: configURL, atomically: true, encoding: .utf8)
+    // Verify the deleted model is gone
+    let deletedDir = tempBase.appendingPathComponent(Acervo.slugify(modelToDelete))
+    #expect(!FileManager.default.fileExists(atPath: deletedDir.path))
 
-        // ensureAvailable() should return without downloading
-        // (if it tried to download, it would fail with a network error
-        // for this fake model ID, or it would overwrite the content)
-        try await Acervo.ensureAvailable(
-            modelId,
-            files: ["config.json"],
-            in: tempBase
-        )
-
-        // Verify the file content is unchanged (no download occurred)
-        let afterContent = try String(contentsOf: configURL, encoding: .utf8)
-        #expect(afterContent == knownContent,
-                "ensureAvailable should not modify existing model files")
-    }
-
-    @Test("ensureAvailable() validates model ID")
-    func ensureAvailableValidatesModelId() async {
-        do {
-            try await Acervo.ensureAvailable(
-                "invalid-no-slash",
-                files: ["config.json"],
-                in: FileManager.default.temporaryDirectory
-            )
-            #expect(Bool(false), "Expected ensureAvailable to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId = error {
-                // Expected
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        } catch {
-            #expect(Bool(false), "Expected AcervoError but got \(error)")
-        }
-    }
-
-    @Test("ensureAvailable() attempts download when model is missing")
-    func ensureAvailableDownloadsWhenMissing() async throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/missing-model"
-
-        // Model directory does not exist -- ensureAvailable should attempt download.
-        // Since this is a fake model, the download will fail with a network error.
-        var downloadAttempted = false
-        do {
-            try await Acervo.ensureAvailable(
-                modelId,
-                files: ["config.json"],
-                in: tempBase
-            )
-        } catch {
-            // Any error (networkError or downloadFailed) proves the download was attempted
-            downloadAttempted = true
-        }
-        #expect(downloadAttempted,
-                "ensureAvailable should attempt download when model is missing")
-    }
-
-    @Test("isModelAvailable internal overload detects model in custom directory")
-    func isModelAvailableInternalOverload() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/custom-dir-model"
-
-        // Model not yet created
-        #expect(!Acervo.isModelAvailable(modelId, in: tempBase))
-
-        // Create fake model
-        try createFakeModel(modelId: modelId, in: tempBase)
-
-        // Now it should be available
-        #expect(Acervo.isModelAvailable(modelId, in: tempBase))
-    }
-
-    // MARK: - deleteModel() Tests
-
-    @Test("deleteModel() removes model directory")
-    func deleteModelRemovesDirectory() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/deletable-model"
-        let slug = Acervo.slugify(modelId)
-        let modelDir = tempBase.appendingPathComponent(slug)
-
-        // Create fake model
-        try createFakeModel(modelId: modelId, in: tempBase)
-
-        // Verify directory exists
-        #expect(FileManager.default.fileExists(atPath: modelDir.path))
-
-        // Delete the model
-        try Acervo.deleteModel(modelId, in: tempBase)
-
-        // Verify directory no longer exists
-        #expect(!FileManager.default.fileExists(atPath: modelDir.path))
-    }
-
-    @Test("deleteModel() removes directory with multiple files")
-    func deleteModelRemovesMultipleFiles() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/multi-file-model"
-
-        // Create model with multiple files including subdirectory
-        try createFakeModel(
-            modelId: modelId,
-            in: tempBase,
-            files: [
-                "config.json",
-                "tokenizer.json",
-                "model.safetensors",
-                "speech_tokenizer/config.json"
-            ]
-        )
-
-        let slug = Acervo.slugify(modelId)
-        let modelDir = tempBase.appendingPathComponent(slug)
-        #expect(FileManager.default.fileExists(atPath: modelDir.path))
-
-        // Delete the model
-        try Acervo.deleteModel(modelId, in: tempBase)
-
-        // Verify entire directory tree is gone
-        #expect(!FileManager.default.fileExists(atPath: modelDir.path))
-    }
-
-    @Test("deleteModel() throws modelNotFound if directory doesn't exist")
-    func deleteModelThrowsForNonexistent() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelId = "test-org/nonexistent-model"
-
-        do {
-            try Acervo.deleteModel(modelId, in: tempBase)
-            #expect(Bool(false), "Expected deleteModel to throw modelNotFound")
-        } catch let error as AcervoError {
-            if case .modelNotFound(let id) = error {
-                #expect(id == modelId)
-            } else {
-                #expect(Bool(false), "Expected modelNotFound but got \(error)")
-            }
-        }
-    }
-
-    @Test("deleteModel() validates model ID")
-    func deleteModelValidatesModelId() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        do {
-            try Acervo.deleteModel("no-slash", in: tempBase)
-            #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId(let id) = error {
-                #expect(id == "no-slash")
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        }
-    }
-
-    @Test("deleteModel() throws invalidModelId for multiple slashes")
-    func deleteModelThrowsForMultipleSlashes() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        do {
-            try Acervo.deleteModel("a/b/c", in: tempBase)
-            #expect(Bool(false), "Expected deleteModel to throw invalidModelId")
-        } catch let error as AcervoError {
-            if case .invalidModelId(let id) = error {
-                #expect(id == "a/b/c")
-            } else {
-                #expect(Bool(false), "Expected invalidModelId but got \(error)")
-            }
-        }
-    }
-
-    @Test("deleteModel() does not affect other models")
-    func deleteModelDoesNotAffectOthers() throws {
-        let tempBase = try makeTempBase()
-        defer { try? FileManager.default.removeItem(at: tempBase) }
-
-        let modelToDelete = "test-org/to-delete"
-        let modelToKeep = "test-org/to-keep"
-
-        // Create both models
-        try createFakeModel(modelId: modelToDelete, in: tempBase)
-        try createFakeModel(modelId: modelToKeep, in: tempBase)
-
-        // Delete one model
-        try Acervo.deleteModel(modelToDelete, in: tempBase)
-
-        // Verify the deleted model is gone
-        let deletedDir = tempBase.appendingPathComponent(Acervo.slugify(modelToDelete))
-        #expect(!FileManager.default.fileExists(atPath: deletedDir.path))
-
-        // Verify the other model is untouched
-        let keptDir = tempBase.appendingPathComponent(Acervo.slugify(modelToKeep))
-        #expect(FileManager.default.fileExists(atPath: keptDir.path))
-        let keptConfig = keptDir.appendingPathComponent("config.json")
-        #expect(FileManager.default.fileExists(atPath: keptConfig.path))
-    }
+    // Verify the other model is untouched
+    let keptDir = tempBase.appendingPathComponent(Acervo.slugify(modelToKeep))
+    #expect(FileManager.default.fileExists(atPath: keptDir.path))
+    let keptConfig = keptDir.appendingPathComponent("config.json")
+    #expect(FileManager.default.fileExists(atPath: keptConfig.path))
+  }
 }
