@@ -2,19 +2,19 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.1.0 (February 2026)
+**Current Version**: 0.3.0 (March 2026)
 
 ---
 
 ## Project Overview
 
-Consumers need HuggingFace models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **download from HuggingFace** into a single shared directory (`~/Library/SharedModels/`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
+Consumers need AI models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **CDN-verified downloads** into a single shared directory (`~/Library/SharedModels/`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
 
-Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for **stability** -- once the discovery and download logic is set, it should rarely change.
+All downloads come exclusively from a private Cloudflare R2 CDN with per-file SHA-256 integrity verification. The library never contacts HuggingFace directly.
 
 ## Shared Models Directory
 
-**CRITICAL**: All intrusive-memory projects MUST use `~/Library/SharedModels/` for HuggingFace model storage.
+**CRITICAL**: All intrusive-memory projects MUST use `~/Library/SharedModels/` for model storage.
 
 ```
 ~/Library/SharedModels/
@@ -26,36 +26,62 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 
 **Rules**:
 - Base directory: `~/Library/SharedModels/`
-- Naming: HuggingFace ID with `/` replaced by `_`
+- Naming: Model ID with `/` replaced by `_`
 - No type subdirectories (LLM, TTS, Audio are all peers)
 - Validity: `config.json` must be present in model directory
 - NEVER hardcode a different model path in any project
 
 ## Project Structure
 
-- `Sources/SwiftAcervo/Acervo.swift` -- Static discovery + download API
+- `Sources/SwiftAcervo/Acervo.swift` -- Static discovery + download API (version constant)
 - `Sources/SwiftAcervo/AcervoManager.swift` -- Actor-based thread-safe manager
 - `Sources/SwiftAcervo/AcervoModel.swift` -- Model metadata struct
-- `Sources/SwiftAcervo/AcervoError.swift` -- Error types
-- `Sources/SwiftAcervo/AcervoDownloader.swift` -- HuggingFace download logic
+- `Sources/SwiftAcervo/AcervoError.swift` -- Error types (7 manifest/CDN errors added in v0.3.0)
+- `Sources/SwiftAcervo/AcervoDownloader.swift` -- CDN download logic with manifest verification
 - `Sources/SwiftAcervo/AcervoDownloadProgress.swift` -- Download progress tracking
 - `Sources/SwiftAcervo/AcervoMigration.swift` -- Legacy path migration
 - `Sources/SwiftAcervo/LevenshteinDistance.swift` -- Edit distance for fuzzy search
-- `Tests/SwiftAcervoTests/` -- Test suite
+- `Sources/SwiftAcervo/CDNManifest.swift` -- Per-model manifest types and checksum verification
+- `Sources/SwiftAcervo/SecureDownloadSession.swift` -- URLSession with redirect rejection
+- `Sources/SwiftAcervo/IntegrityVerification.swift` -- Streaming SHA-256 and file verification
+- `Sources/SwiftAcervo/ComponentDescriptor.swift` -- Declarative component types
+- `Sources/SwiftAcervo/ComponentHandle.swift` -- Type-safe file access after download
+- `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
+- `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
+- `Tools/upload-model.sh` -- Full HuggingFace → manifest → R2 upload workflow
+- `Tests/SwiftAcervoTests/` -- 349 unit tests
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
-## Key Components
+## CDN Download Architecture
 
-| File | Purpose |
-|------|---------|
-| `Acervo.swift` | Static methods: `sharedModelsDirectory`, `modelDirectory(for:)`, `slugify(_:)`, `isModelAvailable(_:)`, `modelFileExists(_:fileName:)`, `listModels()`, `modelInfo(_:)`, `findModels(matching:)`, `findModels(fuzzyMatching:editDistance:)`, `closestModel(to:)`, `modelFamilies()`, `download(_:files:token:force:progress:)`, `ensureAvailable(_:files:token:progress:)`, `deleteModel(_:)`, `migrateFromLegacyPaths()` |
-| `AcervoManager.swift` | Actor with per-model download locks, metadata cache, exclusive model access via `withModelAccess(_:perform:)`, download/access statistics |
-| `AcervoModel.swift` | Identifiable, Codable model metadata: `id`, `path`, `sizeBytes`, `downloadDate`, `formattedSize`, `slug`, `baseName`, `familyName` |
-| `AcervoError.swift` | Error types: `directoryCreationFailed`, `modelNotFound`, `downloadFailed`, `networkError`, `modelAlreadyExists`, `migrationFailed`, `invalidModelId` |
-| `AcervoDownloader.swift` | URLSession-based HuggingFace file downloads with progress reporting and optional auth token support |
-| `AcervoDownloadProgress.swift` | Download progress struct: `fileName`, `bytesDownloaded`, `totalBytes`, `fileIndex`, `totalFiles`, `overallProgress` |
-| `AcervoMigration.swift` | Legacy path constants for migrating from `~/Library/Caches/intrusive-memory/Models/` subdirectories |
-| `LevenshteinDistance.swift` | Levenshtein edit distance algorithm for fuzzy model name matching |
+All downloads go through the private R2 CDN:
+
+**CDN base URL**: `https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/`
+
+**URL pattern**: `{cdnBase}/{slug}/{fileName}`
+
+**Download flow**:
+1. Fetch `manifest.json` for the model from CDN
+2. Validate manifest version, model ID, and checksum-of-checksums
+3. For each requested file, verify it exists in the manifest
+4. Download each file using `SecureDownloadSession` (rejects non-CDN redirects)
+5. Verify file size against manifest
+6. Verify SHA-256 against manifest
+7. Move to destination atomically
+
+**Manifest format** (`manifest.json`):
+```json
+{
+  "manifestVersion": 1,
+  "modelId": "org/repo",
+  "slug": "org_repo",
+  "updatedAt": "2026-03-22T00:00:00Z",
+  "files": [
+    {"path": "config.json", "sha256": "...", "sizeBytes": 1234}
+  ],
+  "manifestChecksum": "sha256-of-sorted-concatenated-file-checksums"
+}
+```
 
 ## API Overview
 
@@ -63,119 +89,53 @@ Modeled after SwiftFijos (test fixture discovery), SwiftAcervo is designed for *
 
 | Method | Description |
 |--------|-------------|
+| `version` | Current library version string |
 | `sharedModelsDirectory` | Returns `~/Library/SharedModels/` |
-| `modelDirectory(for:)` | Returns local directory for a HuggingFace model ID |
+| `modelDirectory(for:)` | Returns local directory for a model ID |
 | `slugify(_:)` | Converts `org/repo` to `org_repo` |
 | `isModelAvailable(_:)` | True if model directory has `config.json` |
 | `modelFileExists(_:fileName:)` | True if specific file exists in model directory |
 | `listModels()` | List all valid models in shared directory |
-| `modelInfo(_:)` | Get metadata for a model by HuggingFace ID |
+| `modelInfo(_:)` | Get metadata for a model by ID |
 | `findModels(matching:)` | Find models by name pattern (case-insensitive substring) |
-| `findModels(fuzzyMatching:editDistance:)` | Find models by fuzzy edit distance (tolerates typos) |
+| `findModels(fuzzyMatching:editDistance:)` | Find models by fuzzy edit distance |
 | `closestModel(to:)` | Return single best fuzzy match, or nil |
 | `modelFamilies()` | Group models by base name family |
-| `download(_:files:token:force:progress:)` | Download specific files from HuggingFace |
-| `ensureAvailable(_:files:token:progress:)` | Download only if not already available |
+| `download(_:files:force:progress:)` | Download specific files from CDN with manifest verification |
+| `ensureAvailable(_:files:progress:)` | Download only if not already available |
 | `deleteModel(_:)` | Delete a model from disk |
 | `migrateFromLegacyPaths()` | Move models from old cache paths to shared directory |
+
+### Component Registry Methods
+
+| Method | Description |
+|--------|-------------|
+| `register(_:)` | Register a component descriptor |
+| `downloadComponent(_:force:progress:)` | Download a registered component |
+| `ensureComponentReady(_:progress:)` | Ensure component is downloaded and verified |
+| `verifyComponent(_:)` | Verify component files against SHA-256 checksums |
+| `registeredComponents()` | List all registered components |
 
 ### AcervoManager Methods
 
 | Method | Description |
 |--------|-------------|
-| `download(_:files:token:force:progress:)` | Download with per-model serialization |
+| `download(_:files:force:progress:)` | Download with per-model serialization |
 | `withModelAccess(_:perform:)` | Exclusive access to a model directory |
 | `clearCache()` | Clear model metadata cache |
 | `preloadModels()` | Preload all model metadata into cache |
-| `getDownloadCount(for:)` | Get download count for a model |
-| `getAccessCount(for:)` | Get access count for a model |
-| `printStatisticsReport()` | Print formatted statistics |
-| `resetStatistics()` | Reset all statistics |
-
-## Usage Patterns
-
-### Basic Model Discovery
-
-```swift
-import SwiftAcervo
-
-// Check if a model is ready to use
-if Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit") {
-    let dir = Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
-    // Load model from dir using your framework (MLX, etc.)
-}
-
-// List everything downloaded
-let models = try Acervo.listModels()
-for model in models {
-    print("\(model.id): \(model.formattedSize)")
-}
-```
-
-### Download a Model
-
-```swift
-import SwiftAcervo
-
-try await Acervo.ensureAvailable(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"]
-) { progress in
-    print("\(progress.fileName): \(Int(progress.overallProgress * 100))%")
-}
-```
-
-### Thread-Safe Access
-
-```swift
-import SwiftAcervo
-
-let modelDir = try await AcervoManager.shared.withModelAccess(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit"
-) { url in
-    // Safe to read model files here
-    return url
-}
-```
-
-## Use Cases
-
-### 1. Find a model locally (fuzzy search)
-
-Model names from HuggingFace are long and easy to mistype. Fuzzy matching tolerates name variations:
-
-```swift
-// User types an approximate name -- fuzzy search finds the real model
-if let match = try Acervo.closestModel(to: "Qwen2.5-7B-Instrct") {
-    let dir = match.path
-    // Load model from dir
-}
-```
-
-### 2. Download if missing
-
-`ensureAvailable` checks local storage first, only downloading when the model isn't present:
-
-```swift
-try await Acervo.ensureAvailable(
-    "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "tokenizer.json", "model.safetensors"]
-)
-// Model is now guaranteed to be at ~/Library/SharedModels/mlx-community_Qwen2.5-7B-Instruct-4bit/
-```
-
-### 3. Shared across tools
-
-All intrusive-memory projects point at the same `~/Library/SharedModels/` directory. A model downloaded by SwiftBruja (LLM inference) is immediately visible to mlx-audio-swift (TTS) or any other consumer -- no re-download, no path coordination.
 
 ## Design Patterns
 
 - **Static API + Actor**: `Acervo` for simple one-liners, `AcervoManager` for thread-safe operations
+- **CDN-only downloads**: All downloads go through private R2 CDN, never HuggingFace
+- **Manifest-driven integrity**: Per-file SHA-256 verification on every download
+- **Streaming SHA-256**: 1MB chunked reads to handle multi-GB model files
+- **Redirect rejection**: `SecureDownloadSession` blocks redirects to non-CDN domains
 - **Per-model locking**: Same model serialized, different models concurrent
-- **Caller-specified file lists**: No hardcoded model file requirements
-- **Atomic downloads**: Download to temp, move to destination
+- **Atomic downloads**: Download to temp, verify, move to destination
 - **config.json as validity marker**: Universal across all model types
-- **Zero external dependencies**: Foundation only
+- **Zero external dependencies**: Foundation + CryptoKit only (system frameworks)
 - **Strict concurrency**: Swift 6 language mode, `@Sendable` closures
 
 ## Platform Requirements
@@ -188,28 +148,31 @@ All intrusive-memory projects point at the same `~/Library/SharedModels/` direct
 
 ## Dependencies
 
-SwiftAcervo has **zero external dependencies**. It only uses Foundation framework APIs. This is intentional and must not change.
+SwiftAcervo has **zero external dependencies**. It uses only Foundation and CryptoKit (system frameworks). This is intentional and must not change.
 
 ## Build and Test
 
 ```bash
-xcodebuild -scheme SwiftAcervo -destination 'platform=macOS' build
-xcodebuild -scheme SwiftAcervo -destination 'platform=macOS' test
+xcodebuild build -scheme SwiftAcervo -destination 'platform=macOS'
+xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
 ```
 
-## Thread Safety
+## CDN Upload Workflow
 
-`AcervoManager` is an `actor` that ensures thread-safe model operations:
+To add or update a model on the CDN:
 
-- **Per-model download locks**: Only one download per model at a time
-- **Automatic waiting**: If a model is locked, callers wait 50ms between checks
-- **Lock release**: Locks released via `defer` even on error
-- **URL caching**: Thread-safe dictionary for cached model paths
-- **Statistics tracking**: Thread-safe download and access counters
+```bash
+# Full workflow: download from HuggingFace, generate manifest, upload to R2
+./Tools/upload-model.sh "org/repo"
+
+# Or generate manifest only for a local directory
+./Tools/generate-manifest.sh "org/repo" /path/to/model/files
+```
+
+See `Tools/upload-model.sh` for environment variables (`RCLONE_REMOTE`, `R2_BUCKET`, `HF_TOKEN`).
 
 ## What This Library is NOT
 
 - NOT a model loader (does not import MLX or any inference framework)
-- NOT a model registry (does not maintain a database of known models)
-- NOT a HuggingFace client (downloads via direct URLs, not Hub API)
+- NOT a HuggingFace client (downloads from private CDN only)
 - NOT a cache manager (does not evict models or manage disk quotas)
