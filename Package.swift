@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "SwiftAcervo",
-    platforms: [
-        .macOS(.v26),
-        .iOS(.v26)
-    ],
-    products: [
-        .library(
-            name: "SwiftAcervo",
-            targets: ["SwiftAcervo"]
-        )
-    ],
-    targets: [
-        .target(
-            name: "SwiftAcervo"
-        ),
-        .testTarget(
-            name: "SwiftAcervoTests",
-            dependencies: ["SwiftAcervo"]
-        )
-    ],
-    swiftLanguageModes: [.v6]
+  name: "SwiftAcervo",
+  platforms: [
+    .macOS(.v26),
+    .iOS(.v26),
+  ],
+  products: [
+    .library(
+      name: "SwiftAcervo",
+      targets: ["SwiftAcervo"]
+    )
+  ],
+  targets: [
+    .target(
+      name: "SwiftAcervo"
+    ),
+    .testTarget(
+      name: "SwiftAcervoTests",
+      dependencies: ["SwiftAcervo"]
+    ),
+  ],
+  swiftLanguageModes: [.v6]
 )
