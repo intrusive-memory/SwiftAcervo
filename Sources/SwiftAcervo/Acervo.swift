@@ -41,6 +41,13 @@ extension Acervo {
   /// The subdirectory name within the container for model storage.
   private static let modelsSubdirectory = "SharedModels"
 
+  /// Optional override for the base model storage directory.
+  ///
+  /// When set, ``sharedModelsDirectory`` returns this URL directly,
+  /// bypassing the App Group and Application Support resolution.
+  /// Set this before any download or model-access calls.
+  nonisolated(unsafe) public static var customBaseDirectory: URL?
+
   /// Marks a URL as excluded from iCloud backup.
   ///
   /// Apple requires that large re-downloadable content (such as ML model
@@ -74,6 +81,9 @@ extension Acervo {
   /// // Fallback:  ~/Library/Application Support/SwiftAcervo/SharedModels/
   /// ```
   public static var sharedModelsDirectory: URL {
+    if let custom = customBaseDirectory {
+      return custom
+    }
     if let groupURL = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupIdentifier
     ) {
