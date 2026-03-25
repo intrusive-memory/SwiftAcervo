@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.5.0"
+  public static let version = "0.5.1"
 }
 
 // MARK: - Path Resolution
@@ -40,6 +40,23 @@ extension Acervo {
 
   /// The subdirectory name within the container for model storage.
   private static let modelsSubdirectory = "SharedModels"
+
+  /// Marks a URL as excluded from iCloud backup.
+  ///
+  /// Apple requires that large re-downloadable content (such as ML model
+  /// weights) must not be backed up to iCloud. This method sets the
+  /// `isExcludedFromBackup` resource value on the given URL.
+  ///
+  /// - Parameter url: A file or directory URL to exclude from backup.
+  static func excludeFromBackup(_ url: URL) {
+    var mutableURL = url
+    try? mutableURL.setResourceValues(
+      {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        return values
+      }())
+  }
 
   /// The canonical base directory for all shared HuggingFace models.
   ///
@@ -835,6 +852,11 @@ extension Acervo {
 
     // Create directory if needed
     try AcervoDownloader.ensureDirectory(at: destination)
+
+    // Exclude model directory from iCloud backup — Apple requires that
+    // large re-downloadable content must not be backed up.
+    excludeFromBackup(baseDirectory)
+    excludeFromBackup(destination)
 
     // Manifest-driven download with per-file integrity verification
     try await AcervoDownloader.downloadFiles(

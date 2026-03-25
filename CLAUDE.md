@@ -8,7 +8,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.5.0
+**Version**: 0.5.1
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
