@@ -2,22 +2,22 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.4.0 (March 2026)
+**Current Version**: 0.5.0 (March 2026)
 
 ---
 
 ## Project Overview
 
-Consumers need AI models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **CDN-verified downloads** into a single shared directory (`~/Library/SharedModels/`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
+Consumers need AI models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **CDN-verified downloads** into a single shared App Group container (`group.intrusive-memory.models`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
 
 All downloads come exclusively from a private Cloudflare R2 CDN with per-file SHA-256 integrity verification. The library never contacts HuggingFace directly.
 
 ## Shared Models Directory
 
-**CRITICAL**: All intrusive-memory projects MUST use `~/Library/SharedModels/` for model storage.
+**CRITICAL**: All intrusive-memory projects MUST use SwiftAcervo's `sharedModelsDirectory` for model storage. This resolves to the App Group container for `group.intrusive-memory.models` (sandboxed apps) or `Application Support/SwiftAcervo/SharedModels/` (fallback).
 
 ```
-~/Library/SharedModels/
+<App Group Container>/SharedModels/
 ├── mlx-community_Qwen2.5-7B-Instruct-4bit/
 ├── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
 ├── mlx-community_snac_24khz/
@@ -25,7 +25,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 ```
 
 **Rules**:
-- Base directory: `~/Library/SharedModels/`
+- Base directory: `Acervo.sharedModelsDirectory` (App Group container + `SharedModels/`)
 - Naming: Model ID with `/` replaced by `_`
 - No type subdirectories (LLM, TTS, Audio are all peers)
 - Validity: `config.json` must be present in model directory
@@ -90,7 +90,7 @@ All downloads go through the private R2 CDN:
 | Method | Description |
 |--------|-------------|
 | `version` | Current library version string |
-| `sharedModelsDirectory` | Returns `~/Library/SharedModels/` |
+| `sharedModelsDirectory` | Returns App Group container path + `SharedModels/` |
 | `modelDirectory(for:)` | Returns local directory for a model ID |
 | `slugify(_:)` | Converts `org/repo` to `org_repo` |
 | `isModelAvailable(_:)` | True if model directory has `config.json` |

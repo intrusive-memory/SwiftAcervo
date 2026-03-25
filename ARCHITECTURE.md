@@ -117,7 +117,7 @@ case componentFileNotFound(component: String, file: String)
 ## Storage Layout
 
 ```
-~/Library/SharedModels/
+<App Group Container>/SharedModels/
 ├── intrusive-memory_t5-xxl-int4-mlx/          # Shared encoder
 │   ├── config.json                             # Validity marker
 │   ├── model.safetensors

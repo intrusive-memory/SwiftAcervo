@@ -11,70 +11,59 @@ struct AcervoAvailabilityTests {
 
   // MARK: - Test Helpers
 
-  /// Creates a temporary directory and returns its URL. The caller is responsible
-  /// for cleanup, which is handled by the `cleanup` closure returned alongside.
-  private func makeTempModelDirectory(
-    slug: String,
-    files: [String] = []
-  ) throws -> (url: URL, cleanup: () -> Void) {
+  /// Creates a temporary base directory for testing.
+  private func makeTempBase() throws -> URL {
     let tempBase = FileManager.default.temporaryDirectory
       .appendingPathComponent("AcervoAvailabilityTests-\(UUID().uuidString)")
-    let modelDir = tempBase.appendingPathComponent(slug)
-
     try FileManager.default.createDirectory(
-      at: modelDir,
+      at: tempBase,
       withIntermediateDirectories: true
     )
+    return tempBase
+  }
 
-    for file in files {
-      let fileURL = modelDir.appendingPathComponent(file)
-      // Create intermediate directories if the file path contains subdirectories
-      let parentDir = fileURL.deletingLastPathComponent()
-      try FileManager.default.createDirectory(
-        at: parentDir,
-        withIntermediateDirectories: true
-      )
-      try Data().write(to: fileURL)
-    }
-
-    let cleanup: () -> Void = {
-      _ = try? FileManager.default.removeItem(at: tempBase)
-    }
-
-    return (modelDir, cleanup)
+  /// Removes a temporary directory.
+  private func removeTempBase(_ url: URL) {
+    try? FileManager.default.removeItem(at: url)
   }
 
   // MARK: - isModelAvailable
 
   @Test("isModelAvailable returns false for nonexistent model")
-  func isModelAvailableNonexistent() {
-    let result = Acervo.isModelAvailable("nonexistent-org/nonexistent-model-\(UUID().uuidString)")
+  func isModelAvailableNonexistent() throws {
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
+
+    let result = Acervo.isModelAvailable(
+      "nonexistent-org/nonexistent-model-\(UUID().uuidString)",
+      in: tempBase
+    )
     #expect(result == false)
   }
 
   @Test("isModelAvailable returns false when directory exists but no config.json")
   func isModelAvailableNoConfig() throws {
-    // Create a model directory without config.json in the real SharedModels location
-    let testModelId = "test-org/no-config-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    let modelId = "test-org/no-config"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
-    #expect(Acervo.isModelAvailable(testModelId) == false)
+    #expect(Acervo.isModelAvailable(modelId, in: tempBase) == false)
   }
 
   @Test("isModelAvailable returns true when config.json is present")
   func isModelAvailableWithConfig() throws {
-    let testModelId = "test-org/with-config-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let configURL = dir.appendingPathComponent("config.json")
-    try Data("{}".utf8).write(to: configURL)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    let modelId = "test-org/with-config"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: modelDir.appendingPathComponent("config.json"))
 
-    #expect(Acervo.isModelAvailable(testModelId) == true)
+    #expect(Acervo.isModelAvailable(modelId, in: tempBase) == true)
   }
 
   @Test("isModelAvailable returns false for invalid model ID")
@@ -85,61 +74,71 @@ struct AcervoAvailabilityTests {
   // MARK: - modelFileExists
 
   @Test("modelFileExists returns false for nonexistent model")
-  func modelFileExistsNonexistent() {
+  func modelFileExistsNonexistent() throws {
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
+
     let result = Acervo.modelFileExists(
-      "nonexistent-org/nonexistent-model-\(UUID().uuidString)",
-      fileName: "config.json"
+      "nonexistent-org/nonexistent-model",
+      fileName: "config.json",
+      in: tempBase
     )
     #expect(result == false)
   }
 
   @Test("modelFileExists returns true for root-level file")
   func modelFileExistsRootFile() throws {
-    let testModelId = "test-org/root-file-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let tokenizer = dir.appendingPathComponent("tokenizer.json")
-    try Data("{}".utf8).write(to: tokenizer)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    let modelId = "test-org/root-file"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: modelDir.appendingPathComponent("tokenizer.json"))
 
-    #expect(Acervo.modelFileExists(testModelId, fileName: "tokenizer.json") == true)
+    #expect(Acervo.modelFileExists(modelId, fileName: "tokenizer.json", in: tempBase) == true)
   }
 
   @Test("modelFileExists returns false for missing root-level file")
   func modelFileExistsMissingRootFile() throws {
-    let testModelId = "test-org/missing-file-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    let modelId = "test-org/missing-file"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
-    #expect(Acervo.modelFileExists(testModelId, fileName: "nonexistent.json") == false)
+    #expect(Acervo.modelFileExists(modelId, fileName: "nonexistent.json", in: tempBase) == false)
   }
 
   @Test("modelFileExists returns true for subdirectory file")
   func modelFileExistsSubdirectoryFile() throws {
-    let testModelId = "test-org/subdir-file-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    let subdirURL = dir.appendingPathComponent("speech_tokenizer")
+    let modelId = "test-org/subdir-file"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    let subdirURL = modelDir.appendingPathComponent("speech_tokenizer")
     try FileManager.default.createDirectory(at: subdirURL, withIntermediateDirectories: true)
-    let configURL = subdirURL.appendingPathComponent("config.json")
-    try Data("{}".utf8).write(to: configURL)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("{}".utf8).write(to: subdirURL.appendingPathComponent("config.json"))
 
-    #expect(Acervo.modelFileExists(testModelId, fileName: "speech_tokenizer/config.json") == true)
+    #expect(
+      Acervo.modelFileExists(modelId, fileName: "speech_tokenizer/config.json", in: tempBase)
+        == true)
   }
 
   @Test("modelFileExists returns false for missing subdirectory file")
   func modelFileExistsMissingSubdirFile() throws {
-    let testModelId = "test-org/missing-subdir-\(UUID().uuidString)"
-    let dir = try Acervo.modelDirectory(for: testModelId)
+    let tempBase = try makeTempBase()
+    defer { removeTempBase(tempBase) }
 
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+    let modelId = "test-org/missing-subdir"
+    let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
-    #expect(Acervo.modelFileExists(testModelId, fileName: "speech_tokenizer/config.json") == false)
+    #expect(
+      Acervo.modelFileExists(modelId, fileName: "speech_tokenizer/config.json", in: tempBase)
+        == false)
   }
 
   @Test("modelFileExists returns false for invalid model ID")

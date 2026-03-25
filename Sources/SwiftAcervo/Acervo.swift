@@ -27,28 +27,50 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.4.0"
+  public static let version = "0.5.0"
 }
 
 // MARK: - Path Resolution
 
 extension Acervo {
 
+  /// The App Group identifier for shared model storage across
+  /// intrusive-memory apps. Intentionally not configurable by consumers.
+  private static let appGroupIdentifier = "group.intrusive-memory.models"
+
+  /// The subdirectory name within the container for model storage.
+  private static let modelsSubdirectory = "SharedModels"
+
   /// The canonical base directory for all shared HuggingFace models.
   ///
-  /// Returns `~/Library/SharedModels/`. This directory is persistent
-  /// (not in Caches) and survives macOS cleanup operations.
+  /// Resolves to the App Group container for `group.intrusive-memory.models`
+  /// when the entitlement is available (sandboxed apps). Falls back to
+  /// `Application Support/SwiftAcervo/SharedModels/` for non-sandboxed
+  /// contexts (e.g., tests, CLI tools).
   ///
   /// All model directories are stored as direct children of this path,
   /// named using the slugified HuggingFace model ID.
   ///
   /// ```swift
   /// let baseDir = Acervo.sharedModelsDirectory
-  /// // ~/Library/SharedModels/
+  /// // App Group: <container>/SharedModels/
+  /// // Fallback:  ~/Library/Application Support/SwiftAcervo/SharedModels/
   /// ```
   public static var sharedModelsDirectory: URL {
-    URL(filePath: NSHomeDirectory())
-      .appendingPathComponent("Library/SharedModels")
+    if let groupURL = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupIdentifier
+    ) {
+      return groupURL.appendingPathComponent(modelsSubdirectory)
+    }
+    // Fallback for non-sandboxed or non-entitled contexts
+    let appSupport = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first!
+    return
+      appSupport
+      .appendingPathComponent("SwiftAcervo")
+      .appendingPathComponent(modelsSubdirectory)
   }
 
   /// Converts a HuggingFace model ID to a filesystem-safe directory name.
@@ -80,7 +102,7 @@ extension Acervo {
   ///
   /// ```swift
   /// let dir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
-  /// // ~/Library/SharedModels/mlx-community_Qwen2.5-7B-Instruct-4bit/
+  /// // <sharedModelsDirectory>/mlx-community_Qwen2.5-7B-Instruct-4bit/
   /// ```
   public static func modelDirectory(for modelId: String) throws -> URL {
     let slashCount = modelId.filter { $0 == "/" }.count
@@ -140,6 +162,21 @@ extension Acervo {
       return false
     }
     let filePath = dir.appendingPathComponent(fileName).path
+    return FileManager.default.fileExists(atPath: filePath)
+  }
+
+  /// Checks whether a specific file exists within a model's directory,
+  /// using a custom base directory.
+  ///
+  /// This internal overload enables testing with temporary directories.
+  static func modelFileExists(
+    _ modelId: String,
+    fileName: String,
+    in baseDirectory: URL
+  ) -> Bool {
+    let slug = slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    let filePath = modelDir.appendingPathComponent(fileName).path
     return FileManager.default.fileExists(atPath: filePath)
   }
 }
@@ -527,7 +564,7 @@ extension Acervo {
 extension Acervo {
 
   /// Migrates models from legacy intrusive-memory cache paths to the
-  /// canonical `~/Library/SharedModels/` directory.
+  /// canonical `sharedModelsDirectory`.
   ///
   /// Scans the four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`)
   /// under `~/Library/Caches/intrusive-memory/Models/` for directories

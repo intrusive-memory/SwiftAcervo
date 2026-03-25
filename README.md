@@ -19,16 +19,16 @@ AI applications on macOS and iOS each tend to manage their own model storage. An
 
 **One path. No subdirectories. Every project uses SwiftAcervo.**
 
-All models live under a single canonical directory:
+All models live under a single canonical directory inside the App Group container for `group.intrusive-memory.models`:
 
 ```
-~/Library/SharedModels/{org}_{repo}/
+<App Group Container>/SharedModels/{org}_{repo}/
 ```
 
 For example:
 
 ```
-~/Library/SharedModels/
+<App Group Container>/SharedModels/
 ├── mlx-community_Qwen2.5-7B-Instruct-4bit/
 │   ├── config.json
 │   ├── tokenizer.json
@@ -60,7 +60,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.4.0")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.5.0")
     ],
     targets: [
         .target(
@@ -175,7 +175,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 | Method | Description |
 |--------|-------------|
-| `sharedModelsDirectory` | Returns `~/Library/SharedModels/` |
+| `sharedModelsDirectory` | Returns App Group container path + `SharedModels/` |
 | `modelDirectory(for:)` | Returns local directory URL for a HuggingFace model ID |
 | `slugify(_:)` | Converts `org/repo` to `org_repo` |
 
@@ -219,7 +219,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 | Method | Description |
 |--------|-------------|
-| `migrateFromLegacyPaths()` | Moves models from legacy cache paths to `~/Library/SharedModels/` |
+| `migrateFromLegacyPaths()` | Moves models from legacy cache paths to `sharedModelsDirectory` |
 
 ### AcervoManager (Actor)
 
@@ -289,7 +289,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 ## Consumer Integration
 
-SwiftAcervo is the model management layer for the [intrusive-memory](https://github.com/intrusive-memory) ecosystem. Each consumer project depends on SwiftAcervo for model discovery and downloading, then loads models using its own framework. Because every project shares `~/Library/SharedModels/`, a model downloaded by any one tool is immediately available to all others.
+SwiftAcervo is the model management layer for the [intrusive-memory](https://github.com/intrusive-memory) ecosystem. Each consumer project depends on SwiftAcervo for model discovery and downloading, then loads models using its own framework. Because every project shares the same App Group container (`group.intrusive-memory.models`), a model downloaded by any one tool is immediately available to all others.
 
 ### SwiftBruja (MLX Inference)
 
@@ -409,7 +409,7 @@ Before SwiftAcervo, intrusive-memory projects stored models in a type-based dire
 SwiftAcervo consolidates all models into a single flat directory:
 
 ```
-~/Library/SharedModels/
+<App Group Container>/SharedModels/
 ├── mlx-community_Qwen2.5-7B-Instruct-4bit/
 ├── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
 └── mlx-community_snac_24khz/
@@ -417,7 +417,7 @@ SwiftAcervo consolidates all models into a single flat directory:
 
 ### Running the Migration
 
-Call `migrateFromLegacyPaths()` once at application startup. It scans all four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`) for valid model directories (those containing `config.json`) and moves them to `~/Library/SharedModels/`:
+Call `migrateFromLegacyPaths()` once at application startup. It scans all four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`) for valid model directories (those containing `config.json`) and moves them to `sharedModelsDirectory`:
 
 ```swift
 import SwiftAcervo
@@ -449,7 +449,7 @@ let legacyPath = URL(filePath: NSHomeDirectory())
 if FileManager.default.fileExists(atPath: legacyPath.path) {
     let migrated = try Acervo.migrateFromLegacyPaths()
     if !migrated.isEmpty {
-        print("Migrated \(migrated.count) model(s) to ~/Library/SharedModels/")
+        print("Migrated \(migrated.count) model(s) to sharedModelsDirectory")
     }
 }
 ```
@@ -512,7 +512,7 @@ await AcervoManager.shared.printStatisticsReport()
 
 ### Unit Tests
 
-Unit tests run entirely offline with no network access required. They use temporary directories to avoid touching `~/Library/SharedModels/`:
+Unit tests run entirely offline with no network access required. They use temporary directories to avoid touching `sharedModelsDirectory`:
 
 ```bash
 xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
