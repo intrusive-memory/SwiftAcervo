@@ -8,17 +8,16 @@ struct AcervoPathTests {
 
   // MARK: - sharedModelsDirectory
 
-  @Test("sharedModelsDirectory ends with Library/SharedModels")
+  @Test("sharedModelsDirectory ends with SharedModels")
   func sharedModelsDirectoryPath() {
     let dir = Acervo.sharedModelsDirectory
-    #expect(dir.path.hasSuffix("Library/SharedModels"))
+    #expect(dir.lastPathComponent == "SharedModels")
   }
 
-  @Test("sharedModelsDirectory is under home directory")
-  func sharedModelsDirectoryIsUnderHome() {
+  @Test("sharedModelsDirectory is an absolute path")
+  func sharedModelsDirectoryIsAbsolute() {
     let dir = Acervo.sharedModelsDirectory
-    let home = URL(filePath: NSHomeDirectory())
-    #expect(dir.path.hasPrefix(home.path))
+    #expect(dir.path.hasPrefix("/"))
   }
 
   // MARK: - slugify

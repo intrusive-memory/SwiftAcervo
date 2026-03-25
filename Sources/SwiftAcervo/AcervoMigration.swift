@@ -2,7 +2,7 @@
 // SwiftAcervo
 //
 // Legacy path constants for migration from the old intrusive-memory
-// cache directory structure to the new SharedModels canonical location.
+// cache directory structure.
 
 import Foundation
 
@@ -10,8 +10,8 @@ import Foundation
 ///
 /// Defines the legacy base path and subdirectory structure used by
 /// earlier intrusive-memory projects. These paths are scanned during
-/// migration to discover models that should be moved to
-/// `~/Library/SharedModels/`.
+/// migration to discover models that should be moved to the current
+/// `sharedModelsDirectory` (App Group container).
 struct AcervoMigration: Sendable {
 
   /// The legacy base directory where models were stored.
