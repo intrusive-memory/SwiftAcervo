@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.4.0"
+  public static let version = "0.5.0"
 }
 
 // MARK: - Path Resolution
@@ -67,7 +67,8 @@ extension Acervo {
       for: .applicationSupportDirectory,
       in: .userDomainMask
     ).first!
-    return appSupport
+    return
+      appSupport
       .appendingPathComponent("SwiftAcervo")
       .appendingPathComponent(modelsSubdirectory)
   }
