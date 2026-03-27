@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.5.1 (March 2026)
+**Current Version**: 0.5.3 (March 2026)
 
 ---
 
@@ -49,7 +49,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
 - `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
 - `Tools/upload-model.sh` -- Full HuggingFace → manifest → R2 upload workflow
-- `Tests/SwiftAcervoTests/` -- 366 unit tests
+- `Tests/SwiftAcervoTests/` -- 388 unit tests
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
 ## CDN Download Architecture
@@ -130,7 +130,8 @@ All downloads go through the private R2 CDN:
 - **Static API + Actor**: `Acervo` for simple one-liners, `AcervoManager` for thread-safe operations
 - **CDN-only downloads**: All downloads go through private R2 CDN, never HuggingFace
 - **Manifest-driven integrity**: Per-file SHA-256 verification on every download
-- **Streaming SHA-256**: 1MB chunked reads to handle multi-GB model files
+- **Streaming SHA-256**: 4MB chunked reads with incremental hashing during download
+- **Concurrent file downloads**: TaskGroup-based parallel file fetches with monotonic progress tracking
 - **Redirect rejection**: `SecureDownloadSession` blocks redirects to non-CDN domains
 - **Per-model locking**: Same model serialized, different models concurrent
 - **Atomic downloads**: Download to temp, verify, move to destination

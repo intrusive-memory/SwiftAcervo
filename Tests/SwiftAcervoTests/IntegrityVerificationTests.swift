@@ -39,6 +39,46 @@ struct IntegrityVerificationTests {
     #expect(hash != "315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3")
   }
 
+  // MARK: - 4 MB Chunk Size Validation
+
+  /// Verifies SHA-256 output for a file of exactly 4 MB (the new chunk boundary).
+  ///
+  /// The file contains a deterministic pattern (bytes 0–255 repeating).
+  /// The expected hash was computed independently with Python's `hashlib.sha256`.
+  @Test("SHA-256 of exactly 4 MB file matches known hash")
+  func sha256ExactlyFourMegabytes() throws {
+    let tempDir = try makeTempDirectory()
+    defer { cleanupTempDirectory(tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("4mb-exact.bin")
+    let size = 4 * 1024 * 1024
+    let data = Data(bytes: (0..<size).map { UInt8($0 % 256) }, count: size)
+    try data.write(to: fileURL)
+
+    let hash = try IntegrityVerification.sha256(of: fileURL)
+    // Reference hash computed with Python hashlib.sha256 on the same pattern
+    #expect(hash == "2b07811057df887086f06a67edc6ebf911de8b6741156e7a2eb1416a4b8b1b2e")
+  }
+
+  /// Verifies SHA-256 output for a file of 5 MB (spans more than one 4 MB chunk).
+  ///
+  /// The file contains a deterministic pattern (bytes 0–255 repeating).
+  /// The expected hash was computed independently with Python's `hashlib.sha256`.
+  @Test("SHA-256 of 5 MB file (spanning two 4 MB chunks) matches known hash")
+  func sha256SpansTwoChunks() throws {
+    let tempDir = try makeTempDirectory()
+    defer { cleanupTempDirectory(tempDir) }
+
+    let fileURL = tempDir.appendingPathComponent("5mb.bin")
+    let size = 5 * 1024 * 1024
+    let data = Data(bytes: (0..<size).map { UInt8($0 % 256) }, count: size)
+    try data.write(to: fileURL)
+
+    let hash = try IntegrityVerification.sha256(of: fileURL)
+    // Reference hash computed with Python hashlib.sha256 on the same pattern
+    #expect(hash == "2e7cab6314e9614b6f2da12630661c3038e5592025f6534ba5823c3b340a1cb6")
+  }
+
   @Test("SHA-256 returns lowercase hex string of 64 characters")
   func sha256Format() throws {
     let tempDir = try makeTempDirectory()
