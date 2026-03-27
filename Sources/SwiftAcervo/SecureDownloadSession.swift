@@ -49,7 +49,7 @@ enum SecureDownloadSession {
     let config = URLSessionConfiguration.default
     // No local caching for model files; we verify integrity ourselves
     config.requestCachePolicy = .reloadIgnoringLocalCacheData
-    config.httpMaximumConnectionsPerHost = 4
+    config.httpMaximumConnectionsPerHost = 6
     return URLSession(
       configuration: config,
       delegate: delegate,

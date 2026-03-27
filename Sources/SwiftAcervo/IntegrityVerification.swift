@@ -21,12 +21,12 @@ import Foundation
 struct IntegrityVerification: Sendable {
 
   /// Size of chunks used for streaming SHA-256 computation.
-  /// 1 MB balances memory usage and I/O efficiency.
-  private static let chunkSize = 1_048_576
+  /// 4 MB balances memory usage and I/O efficiency.
+  private static let chunkSize = 4_194_304
 
   /// Computes the SHA-256 hash of a file using streaming reads.
   ///
-  /// Reads the file in 1 MB chunks to avoid loading multi-gigabyte
+  /// Reads the file in 4 MB chunks to avoid loading multi-gigabyte
   /// model files entirely into memory.
   ///
   /// - Parameter fileURL: The URL of the file to hash.
