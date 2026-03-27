@@ -8,13 +8,21 @@
 // individual files with integrity verification, and orchestrating
 // multi-file manifest-driven downloads.
 //
+// Downloads use a stream-and-hash approach: bytes are written to a
+// UUID-named temp file and fed into an incremental SHA-256 hasher
+// simultaneously, eliminating the post-download read pass. If the
+// streaming path is unavailable, the downloader falls back to the
+// legacy download(for:) + verifyAgainstManifest pattern.
+//
 // CDN URL format:
 //   https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/{slug}/{fileName}
 //
 // All downloads use SecureDownloadSession which rejects redirects
 // to non-CDN domains.
 
+import CryptoKit
 import Foundation
+import OSLog
 
 /// Internal download infrastructure for fetching model files from the CDN.
 ///
@@ -24,6 +32,16 @@ struct AcervoDownloader: Sendable {
 
   /// The base URL for the CDN model repository.
   static let cdnBaseURL = "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models"
+
+  /// Logger for download-related diagnostics.
+  private static let logger = Logger(
+    subsystem: "com.intrusive-memory.SwiftAcervo",
+    category: "AcervoDownloader"
+  )
+
+  /// Size of the write buffer used during streaming downloads (4 MB).
+  /// Matches `IntegrityVerification.chunkSize` for consistency.
+  private static let streamChunkSize = 4_194_304
 
   private init() {}
 }
@@ -186,92 +204,32 @@ extension AcervoDownloader {
   }
 }
 
-// MARK: - File Download
+// MARK: - Streaming Download (Stream-and-Hash)
 
 extension AcervoDownloader {
 
-  /// Downloads a single file from the CDN to a local destination.
+  /// Streams a file from the CDN, computing SHA-256 incrementally as bytes
+  /// arrive, then atomically moves the verified temp file to the destination.
   ///
-  /// The file is first downloaded to a temporary location, then moved
-  /// atomically to the destination. Intermediate directories at the
-  /// destination are created automatically if they do not exist.
-  ///
-  /// After download, the file is verified against the manifest entry
-  /// (size + SHA-256). If verification fails, the file is deleted
-  /// and an error is thrown.
+  /// This eliminates the post-download read pass by feeding every byte into
+  /// both the temp file and a `SHA256` hasher simultaneously. The temp file
+  /// is written in 4 MB chunks to `FileManager.default.temporaryDirectory`
+  /// using a UUID-based name.
   ///
   /// - Parameters:
-  ///   - url: The remote CDN URL to download from.
-  ///   - destination: The local file URL where the downloaded file should be placed.
-  ///   - manifestFile: The manifest entry for this file, used for integrity verification.
-  /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
-  ///   `AcervoError.networkError` for connection failures,
-  ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
-  ///   if post-download verification fails.
-  static func downloadFile(
-    from url: URL,
-    to destination: URL,
-    manifestFile: CDNManifestFile
-  ) async throws {
-    let request = buildRequest(from: url)
-
-    // Download the file using secure session
-    let tempFileURL: URL
-    let response: URLResponse
-    do {
-      (tempFileURL, response) = try await SecureDownloadSession.shared.download(for: request)
-    } catch {
-      throw AcervoError.networkError(error)
-    }
-
-    // Verify HTTP 200
-    if let httpResponse = response as? HTTPURLResponse,
-      httpResponse.statusCode != 200
-    {
-      // Clean up temp file
-      try? FileManager.default.removeItem(at: tempFileURL)
-      let fileName = url.lastPathComponent
-      throw AcervoError.downloadFailed(
-        fileName: fileName,
-        statusCode: httpResponse.statusCode
-      )
-    }
-
-    // Ensure the destination's parent directory exists
-    let parentDirectory = destination.deletingLastPathComponent()
-    try ensureDirectory(at: parentDirectory)
-
-    // Remove any existing file at the destination
-    let fm = FileManager.default
-    if fm.fileExists(atPath: destination.path) {
-      try fm.removeItem(at: destination)
-    }
-
-    // Move temp file to destination atomically
-    try fm.moveItem(at: tempFileURL, to: destination)
-
-    // Verify integrity: size then SHA-256
-    try IntegrityVerification.verifyAgainstManifest(
-      fileURL: destination,
-      manifestFile: manifestFile
-    )
-  }
-
-  /// Downloads a single file from the CDN with progress reporting.
-  ///
-  /// Uses the same download-then-verify pattern as the non-progress variant.
-  ///
-  /// - Parameters:
-  ///   - url: The remote CDN URL to download from.
-  ///   - destination: The local file URL where the downloaded file should be placed.
-  ///   - manifestFile: The manifest entry for this file.
-  ///   - fileName: The display name for the file (used in progress reporting).
+  ///   - request: The configured `URLRequest` targeting the CDN resource.
+  ///   - destination: The local file URL where the verified file should end up.
+  ///   - manifestFile: The manifest entry for this file (expected size + SHA-256).
+  ///   - fileName: The display name for progress reporting.
   ///   - fileIndex: The zero-based index of this file in a multi-file download.
   ///   - totalFiles: The total number of files in the download operation.
-  ///   - progress: An optional callback invoked with download progress.
-  /// - Throws: Download, verification, or directory creation errors.
-  static func downloadFile(
-    from url: URL,
+  ///   - progress: An optional callback invoked with download progress at
+  ///     intervals during streaming.
+  /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+  ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
+  ///   if post-stream verification fails. Re-throws network errors.
+  private static func streamDownloadFile(
+    request: URLRequest,
     to destination: URL,
     manifestFile: CDNManifestFile,
     fileName: String,
@@ -279,8 +237,166 @@ extension AcervoDownloader {
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?
   ) async throws {
-    let request = buildRequest(from: url)
+    // Stream the HTTP response using bytes(for:)
+    let (asyncBytes, response) = try await SecureDownloadSession.shared.bytes(for: request)
 
+    // Validate HTTP 200 status before processing bytes
+    if let httpResponse = response as? HTTPURLResponse,
+      httpResponse.statusCode != 200
+    {
+      throw AcervoError.downloadFailed(
+        fileName: fileName,
+        statusCode: httpResponse.statusCode
+      )
+    }
+
+    // Use manifest size for accurate progress
+    let totalBytes = manifestFile.sizeBytes
+
+    // Report initial progress
+    progress?(
+      AcervoDownloadProgress(
+        fileName: fileName,
+        bytesDownloaded: 0,
+        totalBytes: totalBytes,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles
+      ))
+
+    // Create UUID-named temp file in temporaryDirectory
+    let tempFileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+
+    // Set up incremental SHA-256 hasher
+    var hasher = SHA256()
+    var buffer = Data()
+    buffer.reserveCapacity(streamChunkSize)
+    var bytesWritten: Int64 = 0
+
+    // Ensure temp file is cleaned up on any failure path
+    let fm = FileManager.default
+    // Create the file so FileHandle can open it for writing
+    fm.createFile(atPath: tempFileURL.path, contents: nil)
+    let fileHandle: FileHandle
+    do {
+      fileHandle = try FileHandle(forWritingTo: tempFileURL)
+    } catch {
+      try? fm.removeItem(at: tempFileURL)
+      throw error
+    }
+
+    do {
+      for try await byte in asyncBytes {
+        buffer.append(byte)
+
+        // Flush buffer when it reaches chunk size
+        if buffer.count >= streamChunkSize {
+          hasher.update(data: buffer)
+          try fileHandle.write(contentsOf: buffer)
+          bytesWritten += Int64(buffer.count)
+          buffer.removeAll(keepingCapacity: true)
+
+          // Report intermediate progress
+          progress?(
+            AcervoDownloadProgress(
+              fileName: fileName,
+              bytesDownloaded: bytesWritten,
+              totalBytes: totalBytes,
+              fileIndex: fileIndex,
+              totalFiles: totalFiles
+            ))
+        }
+      }
+
+      // Flush any remaining bytes in buffer
+      if !buffer.isEmpty {
+        hasher.update(data: buffer)
+        try fileHandle.write(contentsOf: buffer)
+        bytesWritten += Int64(buffer.count)
+        buffer.removeAll(keepingCapacity: true)
+      }
+
+      try fileHandle.close()
+    } catch {
+      // Stream interrupted or write failed -- clean up temp file
+      try? fileHandle.close()
+      try? fm.removeItem(at: tempFileURL)
+      throw error
+    }
+
+    // Verify size
+    if bytesWritten != manifestFile.sizeBytes {
+      try? fm.removeItem(at: tempFileURL)
+      throw AcervoError.downloadSizeMismatch(
+        fileName: manifestFile.path,
+        expected: manifestFile.sizeBytes,
+        actual: bytesWritten
+      )
+    }
+
+    // Finalize hash and verify SHA-256
+    let digest = hasher.finalize()
+    let actualHash = digest.map { String(format: "%02x", $0) }.joined()
+    if actualHash != manifestFile.sha256 {
+      try? fm.removeItem(at: tempFileURL)
+      throw AcervoError.integrityCheckFailed(
+        file: manifestFile.path,
+        expected: manifestFile.sha256,
+        actual: actualHash
+      )
+    }
+
+    // Ensure destination's parent directory exists
+    let parentDirectory = destination.deletingLastPathComponent()
+    try ensureDirectory(at: parentDirectory)
+
+    // Remove any existing file at destination
+    if fm.fileExists(atPath: destination.path) {
+      try fm.removeItem(at: destination)
+    }
+
+    // Atomic move: temp -> destination (file is fully verified at this point)
+    try fm.moveItem(at: tempFileURL, to: destination)
+
+    // Report completion
+    progress?(
+      AcervoDownloadProgress(
+        fileName: fileName,
+        bytesDownloaded: totalBytes,
+        totalBytes: totalBytes,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles
+      ))
+  }
+}
+
+// MARK: - Fallback Download (Legacy)
+
+extension AcervoDownloader {
+
+  /// Downloads a file using the legacy `download(for:)` + `verifyAgainstManifest` pattern.
+  ///
+  /// This is the fallback path used when `bytes(for:)` streaming is unavailable
+  /// (e.g., the response lacks `Content-Length` or the stream throws).
+  ///
+  /// - Parameters:
+  ///   - request: The configured `URLRequest` targeting the CDN resource.
+  ///   - destination: The local file URL where the downloaded file should be placed.
+  ///   - manifestFile: The manifest entry for this file.
+  ///   - fileName: The display name for progress reporting.
+  ///   - fileIndex: The zero-based index of this file in a multi-file download.
+  ///   - totalFiles: The total number of files in the download operation.
+  ///   - progress: An optional callback invoked with download progress.
+  /// - Throws: Download, verification, or directory creation errors.
+  private static func fallbackDownloadFile(
+    request: URLRequest,
+    to destination: URL,
+    manifestFile: CDNManifestFile,
+    fileName: String,
+    fileIndex: Int,
+    totalFiles: Int,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+  ) async throws {
     // Download the file to a temp location using secure session
     let tempFileURL: URL
     let response: URLResponse
@@ -294,16 +410,13 @@ extension AcervoDownloader {
     if let httpResponse = response as? HTTPURLResponse,
       httpResponse.statusCode != 200
     {
-      // Clean up temp file
       try? FileManager.default.removeItem(at: tempFileURL)
-      let name = url.lastPathComponent
       throw AcervoError.downloadFailed(
-        fileName: name,
+        fileName: fileName,
         statusCode: httpResponse.statusCode
       )
     }
 
-    // Use manifest size for accurate progress (don't rely on Content-Length)
     let totalBytes = manifestFile.sizeBytes
 
     // Report initial progress
@@ -316,11 +429,11 @@ extension AcervoDownloader {
         totalFiles: totalFiles
       ))
 
-    // Ensure the destination's parent directory exists
+    // Ensure destination's parent directory exists
     let parentDirectory = destination.deletingLastPathComponent()
     try ensureDirectory(at: parentDirectory)
 
-    // Remove any existing file at the destination
+    // Remove any existing file at destination
     let fm = FileManager.default
     if fm.fileExists(atPath: destination.path) {
       try fm.removeItem(at: destination)
@@ -344,6 +457,130 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles
       ))
+  }
+}
+
+// MARK: - File Download (Public Internal API)
+
+extension AcervoDownloader {
+
+  /// Downloads a single file from the CDN to a local destination.
+  ///
+  /// Uses the streaming download path by default, which computes SHA-256
+  /// incrementally as bytes arrive. Falls back to the legacy
+  /// `download(for:)` + `verifyAgainstManifest` pattern if streaming fails.
+  ///
+  /// The file is written to a UUID-named temp file, verified against the
+  /// manifest entry (size + SHA-256), then moved atomically to the
+  /// destination. If verification fails, the temp file is deleted and an
+  /// error is thrown.
+  ///
+  /// - Parameters:
+  ///   - url: The remote CDN URL to download from.
+  ///   - destination: The local file URL where the downloaded file should be placed.
+  ///   - manifestFile: The manifest entry for this file, used for integrity verification.
+  /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+  ///   `AcervoError.networkError` for connection failures,
+  ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
+  ///   if post-download verification fails.
+  static func downloadFile(
+    from url: URL,
+    to destination: URL,
+    manifestFile: CDNManifestFile
+  ) async throws {
+    let request = buildRequest(from: url)
+
+    do {
+      try await streamDownloadFile(
+        request: request,
+        to: destination,
+        manifestFile: manifestFile,
+        fileName: manifestFile.path,
+        fileIndex: 0,
+        totalFiles: 1,
+        progress: nil
+      )
+    } catch let streamError {
+      // If the error is a verification or HTTP error, propagate immediately
+      // (no point falling back -- the data was already bad)
+      if streamError is AcervoError {
+        throw streamError
+      }
+
+      // Stream failed for a non-verification reason; fall back to legacy path
+      logger.warning(
+        "Streaming download failed for \(manifestFile.path, privacy: .public), falling back to legacy download: \(streamError.localizedDescription, privacy: .public)"
+      )
+
+      try await fallbackDownloadFile(
+        request: request,
+        to: destination,
+        manifestFile: manifestFile,
+        fileName: manifestFile.path,
+        fileIndex: 0,
+        totalFiles: 1,
+        progress: nil
+      )
+    }
+  }
+
+  /// Downloads a single file from the CDN with progress reporting.
+  ///
+  /// Uses the streaming download path by default, which computes SHA-256
+  /// incrementally as bytes arrive. Falls back to the legacy
+  /// `download(for:)` + `verifyAgainstManifest` pattern if streaming fails.
+  ///
+  /// - Parameters:
+  ///   - url: The remote CDN URL to download from.
+  ///   - destination: The local file URL where the downloaded file should be placed.
+  ///   - manifestFile: The manifest entry for this file.
+  ///   - fileName: The display name for the file (used in progress reporting).
+  ///   - fileIndex: The zero-based index of this file in a multi-file download.
+  ///   - totalFiles: The total number of files in the download operation.
+  ///   - progress: An optional callback invoked with download progress.
+  /// - Throws: Download, verification, or directory creation errors.
+  static func downloadFile(
+    from url: URL,
+    to destination: URL,
+    manifestFile: CDNManifestFile,
+    fileName: String,
+    fileIndex: Int,
+    totalFiles: Int,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+  ) async throws {
+    let request = buildRequest(from: url)
+
+    do {
+      try await streamDownloadFile(
+        request: request,
+        to: destination,
+        manifestFile: manifestFile,
+        fileName: fileName,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles,
+        progress: progress
+      )
+    } catch let streamError {
+      // If the error is a verification or HTTP error, propagate immediately
+      if streamError is AcervoError {
+        throw streamError
+      }
+
+      // Stream failed for a non-verification reason; fall back to legacy path
+      logger.warning(
+        "Streaming download failed for \(fileName, privacy: .public), falling back to legacy download: \(streamError.localizedDescription, privacy: .public)"
+      )
+
+      try await fallbackDownloadFile(
+        request: request,
+        to: destination,
+        manifestFile: manifestFile,
+        fileName: fileName,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles,
+        progress: progress
+      )
+    }
   }
 }
 
