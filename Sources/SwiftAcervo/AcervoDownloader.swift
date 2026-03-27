@@ -43,7 +43,41 @@ struct AcervoDownloader: Sendable {
   /// Matches `IntegrityVerification.chunkSize` for consistency.
   private static let streamChunkSize = 4_194_304
 
+  /// Maximum number of files downloaded concurrently in `downloadFiles()`.
+  ///
+  /// This is an internal constant and is intentionally not part of the public API.
+  /// Increasing this value improves throughput on fast connections but raises
+  /// peak memory usage proportionally (each in-flight file uses one 4 MB buffer).
+  private static let maxConcurrentDownloads = 4
+
   private init() {}
+}
+
+// MARK: - Progress Coordinator
+
+/// Thread-safe actor that assigns monotonically increasing `fileIndex` values
+/// as individual files complete within a concurrent download operation.
+///
+/// Because files may complete out of order when downloaded concurrently,
+/// a simple `enumerated()` index no longer reflects completion order.
+/// `ProgressCoordinator` hands out sequential indices as each file finishes,
+/// ensuring that `AcervoDownloadProgress.overallProgress` is always
+/// monotonically increasing regardless of which file completed first.
+private actor ProgressCoordinator {
+  private var completedCount: Int = 0
+
+  /// Returns the next sequential completion index (zero-based) and
+  /// increments the internal counter atomically.
+  func nextCompletedIndex() -> Int {
+    let index = completedCount
+    completedCount += 1
+    return index
+  }
+
+  /// The total number of files that have completed so far.
+  func currentCompletedCount() -> Int {
+    completedCount
+  }
 }
 
 // MARK: - URL Construction
@@ -99,6 +133,14 @@ extension AcervoDownloader {
   ///
   /// If the directory already exists, this method does nothing. If creation
   /// fails, an `AcervoError.directoryCreationFailed` error is thrown.
+  ///
+  /// **Concurrency safety**: This method is safe to call from multiple tasks
+  /// simultaneously. `FileManager.createDirectory(withIntermediateDirectories: true)`
+  /// is documented to be idempotent when the directory already exists, and the
+  /// early-return guard above avoids the syscall in the common already-exists case.
+  /// Concurrent calls racing on a not-yet-existing directory may both attempt
+  /// `createDirectory`; one will succeed and the other will receive an `EEXIST`
+  /// error, which `withIntermediateDirectories: true` silently ignores.
   ///
   /// - Parameter url: The directory URL to ensure exists.
   /// - Throws: `AcervoError.directoryCreationFailed` if the directory
@@ -638,41 +680,85 @@ extension AcervoDownloader {
 
     let totalFiles = filesToDownload.count
 
-    // Step 4: Download and verify each file
-    for (fileIndex, manifestFile) in filesToDownload.enumerated() {
-      let fileDestination = destination.appendingPathComponent(manifestFile.path)
+    // Step 4: Download files concurrently, up to maxConcurrentDownloads at a time.
+    //
+    // A ProgressCoordinator assigns monotonically increasing completion indices
+    // so that `overallProgress` is always non-decreasing regardless of which
+    // file finishes first.
+    //
+    // On the first error the task group is cancelled, which signals cancellation
+    // to all in-flight child tasks via cooperative cancellation.
+    let coordinator = ProgressCoordinator()
 
-      // Skip if file already exists, passes size check, and force is not set
-      if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
-        // Verify existing file against manifest before skipping
-        let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
-        if existingSize == manifestFile.sizeBytes {
-          // Size matches -- skip (full SHA-256 check on skip is optional;
-          // use verifyComponent for deep verification)
-          progress?(
-            AcervoDownloadProgress(
-              fileName: manifestFile.path,
-              bytesDownloaded: manifestFile.sizeBytes,
-              totalBytes: manifestFile.sizeBytes,
-              fileIndex: fileIndex,
-              totalFiles: totalFiles
-            ))
-          continue
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      var inFlight = 0
+
+      for manifestFile in filesToDownload {
+        // Cooperative cancellation: check before starting each new task.
+        try Task.checkCancellation()
+
+        // Throttle: wait for one task to finish before adding a new one
+        // once we have reached the concurrency limit.
+        if inFlight >= maxConcurrentDownloads {
+          try await group.next()
+          inFlight -= 1
         }
-        // Size mismatch -- file is corrupt or stale, re-download
+
+        let fileDestination = destination.appendingPathComponent(manifestFile.path)
+
+        // Skip if file already exists with the correct size (and force is off).
+        if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
+          let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
+          if existingSize == manifestFile.sizeBytes {
+            // Size matches -- skip this file and emit a completion progress event.
+            // Use the coordinator so the fileIndex reflects sequential completion order.
+            let completedIndex = await coordinator.nextCompletedIndex()
+            progress?(
+              AcervoDownloadProgress(
+                fileName: manifestFile.path,
+                bytesDownloaded: manifestFile.sizeBytes,
+                totalBytes: manifestFile.sizeBytes,
+                fileIndex: completedIndex,
+                totalFiles: totalFiles
+              ))
+            continue
+          }
+          // Size mismatch -- file is corrupt or stale, re-download.
+        }
+
+        let url = buildURL(modelId: modelId, fileName: manifestFile.path)
+
+        // Capture loop variables for the child task.
+        let capturedManifestFile = manifestFile
+        let capturedDestination = fileDestination
+        let capturedURL = url
+
+        group.addTask {
+          // Cooperative cancellation inside the child task.
+          try Task.checkCancellation()
+
+          // Fetch a monotonically increasing file index from the coordinator
+          // before the download begins so intermediate progress callbacks
+          // during streaming also use the assigned slot.
+          let completedIndex = await coordinator.nextCompletedIndex()
+
+          try await downloadFile(
+            from: capturedURL,
+            to: capturedDestination,
+            manifestFile: capturedManifestFile,
+            fileName: capturedManifestFile.path,
+            fileIndex: completedIndex,
+            totalFiles: totalFiles,
+            progress: progress
+          )
+        }
+
+        inFlight += 1
       }
 
-      let url = buildURL(modelId: modelId, fileName: manifestFile.path)
-
-      try await downloadFile(
-        from: url,
-        to: fileDestination,
-        manifestFile: manifestFile,
-        fileName: manifestFile.path,
-        fileIndex: fileIndex,
-        totalFiles: totalFiles,
-        progress: progress
-      )
+      // Drain any remaining in-flight tasks.  If any of them threw, the
+      // error propagates here and the task group cancels the remaining ones.
+      try await group.waitForAll()
     }
   }
 }
