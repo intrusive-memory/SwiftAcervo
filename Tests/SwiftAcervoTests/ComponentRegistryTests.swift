@@ -56,13 +56,13 @@ struct ComponentRegistryTests {
     let desc1 = makeDescriptor(
       id: "comp-1",
       displayName: "First",
-      huggingFaceRepo: "org/repo",
+      repoId: "org/repo",
       files: files
     )
     let desc2 = makeDescriptor(
       id: "comp-1",
       displayName: "Second",
-      huggingFaceRepo: "org/repo",
+      repoId: "org/repo",
       files: files
     )
 
@@ -80,18 +80,18 @@ struct ComponentRegistryTests {
 
     let desc1 = makeDescriptor(
       id: "comp-1",
-      huggingFaceRepo: "org/repo-v1"
+      repoId: "org/repo-v1"
     )
     let desc2 = makeDescriptor(
       id: "comp-1",
-      huggingFaceRepo: "org/repo-v2"
+      repoId: "org/repo-v2"
     )
 
     registry.register(desc1)
     registry.register(desc2)
 
     #expect(registry.allComponents().count == 1)
-    #expect(registry.component("comp-1")?.huggingFaceRepo == "org/repo-v2")
+    #expect(registry.component("comp-1")?.repoId == "org/repo-v2")
   }
 
   @Test("Metadata merge: newer keys overwrite, older keys preserved")
@@ -304,7 +304,7 @@ struct ComponentRegistryTests {
     id: String,
     type: ComponentType = .encoder,
     displayName: String = "Test Component",
-    huggingFaceRepo: String = "test-org/test-repo",
+    repoId: String = "test-org/test-repo",
     files: [ComponentFile] = [ComponentFile(relativePath: "config.json")],
     estimatedSizeBytes: Int64 = 1000,
     minimumMemoryBytes: Int64 = 2000,
@@ -314,7 +314,7 @@ struct ComponentRegistryTests {
       id: id,
       type: type,
       displayName: displayName,
-      huggingFaceRepo: huggingFaceRepo,
+      repoId: repoId,
       files: files,
       estimatedSizeBytes: estimatedSizeBytes,
       minimumMemoryBytes: minimumMemoryBytes,
@@ -328,7 +328,7 @@ private func makeDescriptor(
   id: String,
   type: ComponentType = .encoder,
   displayName: String = "Test Component",
-  huggingFaceRepo: String = "test-org/test-repo",
+  repoId: String = "test-org/test-repo",
   files: [ComponentFile] = [ComponentFile(relativePath: "config.json")],
   estimatedSizeBytes: Int64 = 1000,
   minimumMemoryBytes: Int64 = 2000,
@@ -338,7 +338,7 @@ private func makeDescriptor(
     id: id,
     type: type,
     displayName: displayName,
-    huggingFaceRepo: huggingFaceRepo,
+    repoId: repoId,
     files: files,
     estimatedSizeBytes: estimatedSizeBytes,
     minimumMemoryBytes: minimumMemoryBytes,

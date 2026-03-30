@@ -4,7 +4,7 @@
 // Static API namespace for shared AI model discovery and management.
 //
 // Acervo ("collection" / "repository" in Portuguese) provides a single
-// canonical location for HuggingFace AI models across the intrusive-memory
+// canonical location for AI models across the intrusive-memory
 // ecosystem. All model path resolution, availability checks, discovery,
 // download, and migration operations are accessed through static methods
 // on this enum.
@@ -65,7 +65,7 @@ extension Acervo {
       }())
   }
 
-  /// The canonical base directory for all shared HuggingFace models.
+  /// The canonical base directory for all shared AI models.
   ///
   /// Resolves to the App Group container for `group.intrusive-memory.models`
   /// when the entitlement is available (sandboxed apps). Falls back to
@@ -73,7 +73,7 @@ extension Acervo {
   /// contexts (e.g., tests, CLI tools).
   ///
   /// All model directories are stored as direct children of this path,
-  /// named using the slugified HuggingFace model ID.
+  /// named using the slugified model ID.
   ///
   /// ```swift
   /// let baseDir = Acervo.sharedModelsDirectory
@@ -100,12 +100,12 @@ extension Acervo {
       .appendingPathComponent(modelsSubdirectory)
   }
 
-  /// Converts a HuggingFace model ID to a filesystem-safe directory name.
+  /// Converts a model ID to a filesystem-safe directory name.
   ///
   /// Replaces all "/" characters with "_". This is the canonical transformation
-  /// used to derive directory names from HuggingFace model identifiers.
+  /// used to derive directory names from model identifiers.
   ///
-  /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Parameter modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   /// - Returns: The slugified form (e.g., "mlx-community_Qwen2.5-7B-Instruct-4bit").
   ///   Returns an empty string if the input is empty.
   ///
@@ -117,12 +117,12 @@ extension Acervo {
     modelId.replacingOccurrences(of: "/", with: "_")
   }
 
-  /// Returns the local filesystem directory for a given HuggingFace model ID.
+  /// Returns the local filesystem directory for a given model ID.
   ///
   /// The model ID must contain exactly one "/" separating the organization
   /// from the repository name (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   ///
-  /// - Parameter modelId: A HuggingFace model identifier in "org/repo" format.
+  /// - Parameter modelId: A model identifier in "org/repo" format.
   /// - Returns: The URL of the model directory within `sharedModelsDirectory`.
   /// - Throws: `AcervoError.invalidModelId` if the model ID does not contain
   ///   exactly one "/".
@@ -150,7 +150,7 @@ extension Acervo {
   /// This method never throws. If the model ID is invalid or the directory
   /// does not exist, it returns `false`.
   ///
-  /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Parameter modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   /// - Returns: `true` if the model directory contains a `config.json` file.
   ///
   /// ```swift
@@ -173,7 +173,7 @@ extension Acervo {
   /// directory does not exist, it returns `false`.
   ///
   /// - Parameters:
-  ///   - modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16").
+  ///   - modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16").
   ///   - fileName: The file name or relative path within the model directory
   ///     (e.g., "tokenizer.json" or "speech_tokenizer/config.json").
   /// - Returns: `true` if the file exists at the expected location.
@@ -304,12 +304,12 @@ extension Acervo {
     return models
   }
 
-  /// Returns metadata for a single model identified by its HuggingFace ID.
+  /// Returns metadata for a single model identified by its model ID.
   ///
   /// Scans the shared models directory and returns the model whose ID matches
   /// the given identifier.
   ///
-  /// - Parameter modelId: A HuggingFace model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Parameter modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   /// - Returns: The `AcervoModel` matching the given ID.
   /// - Throws: `AcervoError.modelNotFound` if no model with the given ID
   ///   exists in the shared models directory.
@@ -327,7 +327,7 @@ extension Acervo {
   /// This internal overload enables testing with temporary directories.
   ///
   /// - Parameters:
-  ///   - modelId: A HuggingFace model identifier.
+  ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The directory to scan for model subdirectories.
   /// - Returns: The `AcervoModel` matching the given ID.
   /// - Throws: `AcervoError.modelNotFound` if no model with the given ID
@@ -393,8 +393,8 @@ extension Acervo {
 
 extension Acervo {
 
-  /// Common HuggingFace organization prefixes that are stripped before
-  /// computing edit distance, so that "Qwen2.5-7B" matches
+  /// Common organization prefixes that are stripped before computing
+  /// edit distance, so that "Qwen2.5-7B" matches
   /// "mlx-community/Qwen2.5-7B-Instruct-4bit" without the org prefix
   /// inflating the distance.
   private static let commonPrefixes = ["mlx-community/"]
@@ -889,7 +889,7 @@ extension Acervo {
   /// This internal overload enables testing with temporary directories.
   ///
   /// - Parameters:
-  ///   - modelId: A HuggingFace model identifier.
+  ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The base directory to check for the model.
   /// - Returns: `true` if the model directory contains a `config.json` file.
   static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
@@ -970,7 +970,7 @@ extension Acervo {
   /// Validates the model ID format, verifies the directory exists, then
   /// removes the entire model directory recursively.
   ///
-  /// - Parameter modelId: A HuggingFace model identifier in "org/repo" format
+  /// - Parameter modelId: A model identifier in "org/repo" format
   ///   (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
   ///   `AcervoError.modelNotFound` if the model directory does not exist.
@@ -988,7 +988,7 @@ extension Acervo {
   /// without touching the real `sharedModelsDirectory`.
   ///
   /// - Parameters:
-  ///   - modelId: A HuggingFace model identifier in "org/repo" format.
+  ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
   /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
   ///   `AcervoError.modelNotFound` if the model directory does not exist.
@@ -1019,7 +1019,7 @@ extension Acervo {
   ///
   /// Idempotent: re-registering the same ID updates the entry, applying
   /// deduplication rules per REQUIREMENTS A1.2. If the same `id` is registered
-  /// with a different `huggingFaceRepo` or `files`, a warning is logged and
+  /// with a different `repoId` or `files`, a warning is logged and
   /// the last registration wins. Metadata dictionaries are merged (newer keys
   /// overwrite on conflict). `estimatedSizeBytes` and `minimumMemoryBytes`
   /// take the max of both values.
@@ -1033,7 +1033,7 @@ extension Acervo {
   ///     id: "t5-xxl-encoder-int4",
   ///     type: .encoder,
   ///     displayName: "T5-XXL Text Encoder (int4)",
-  ///     huggingFaceRepo: "intrusive-memory/t5-xxl-int4-mlx",
+  ///     repoId: "intrusive-memory/t5-xxl-int4-mlx",
   ///     files: [ComponentFile(relativePath: "model.safetensors")],
   ///     estimatedSizeBytes: 1_200_000_000,
   ///     minimumMemoryBytes: 2_400_000_000
@@ -1124,7 +1124,7 @@ extension Acervo {
     }
 
     let fm = FileManager.default
-    let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.huggingFaceRepo))
+    let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
 
     for file in descriptor.files {
       let filePath = componentDir.appendingPathComponent(file.relativePath).path
@@ -1234,7 +1234,7 @@ extension Acervo {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
-    let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.huggingFaceRepo))
+    let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
 
     // Check that all files exist first
     let fm = FileManager.default
@@ -1343,7 +1343,7 @@ extension Acervo {
 
     // Manifest-driven download with CDN integrity verification
     try await download(
-      descriptor.huggingFaceRepo,
+      descriptor.repoId,
       files: fileList,
       force: force,
       progress: progress,
@@ -1352,7 +1352,7 @@ extension Acervo {
 
     // Additional registry-level checksum verification
     let componentDir = baseDirectory.appendingPathComponent(
-      slugify(descriptor.huggingFaceRepo)
+      slugify(descriptor.repoId)
     )
     for file in descriptor.files {
       guard let expectedHash = file.sha256 else { continue }
@@ -1481,7 +1481,7 @@ extension Acervo {
     }
 
     let componentDir = baseDirectory.appendingPathComponent(
-      slugify(descriptor.huggingFaceRepo)
+      slugify(descriptor.repoId)
     )
 
     // If the directory doesn't exist, nothing to delete -- no-op

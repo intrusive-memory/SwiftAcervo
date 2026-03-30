@@ -10,14 +10,14 @@
 ## Motivation
 
 SwiftAcervo v1 answers one question: **"What's on disk?"** It scans `~/Library/SharedModels/` and reports what it finds. This works, but every consumer must independently know:
-- Which HuggingFace repos to download
+- Which repos to download
 - Which files each model needs
 - Expected sizes and whether a download is complete
 - How to verify integrity
 
 Each consumer reinvents this knowledge. flux-2-swift-mlx has a `ModelRegistry`. pixart-swift-mlx planned one. SwiftVoxAlta's `VoxAltaModelManager` hardcodes `Qwen3TTSModelRepo` variants. The result: model knowledge is scattered across packages, and the "what can I download?" question has no central answer.
 
-Acervo v2 adds a second question: **"What exists in the world?"** Model plugins register their components declaratively. Acervo becomes the single source of truth for both "what's available" and "what's cached." SwiftTubería then addresses models purely through Acervo — no file paths, no HuggingFace URLs, no hardcoded repo strings.
+Acervo v2 adds a second question: **"What exists in the world?"** Model plugins register their components declaratively. Acervo becomes the single source of truth for both "what's available" and "what's cached." SwiftTubería then addresses models purely through Acervo — no file paths, no hardcoded URLs, no hardcoded repo strings.
 
 ### Design Principle: Abstracted Access
 
@@ -38,7 +38,7 @@ If Acervo moves the storage location, changes the caching strategy, or adds inte
 | Capability | v1 (current) | v2 (this spec) |
 |---|---|---|
 | Filesystem discovery | Yes | Yes (unchanged) |
-| Download from HuggingFace | Yes (caller specifies files) | Yes (registry knows files) |
+| Download from CDN | Yes (caller specifies files) | Yes (registry knows files) |
 | Fuzzy search | Yes | Yes (unchanged) |
 | **Component catalog** | No | **Yes — declarative registry** |
 | **"What can I download?"** | No (only "what's on disk?") | **Yes** |
@@ -71,7 +71,7 @@ public struct ComponentDescriptor: Sendable, Identifiable {
     public let id: String                      // e.g. "t5-xxl-encoder-int4"
     public let type: ComponentType             // .encoder, .backbone, .decoder, .vocoder, .tokenizer
     public let displayName: String             // "T5-XXL Text Encoder (int4)"
-    public let huggingFaceRepo: String         // "intrusive-memory/t5-xxl-int4-mlx"
+    public let repoId: String         // "intrusive-memory/t5-xxl-int4-mlx"
     public let files: [ComponentFile]          // required files with checksums
     public let estimatedSizeBytes: Int64       // total expected download size
     public let minimumMemoryBytes: Int64       // RAM needed to load this component
@@ -130,9 +130,9 @@ extension Acervo {
 }
 ```
 
-**Deduplication**: If two model plugins both register `sdxl-vae-decoder-fp16` with the same HuggingFace repo and files, it's one entry. The registry deduplicates by `id`. Deduplication rules:
-- Same `id`, same `huggingFaceRepo` and `files` → silent deduplicate (identical component)
-- Same `id`, different `huggingFaceRepo` or `files` → warning logged, last registration wins
+**Deduplication**: If two model plugins both register `sdxl-vae-decoder-fp16` with the same repo and files, it's one entry. The registry deduplicates by `id`. Deduplication rules:
+- Same `id`, same `repoId` and `files` → silent deduplicate (identical component)
+- Same `id`, different `repoId` or `files` → warning logged, last registration wins
 - `metadata` dictionaries are merged (newer keys overwrite on conflict)
 - `estimatedSizeBytes` and `minimumMemoryBytes` take the max of both values
 
@@ -221,14 +221,14 @@ extension AcervoManager {
 ### A2.3 How Pipeline Uses This
 
 ```swift
-// In SwiftTubería's WeightLoader — no file paths, no HF repo strings
+// In SwiftTubería's WeightLoader — no file paths, no repo strings
 let weights = try await AcervoManager.shared.withComponentAccess("t5-xxl-encoder-int4") { handle in
     let safetensorsURL = try handle.url(matching: ".safetensors")
     return try loadArrays(url: safetensorsURL)
 }
 ```
 
-The WeightLoader knows it needs safetensors data. It doesn't know where on disk that data lives, which HuggingFace repo it came from, or how it was cached. That's Acervo's business.
+The WeightLoader knows it needs safetensors data. It doesn't know where on disk that data lives, which repo it came from, or how it was cached. That's Acervo's business.
 
 ---
 
@@ -238,7 +238,7 @@ The WeightLoader knows it needs safetensors data. It doesn't know where on disk 
 
 ```swift
 extension Acervo {
-    /// Download a registered component. Uses the descriptor's file list and HF repo.
+    /// Download a registered component. Uses the descriptor's file list and repo ID.
     /// No need for the caller to specify files — the registry knows.
     public static func downloadComponent(
         _ componentId: String,
@@ -393,7 +393,7 @@ Existing error cases unchanged.
 Even with the registry, Acervo maintains its boundaries:
 
 1. **Not a model loader** — Does not import MLX or load weights into GPU memory. The `ComponentHandle` provides file access; consumers do the loading.
-2. **Not a HuggingFace Hub client** — Downloads via direct URLs, not the Hub API. The registry provides the URLs; the download logic is the same as v1.
+2. **Not a model hub client** — Downloads via direct CDN URLs, not any hub API. The registry provides the URLs; the download logic is the same as v1.
 3. **Not a cache evictor** — Does not automatically delete models to free space. Explicit deletion via `deleteModel()` or `deleteComponent()`.
 4. **Not a model converter** — Does not quantize or transform files.
 5. **Zero external dependencies** — Foundation only. The registry is just in-memory data structures.
@@ -504,7 +504,7 @@ pixart-swift-mlx ──▶ SwiftTubería ──▶ SwiftAcervo
 
 - All new code must achieve **≥90% line coverage** in unit tests. Coverage is measured per-target and enforced in CI.
 - **No timed tests**: Tests must not use `sleep()`, `Task.sleep()`, `Thread.sleep()`, fixed-duration `XCTestExpectation` timeouts, or any wall-clock assertions. All asynchronous behavior must be validated via deterministic synchronization (`async`/`await`, `AsyncStream`, fulfilled expectations with immediate triggers).
-- **No environment-dependent tests**: Tests must not depend on network access, GPU availability, or specific hardware. Use mock filesystems and injected dependencies for download and integrity verification tests. Tests requiring real HuggingFace downloads are integration tests and must be clearly separated (separate test target or `#if INTEGRATION_TESTS` gate).
+- **No environment-dependent tests**: Tests must not depend on network access, GPU availability, or specific hardware. Use mock filesystems and injected dependencies for download and integrity verification tests. Tests requiring real CDN downloads are integration tests and must be clearly separated (separate test target or `#if INTEGRATION_TESTS` gate).
 - **Flaky tests are test failures**: A test that passes intermittently is treated as a failing test until fixed. CI must not use retry-on-failure to mask flakiness.
 
 ---

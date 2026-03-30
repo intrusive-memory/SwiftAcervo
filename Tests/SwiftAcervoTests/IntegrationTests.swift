@@ -1,7 +1,7 @@
 // IntegrationTests.swift
 // SwiftAcervo
 //
-// Integration tests that require network access and a real HuggingFace
+// Integration tests that require network access and a real CDN
 // endpoint. These tests are compiled only when the INTEGRATION_TESTS
 // flag is set, so they do not run during normal `xcodebuild test`.
 //
@@ -35,7 +35,7 @@
     try? FileManager.default.removeItem(at: url)
   }
 
-  /// A small, publicly accessible model on HuggingFace suitable for
+  /// A small, publicly accessible model suitable for
   /// integration testing. Only `config.json` is downloaded to keep
   /// test runtime minimal.
   private let testModelId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
@@ -55,10 +55,10 @@
 
   // MARK: - Real Download Tests
 
-  @Suite("Integration: Real HuggingFace Downloads")
+  @Suite("Integration: Real CDN Downloads")
   struct RealDownloadIntegrationTests {
 
-    @Test("Download config.json from a real HuggingFace model")
+    @Test("Download config.json from a real CDN model")
     func downloadConfigJson() async throws {
       let tempBase = try makeTempSharedModels()
       defer { cleanupTempDirectory(tempBase) }
@@ -120,7 +120,7 @@
       let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
       #expect(json != nil, "config.json should parse as a dictionary")
 
-      // HuggingFace model config.json files typically have a "model_type" key
+      // model config.json files typically have a "model_type" key
       #expect(json?["model_type"] != nil, "config.json should contain a model_type key")
     }
   }
@@ -275,143 +275,42 @@
     }
   }
 
-  // MARK: - Auth Token Tests
-
-  @Suite("Integration: Auth Token Header")
-  struct AuthTokenIntegrationTests {
-
-    @Test("buildRequest includes Bearer token in Authorization header")
-    func buildRequestIncludesToken() {
-      let url = AcervoDownloader.buildURL(
-        modelId: testModelId,
-        fileName: "config.json"
-      )
-      let token = "hf_test_token_abcdef123456"
-      let request = AcervoDownloader.buildRequest(from: url, token: token)
-
-      #expect(request.url == url)
-      #expect(
-        request.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)"
-      )
-    }
-
-    @Test("buildRequest omits Authorization header when token is nil")
-    func buildRequestOmitsTokenWhenNil() {
-      let url = AcervoDownloader.buildURL(
-        modelId: testModelId,
-        fileName: "config.json"
-      )
-      let request = AcervoDownloader.buildRequest(from: url, token: nil)
-
-      #expect(request.url == url)
-      #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
-    }
-
-    @Test("Download with a bogus token still works for public models")
-    func downloadWithBogusTokenSucceeds() async throws {
-      let tempBase = try makeTempSharedModels()
-      defer { cleanupTempDirectory(tempBase) }
-
-      // Public models should be downloadable even with a token present.
-      // The token is included in the request but the server ignores it
-      // for public models.
-      try await Acervo.download(
-        testModelId,
-        files: ["config.json"],
-        token: "hf_bogus_token_for_testing",
-        in: tempBase
-      )
-
-      let slug = Acervo.slugify(testModelId)
-      let configPath =
-        tempBase
-        .appendingPathComponent(slug)
-        .appendingPathComponent("config.json")
-      #expect(FileManager.default.fileExists(atPath: configPath.path))
-
-      // Verify the file is valid JSON
-      let data = try Data(contentsOf: configPath)
-      let json = try JSONSerialization.jsonObject(with: data)
-      #expect(json is [String: Any])
-    }
-
-    @Test("buildRequest preserves token with special characters")
-    func buildRequestPreservesSpecialChars() {
-      let url = URL(string: "https://huggingface.co/test/model/resolve/main/f.json")!
-      let token = "hf_ABC+/=xyz"
-      let request = AcervoDownloader.buildRequest(from: url, token: token)
-
-      #expect(
-        request.value(forHTTPHeaderField: "Authorization") == "Bearer hf_ABC+/=xyz"
-      )
-    }
-  }
-
   // MARK: - Subdirectory File Download Tests
 
   @Suite("Integration: Subdirectory File Download")
   struct SubdirectoryFileDownloadIntegrationTests {
 
-    @Test("Download a file into a subdirectory creates intermediate directories")
-    func downloadCreatesSubdirectories() async throws {
+    @Test("Download creates model directory and places files correctly")
+    func downloadCreatesModelDirectory() async throws {
       let tempBase = try makeTempSharedModels()
       defer { cleanupTempDirectory(tempBase) }
 
-      // Use a model that has files in subdirectories.
-      // The openai/whisper-tiny model has a "preprocessor_config.json"
-      // at root level. We download config.json into a custom
-      // subdirectory path to verify directory creation. However, the
-      // downloader preserves the HuggingFace repo structure, so if
-      // we request "tokenizer/tokenizer.json" it creates a "tokenizer/"
-      // subdirectory under the model dir.
-      //
-      // For a reliable test, download a root-level file and verify the
-      // model directory is created, then test subdirectory creation
-      // via the AcervoDownloader.downloadFile() directly.
+      // Download config.json through the high-level API, which handles
+      // manifest-based verification and directory creation.
+      try await Acervo.download(
+        testModelId,
+        files: ["config.json"],
+        in: tempBase
+      )
 
       let slug = Acervo.slugify(testModelId)
       let modelDir = tempBase.appendingPathComponent(slug)
 
-      // Create the model directory
-      try AcervoDownloader.ensureDirectory(at: modelDir)
-
-      // Build the URL for a real file at the root level
-      let url = AcervoDownloader.buildURL(
-        modelId: testModelId,
-        fileName: "config.json"
-      )
-
-      // Download the file into a subdirectory path under the model directory
-      let subdirDestination =
-        modelDir
-        .appendingPathComponent("nested")
-        .appendingPathComponent("subdir")
-        .appendingPathComponent("config.json")
-
-      try await AcervoDownloader.downloadFile(
-        from: url,
-        to: subdirDestination,
-        token: nil
-      )
-
-      // Verify intermediate directories were created
-      let nestedDir =
-        modelDir
-        .appendingPathComponent("nested")
-        .appendingPathComponent("subdir")
+      // Verify the model directory was created
       var isDirectory: ObjCBool = false
       let dirExists = FileManager.default.fileExists(
-        atPath: nestedDir.path,
+        atPath: modelDir.path,
         isDirectory: &isDirectory
       )
-      #expect(dirExists, "Intermediate directories should be created")
+      #expect(dirExists, "Model directory should be created")
       #expect(isDirectory.boolValue, "Path should be a directory")
 
-      // Verify file landed at the correct subdirectory path
-      #expect(FileManager.default.fileExists(atPath: subdirDestination.path))
+      // Verify file landed at the correct path
+      let configPath = modelDir.appendingPathComponent("config.json")
+      #expect(FileManager.default.fileExists(atPath: configPath.path))
 
       // Verify file content is valid JSON
-      let data = try Data(contentsOf: subdirDestination)
+      let data = try Data(contentsOf: configPath)
       let json = try JSONSerialization.jsonObject(with: data)
       #expect(json is [String: Any])
     }
@@ -425,7 +324,7 @@
 
       // Verify the URL includes the subdirectory path
       #expect(url.absoluteString.contains("speech_tokenizer/config.json"))
-      #expect(url.absoluteString.hasPrefix("https://huggingface.co/"))
+      #expect(url.absoluteString.hasPrefix("https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/"))
     }
 
     @Test("downloadFiles creates subdirectory for nested file path")
@@ -478,7 +377,7 @@
       } catch let error as AcervoError {
         switch error {
         case .downloadFailed(let fileName, let statusCode):
-          // HuggingFace returns 404 for missing files
+          // CDN returns 404 for missing files
           #expect(statusCode == 404, "Expected 404 status code, got \(statusCode)")
           #expect(
             fileName.contains("this_file_definitely_does_not_exist_12345"),
@@ -514,7 +413,7 @@
       } catch let error as AcervoError {
         switch error {
         case .downloadFailed(_, let statusCode):
-          // HuggingFace returns 401 or 404 for nonexistent repos
+          // CDN returns 401 or 404 for nonexistent repos
           #expect(
             statusCode == 404 || statusCode == 401,
             "Expected 404 or 401 for nonexistent model, got \(statusCode)"
@@ -533,30 +432,25 @@
       }
     }
 
-    @Test("Network error for unreachable host")
-    func networkErrorForUnreachableHost() async throws {
+    @Test("Network error for nonexistent model on CDN")
+    func networkErrorForNonexistentModel() async throws {
       let tempBase = try makeTempSharedModels()
       defer { cleanupTempDirectory(tempBase) }
 
-      // Use the downloader directly with an unreachable URL
-      let unreachableURL = URL(string: "https://localhost:1/fake/path/file.json")!
-      let destination = tempBase.appendingPathComponent("output.json")
+      // Use a model ID that will fail at the manifest download stage
+      let bogusModelId = "nonexistent-org-test/unreachable-model-999"
 
       do {
-        try await AcervoDownloader.downloadFile(
-          from: unreachableURL,
-          to: destination,
-          token: nil
+        try await Acervo.download(
+          bogusModelId,
+          files: ["config.json"],
+          in: tempBase
         )
-        #expect(Bool(false), "Expected download to throw for unreachable host")
+        #expect(Bool(false), "Expected download to throw for nonexistent model")
       } catch let error as AcervoError {
-        if case .networkError(let underlyingError) = error {
-          // Verify the underlying error has useful information
-          let desc = underlyingError.localizedDescription
-          #expect(!desc.isEmpty, "Underlying network error should be descriptive")
-        } else {
-          #expect(Bool(false), "Expected networkError but got \(error)")
-        }
+        // Any AcervoError is acceptable: networkError, downloadFailed, etc.
+        let description = error.errorDescription ?? ""
+        #expect(!description.isEmpty, "Error should have a descriptive message")
       } catch {
         #expect(Bool(false), "Expected AcervoError but got \(type(of: error)): \(error)")
       }
@@ -579,34 +473,23 @@
       #expect(notFound.errorDescription?.contains("org/missing-model") == true)
     }
 
-    @Test("downloadFile with progress throws descriptive error for 404")
-    func downloadFileWithProgressThrows404() async throws {
+    @Test("Download of nonexistent file throws descriptive error")
+    func downloadNonexistentFileThrowsError() async throws {
       let tempBase = try makeTempSharedModels()
       defer { cleanupTempDirectory(tempBase) }
 
-      let url = AcervoDownloader.buildURL(
-        modelId: testModelId,
-        fileName: "this_file_does_not_exist_xyz.json"
-      )
-      let destination = tempBase.appendingPathComponent("output.json")
-
       do {
-        try await AcervoDownloader.downloadFile(
-          from: url,
-          to: destination,
-          token: nil,
-          fileName: "this_file_does_not_exist_xyz.json",
-          fileIndex: 0,
-          totalFiles: 1,
-          progress: nil
+        try await Acervo.download(
+          testModelId,
+          files: ["this_file_does_not_exist_xyz.json"],
+          in: tempBase
         )
         #expect(Bool(false), "Expected download to throw")
       } catch let error as AcervoError {
-        if case .downloadFailed(_, let statusCode) = error {
-          #expect(statusCode == 404, "Expected 404 for missing file")
-        }
-        // Other AcervoError types are also acceptable (e.g., networkError
-        // if the request fails at the transport level)
+        // The error should be descriptive -- either a manifest mismatch
+        // (file not in manifest) or a download failure
+        let description = error.errorDescription ?? ""
+        #expect(!description.isEmpty, "Error should have a descriptive message")
       } catch {
         #expect(Bool(false), "Expected AcervoError but got \(type(of: error))")
       }

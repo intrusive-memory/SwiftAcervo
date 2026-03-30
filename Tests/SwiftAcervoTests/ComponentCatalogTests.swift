@@ -98,7 +98,7 @@ struct ComponentCatalogTests {
     Acervo.register(
       makeDescriptor(
         id: id,
-        huggingFaceRepo: "org/not-dl-\(uid)",
+        repoId: "org/not-dl-\(uid)",
         files: [ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: 100)]
       ))
 
@@ -121,7 +121,7 @@ struct ComponentCatalogTests {
       ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: Int64(modelData.count)),
       ComponentFile(relativePath: "config.json", expectedSizeBytes: Int64(configData.count)),
     ]
-    Acervo.register(makeDescriptor(id: id, huggingFaceRepo: repoSlug, files: files))
+    Acervo.register(makeDescriptor(id: id, repoId: repoSlug, files: files))
 
     // Create the files on disk with correct sizes
     let componentDir = tempDir.appendingPathComponent(Acervo.slugify(repoSlug))
@@ -145,7 +145,7 @@ struct ComponentCatalogTests {
     let files = [
       ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: 999)
     ]
-    Acervo.register(makeDescriptor(id: id, huggingFaceRepo: repoSlug, files: files))
+    Acervo.register(makeDescriptor(id: id, repoId: repoSlug, files: files))
 
     let componentDir = tempDir.appendingPathComponent(Acervo.slugify(repoSlug))
     try FileManager.default.createDirectory(at: componentDir, withIntermediateDirectories: true)
@@ -172,7 +172,7 @@ struct ComponentCatalogTests {
     let files = [
       ComponentFile(relativePath: "model.safetensors")  // nil expectedSizeBytes
     ]
-    Acervo.register(makeDescriptor(id: id, huggingFaceRepo: repoSlug, files: files))
+    Acervo.register(makeDescriptor(id: id, repoId: repoSlug, files: files))
 
     let componentDir = tempDir.appendingPathComponent(Acervo.slugify(repoSlug))
     try FileManager.default.createDirectory(at: componentDir, withIntermediateDirectories: true)
@@ -201,7 +201,7 @@ struct ComponentCatalogTests {
     Acervo.register(
       makeDescriptor(
         id: readyId,
-        huggingFaceRepo: readyRepo,
+        repoId: readyRepo,
         files: [
           ComponentFile(relativePath: "config.json", expectedSizeBytes: Int64(configData.count))
         ]
@@ -209,7 +209,7 @@ struct ComponentCatalogTests {
     Acervo.register(
       makeDescriptor(
         id: pendingId,
-        huggingFaceRepo: pendingRepo,
+        repoId: pendingRepo,
         files: [ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: 100)]
       ))
 
@@ -247,7 +247,7 @@ struct ComponentCatalogTests {
     Acervo.register(
       makeDescriptor(
         id: readyId,
-        huggingFaceRepo: readyRepo,
+        repoId: readyRepo,
         files: [
           ComponentFile(relativePath: "config.json", expectedSizeBytes: Int64(configData.count))
         ],
@@ -256,7 +256,7 @@ struct ComponentCatalogTests {
     Acervo.register(
       makeDescriptor(
         id: pendingId,
-        huggingFaceRepo: pendingRepo,
+        repoId: pendingRepo,
         files: [ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: 200)],
         estimatedSizeBytes: 200
       ))
@@ -285,7 +285,7 @@ struct ComponentCatalogTests {
     id: String,
     type: ComponentType = .encoder,
     displayName: String = "Test Component",
-    huggingFaceRepo: String = "test-org/test-repo",
+    repoId: String = "test-org/test-repo",
     files: [ComponentFile] = [ComponentFile(relativePath: "config.json")],
     estimatedSizeBytes: Int64 = 1000,
     minimumMemoryBytes: Int64 = 2000,
@@ -295,7 +295,7 @@ struct ComponentCatalogTests {
       id: id,
       type: type,
       displayName: displayName,
-      huggingFaceRepo: huggingFaceRepo,
+      repoId: repoId,
       files: files,
       estimatedSizeBytes: estimatedSizeBytes,
       minimumMemoryBytes: minimumMemoryBytes,

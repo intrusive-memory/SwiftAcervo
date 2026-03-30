@@ -158,7 +158,7 @@ struct IntegrityVerificationTests {
       id: id,
       type: .encoder,
       displayName: "Valid",
-      huggingFaceRepo: repoSlug,
+      repoId: repoSlug,
       files: [
         ComponentFile(
           relativePath: "model.safetensors",
@@ -193,7 +193,7 @@ struct IntegrityVerificationTests {
       id: id,
       type: .encoder,
       displayName: "Corrupt",
-      huggingFaceRepo: repoSlug,
+      repoId: repoSlug,
       files: [
         ComponentFile(
           relativePath: "model.safetensors",
@@ -238,7 +238,7 @@ struct IntegrityVerificationTests {
       id: id,
       type: .encoder,
       displayName: "Not Downloaded",
-      huggingFaceRepo: repoSlug,
+      repoId: repoSlug,
       files: [ComponentFile(relativePath: "model.safetensors")],
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 200
@@ -274,7 +274,7 @@ struct IntegrityVerificationTests {
       id: id,
       type: .encoder,
       displayName: "No Checksums",
-      huggingFaceRepo: repoSlug,
+      repoId: repoSlug,
       files: [ComponentFile(relativePath: "model.safetensors")],
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 200
@@ -306,7 +306,7 @@ struct IntegrityVerificationTests {
         id: id,
         type: .encoder,
         displayName: "Pass",
-        huggingFaceRepo: repoSlug,
+        repoId: repoSlug,
         files: [
           ComponentFile(
             relativePath: "file.txt",
@@ -343,7 +343,7 @@ struct IntegrityVerificationTests {
         id: goodId,
         type: .encoder,
         displayName: "Good",
-        huggingFaceRepo: goodRepo,
+        repoId: goodRepo,
         files: [
           ComponentFile(
             relativePath: "file.txt",
@@ -370,7 +370,7 @@ struct IntegrityVerificationTests {
         id: badId,
         type: .decoder,
         displayName: "Bad",
-        huggingFaceRepo: badRepo,
+        repoId: badRepo,
         files: [
           ComponentFile(
             relativePath: "file.txt",
@@ -401,7 +401,7 @@ struct IntegrityVerificationTests {
         id: id,
         type: .encoder,
         displayName: "Not Downloaded",
-        huggingFaceRepo: repoSlug,
+        repoId: repoSlug,
         files: [ComponentFile(relativePath: "model.safetensors", expectedSizeBytes: 100)],
         estimatedSizeBytes: 100,
         minimumMemoryBytes: 200

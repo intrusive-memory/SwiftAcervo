@@ -132,7 +132,7 @@ struct ComponentDescriptorTests {
       id: "pixart-dit-int4",
       type: .backbone,
       displayName: "PixArt DiT (int4)",
-      huggingFaceRepo: "intrusive-memory/pixart-dit-int4-mlx",
+      repoId: "intrusive-memory/pixart-dit-int4-mlx",
       files: files,
       estimatedSizeBytes: 300_001_024,
       minimumMemoryBytes: 600_000_000,
@@ -142,7 +142,7 @@ struct ComponentDescriptorTests {
     #expect(desc.id == "pixart-dit-int4")
     #expect(desc.type == .backbone)
     #expect(desc.displayName == "PixArt DiT (int4)")
-    #expect(desc.huggingFaceRepo == "intrusive-memory/pixart-dit-int4-mlx")
+    #expect(desc.repoId == "intrusive-memory/pixart-dit-int4-mlx")
     #expect(desc.files.count == 2)
     #expect(desc.estimatedSizeBytes == 300_001_024)
     #expect(desc.minimumMemoryBytes == 600_000_000)
@@ -178,7 +178,7 @@ struct ComponentDescriptorTests {
     id: String,
     type: ComponentType = .encoder,
     displayName: String = "Test Component",
-    huggingFaceRepo: String = "test-org/test-repo",
+    repoId: String = "test-org/test-repo",
     files: [ComponentFile] = [ComponentFile(relativePath: "config.json")],
     estimatedSizeBytes: Int64 = 1000,
     minimumMemoryBytes: Int64 = 2000,
@@ -188,7 +188,7 @@ struct ComponentDescriptorTests {
       id: id,
       type: type,
       displayName: displayName,
-      huggingFaceRepo: huggingFaceRepo,
+      repoId: repoId,
       files: files,
       estimatedSizeBytes: estimatedSizeBytes,
       minimumMemoryBytes: minimumMemoryBytes,

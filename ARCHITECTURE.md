@@ -61,7 +61,7 @@ ComponentDescriptor(
     id: String,                    // Globally unique: "pixart-sigma-xl-dit-int4"
     type: ComponentType,           // .encoder, .backbone, .decoder, .languageModel, etc.
     displayName: String,           // Human-readable
-    huggingFaceRepo: String,       // "intrusive-memory/pixart-sigma-xl-dit-int4-mlx"
+    repoId: String,                // "intrusive-memory/pixart-sigma-xl-dit-int4-mlx"
     files: [ComponentFile],        // Required files with optional checksums
     estimatedSizeBytes: Int64,     // Advisory download size
     minimumMemoryBytes: Int64,     // RAM needed to load (used by MemoryManager)
@@ -96,8 +96,8 @@ public enum MyComponents {
 
 ### Deduplication Rules
 
-- Same `id` + same `huggingFaceRepo` + same `files` → silent no-op
-- Same `id` + different repo/files → warning logged, last registration wins
+- Same `id` + same `repoId` + same `files` → silent no-op
+- Same `id` + different `repoId`/files → warning logged, last registration wins
 - `metadata` merged (newer overwrites on conflict)
 - `estimatedSizeBytes` / `minimumMemoryBytes` → max of both values
 
