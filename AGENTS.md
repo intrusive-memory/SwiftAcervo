@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.5.3 (March 2026)
+**Current Version**: 0.5.4 (March 2026)
 
 ---
 
@@ -49,7 +49,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
 - `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
 - `Tools/upload-model.sh` -- Full upstream → manifest → R2 upload workflow
-- `Tests/SwiftAcervoTests/` -- 388 unit tests
+- `Tests/SwiftAcervoTests/` -- 371 unit tests
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
 ## CDN Download Architecture
