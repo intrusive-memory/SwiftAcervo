@@ -8,7 +8,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.5.3
+**Version**: 0.5.4
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -26,6 +26,6 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 - Zero external dependencies (Foundation + CryptoKit only)
 - This library does NOT load models -- it finds and downloads them. Loading is the consumer's job.
 - `config.json` presence is the universal model validity marker
-- All downloads go through private R2 CDN, never HuggingFace directly
+- All downloads go through the private R2 CDN
 - See [AGENTS.md](AGENTS.md) for complete API reference and design patterns
 - See [REQUIREMENTS.md](REQUIREMENTS.md) for full specification

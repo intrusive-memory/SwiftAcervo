@@ -45,7 +45,7 @@ struct ComponentAccessTests {
       id: id,
       type: .backbone,
       displayName: "Test Component",
-      huggingFaceRepo: repo,
+      repoId: repo,
       files: files,
       estimatedSizeBytes: 1000,
       minimumMemoryBytes: 2000
@@ -58,7 +58,7 @@ struct ComponentAccessTests {
     in baseDirectory: URL,
     content: Data = Data("test content".utf8)
   ) throws {
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = baseDirectory.appendingPathComponent(slug)
     let fm = FileManager.default
 
@@ -149,7 +149,7 @@ struct ComponentAccessTests {
       id: componentId,
       type: .backbone,
       displayName: "Corrupt Test",
-      huggingFaceRepo: "test-org/corrupt-\(uid)",
+      repoId: "test-org/corrupt-\(uid)",
       files: [
         ComponentFile(
           relativePath: "model.safetensors",
@@ -164,7 +164,7 @@ struct ComponentAccessTests {
     defer { Acervo.unregister(componentId) }
 
     // Write the WRONG content to disk
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = tempDir.appendingPathComponent(slug)
     try FileManager.default.createDirectory(
       at: componentDir, withIntermediateDirectories: true
@@ -432,7 +432,7 @@ struct ComponentAccessTests {
       id: componentId,
       type: .encoder,
       displayName: "Checksum Test",
-      huggingFaceRepo: "test-org/chk-ok-\(uid)",
+      repoId: "test-org/chk-ok-\(uid)",
       files: [
         ComponentFile(
           relativePath: "model.safetensors",

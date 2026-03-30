@@ -1,8 +1,11 @@
 #!/bin/bash
 # upload-model.sh
 #
-# Downloads a model from HuggingFace, generates a manifest, and uploads
+# Downloads a model from its upstream source, generates a manifest, and uploads
 # everything to the Cloudflare R2 CDN.
+#
+# Note: HuggingFace is the upstream model source for operators. The SwiftAcervo
+# library itself only downloads from the CDN.
 #
 # Usage:
 #   ./Tools/upload-model.sh <model-id> [file1 file2 ...]

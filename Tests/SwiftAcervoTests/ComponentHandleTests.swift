@@ -141,7 +141,7 @@ struct ComponentHandleTests {
       id: "empty",
       type: .encoder,
       displayName: "Empty",
-      huggingFaceRepo: "org/empty-repo",
+      repoId: "org/empty-repo",
       files: [
         ComponentFile(relativePath: "model.safetensors"),
         ComponentFile(relativePath: "config.json"),
@@ -166,7 +166,7 @@ struct ComponentHandleTests {
       id: "test-comp",
       type: .backbone,
       displayName: "Test",
-      huggingFaceRepo: "org/repo",
+      repoId: "org/repo",
       files: [],
       estimatedSizeBytes: 0,
       minimumMemoryBytes: 0
@@ -193,7 +193,7 @@ struct ComponentHandleTests {
       id: "test-handle",
       type: .encoder,
       displayName: "Test Handle",
-      huggingFaceRepo: "org/test-repo",
+      repoId: "org/test-repo",
       files: [
         ComponentFile(relativePath: "model.safetensors"),
         ComponentFile(relativePath: "config.json"),
@@ -228,7 +228,7 @@ struct ComponentHandleTests {
       id: "sharded-handle",
       type: .backbone,
       displayName: "Sharded Handle",
-      huggingFaceRepo: "org/sharded-repo",
+      repoId: "org/sharded-repo",
       files: shardNames.map { ComponentFile(relativePath: $0) },
       estimatedSizeBytes: 1000,
       minimumMemoryBytes: 2000
@@ -251,7 +251,7 @@ struct ComponentHandleTests {
       id: "subdir-handle",
       type: .tokenizer,
       displayName: "Subdir Handle",
-      huggingFaceRepo: "org/subdir-repo",
+      repoId: "org/subdir-repo",
       files: [
         ComponentFile(relativePath: "subdir/nested.json")
       ],
@@ -276,7 +276,7 @@ struct ComponentHandleTests {
       id: "partial-handle",
       type: .encoder,
       displayName: "Partial Handle",
-      huggingFaceRepo: "org/partial-repo",
+      repoId: "org/partial-repo",
       files: [
         ComponentFile(relativePath: "config.json"),
         ComponentFile(relativePath: "missing.safetensors"),

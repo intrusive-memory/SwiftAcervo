@@ -36,7 +36,7 @@ xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
 
 ### Running Integration Tests
 
-Integration tests that download from HuggingFace are gated behind the `INTEGRATION_TESTS` environment variable:
+Integration tests that download from the CDN are gated behind the `INTEGRATION_TESTS` environment variable:
 
 ```bash
 INTEGRATION_TESTS=1 xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'

@@ -59,7 +59,7 @@ public struct ComponentFile: Sendable, Equatable {
 ///
 /// Model plugins create `ComponentDescriptor` instances and register them with Acervo.
 /// Each descriptor uniquely identifies a component by its `id` and declares the
-/// HuggingFace repository, required files, size estimates, and arbitrary metadata.
+/// CDN repository, required files, size estimates, and arbitrary metadata.
 ///
 /// Two descriptors are considered equal if and only if they share the same `id`.
 /// This supports deduplication semantics: registering the same component ID twice
@@ -74,9 +74,9 @@ public struct ComponentDescriptor: Sendable, Identifiable {
   /// Human-readable name for display (e.g., "T5-XXL Text Encoder (int4)").
   public let displayName: String
 
-  /// The HuggingFace repository this component is downloaded from
+  /// The CDN repository identifier for this component
   /// (e.g., "intrusive-memory/t5-xxl-int4-mlx").
-  public let huggingFaceRepo: String
+  public let repoId: String
 
   /// The files that comprise this component, with optional size and checksum metadata.
   public let files: [ComponentFile]
@@ -97,7 +97,7 @@ public struct ComponentDescriptor: Sendable, Identifiable {
   ///   - id: Unique identifier for this component.
   ///   - type: The functional role of this component.
   ///   - displayName: Human-readable name for display.
-  ///   - huggingFaceRepo: The HuggingFace repository identifier.
+  ///   - repoId: The CDN repository identifier.
   ///   - files: Required files with optional size and checksum metadata.
   ///   - estimatedSizeBytes: Total expected download size in bytes.
   ///   - minimumMemoryBytes: Minimum RAM needed to load this component.
@@ -106,7 +106,7 @@ public struct ComponentDescriptor: Sendable, Identifiable {
     id: String,
     type: ComponentType,
     displayName: String,
-    huggingFaceRepo: String,
+    repoId: String,
     files: [ComponentFile],
     estimatedSizeBytes: Int64,
     minimumMemoryBytes: Int64,
@@ -115,7 +115,7 @@ public struct ComponentDescriptor: Sendable, Identifiable {
     self.id = id
     self.type = type
     self.displayName = displayName
-    self.huggingFaceRepo = huggingFaceRepo
+    self.repoId = repoId
     self.files = files
     self.estimatedSizeBytes = estimatedSizeBytes
     self.minimumMemoryBytes = minimumMemoryBytes

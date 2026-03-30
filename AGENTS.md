@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.5.3 (March 2026)
+**Current Version**: 0.5.4 (March 2026)
 
 ---
 
@@ -10,7 +10,7 @@ This file provides comprehensive documentation for AI agents working with the Sw
 
 Consumers need AI models available locally, but model names vary and multiple tools shouldn't each maintain their own copy. SwiftAcervo solves this by providing **model discovery with fuzzy name matching** and **CDN-verified downloads** into a single shared App Group container (`group.intrusive-memory.models`). A model downloaded by one tool is immediately available to all others -- no duplication, no hardcoded paths.
 
-All downloads come exclusively from a private Cloudflare R2 CDN with per-file SHA-256 integrity verification. The library never contacts HuggingFace directly.
+All downloads come exclusively from a private Cloudflare R2 CDN with per-file SHA-256 integrity verification. All downloads are CDN-only.
 
 ## Shared Models Directory
 
@@ -48,8 +48,8 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentHandle.swift` -- Type-safe file access after download
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
 - `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
-- `Tools/upload-model.sh` -- Full HuggingFace → manifest → R2 upload workflow
-- `Tests/SwiftAcervoTests/` -- 388 unit tests
+- `Tools/upload-model.sh` -- Full upstream → manifest → R2 upload workflow
+- `Tests/SwiftAcervoTests/` -- 371 unit tests
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
 ## CDN Download Architecture
@@ -128,7 +128,7 @@ All downloads go through the private R2 CDN:
 ## Design Patterns
 
 - **Static API + Actor**: `Acervo` for simple one-liners, `AcervoManager` for thread-safe operations
-- **CDN-only downloads**: All downloads go through private R2 CDN, never HuggingFace
+- **CDN-only downloads**: All downloads go through private R2 CDN
 - **Manifest-driven integrity**: Per-file SHA-256 verification on every download
 - **Streaming SHA-256**: 4MB chunked reads with incremental hashing during download
 - **Concurrent file downloads**: TaskGroup-based parallel file fetches with monotonic progress tracking
@@ -166,7 +166,7 @@ make resolve  # Resolve Swift package dependencies
 To add or update a model on the CDN:
 
 ```bash
-# Full workflow: download from HuggingFace, generate manifest, upload to R2
+# Full workflow: download from upstream source, generate manifest, upload to R2
 ./Tools/upload-model.sh "org/repo"
 
 # Or generate manifest only for a local directory
@@ -178,5 +178,5 @@ See `Tools/upload-model.sh` for environment variables (`RCLONE_REMOTE`, `R2_BUCK
 ## What This Library is NOT
 
 - NOT a model loader (does not import MLX or any inference framework)
-- NOT a HuggingFace client (downloads from private CDN only)
+- Downloads exclusively from private CDN
 - NOT a cache manager (does not evict models or manage disk quotas)

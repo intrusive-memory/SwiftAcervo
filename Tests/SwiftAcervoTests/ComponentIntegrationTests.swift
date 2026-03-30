@@ -50,7 +50,7 @@ struct ComponentIntegrationTests {
       id: id,
       type: type,
       displayName: "Test \(id)",
-      huggingFaceRepo: repo ?? "test-org/\(id)",
+      repoId: repo ?? "test-org/\(id)",
       files: files,
       estimatedSizeBytes: estimatedSizeBytes,
       minimumMemoryBytes: 2000,
@@ -64,7 +64,7 @@ struct ComponentIntegrationTests {
     in baseDirectory: URL,
     content: Data = Data("test content".utf8)
   ) throws {
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = baseDirectory.appendingPathComponent(slug)
     let fm = FileManager.default
 
@@ -170,7 +170,7 @@ struct ComponentIntegrationTests {
       id: componentId,
       type: .backbone,
       displayName: "Plugin A",
-      huggingFaceRepo: "org/shared-model",
+      repoId: "org/shared-model",
       files: files,
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 200
@@ -179,7 +179,7 @@ struct ComponentIntegrationTests {
       id: componentId,
       type: .backbone,
       displayName: "Plugin B",
-      huggingFaceRepo: "org/shared-model",
+      repoId: "org/shared-model",
       files: files,
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 200
@@ -208,7 +208,7 @@ struct ComponentIntegrationTests {
     defer { Acervo.unregister(componentId) }
 
     let result = Acervo.component(componentId)
-    #expect(result?.huggingFaceRepo == "org/repo-v2")
+    #expect(result?.repoId == "org/repo-v2")
   }
 
   // MARK: - Pending Components
@@ -291,7 +291,7 @@ struct ComponentIntegrationTests {
       id: componentId,
       type: .encoder,
       displayName: "Verified Component",
-      huggingFaceRepo: "test-org/integ-verify-\(uid)",
+      repoId: "test-org/integ-verify-\(uid)",
       files: [
         ComponentFile(relativePath: "model.safetensors", sha256: hash)
       ],
@@ -411,7 +411,7 @@ struct ComponentIntegrationTests {
     defer { Acervo.unregister(regDownId) }
 
     // Create files and config.json for listModels to see it
-    let slug1 = Acervo.slugify(regDownDesc.huggingFaceRepo)
+    let slug1 = Acervo.slugify(regDownDesc.repoId)
     let dir1 = tempDir.appendingPathComponent(slug1)
     try FileManager.default.createDirectory(at: dir1, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: dir1.appendingPathComponent("config.json"))
@@ -438,7 +438,7 @@ struct ComponentIntegrationTests {
     #expect(registeredIds.contains(regDownId))
     // listModels sees the directory since it has config.json
     #expect(
-      modelIds.contains(regDownDesc.huggingFaceRepo.replacingOccurrences(of: "_", with: "/"))
+      modelIds.contains(regDownDesc.repoId.replacingOccurrences(of: "_", with: "/"))
         || modelIds.contains("test-org/integ-state1-\(uid)"))
 
     // Verify State 2: appears only in listModels
@@ -519,7 +519,7 @@ struct ComponentIntegrationTests {
     defer { Acervo.unregister(componentId) }
 
     // Create only some files (not extra.bin)
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = tempDir.appendingPathComponent(slug)
     try FileManager.default.createDirectory(at: componentDir, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: componentDir.appendingPathComponent("config.json"))
@@ -555,7 +555,7 @@ struct ComponentIntegrationTests {
       id: componentId,
       type: .backbone,
       displayName: "Sharded Model",
-      huggingFaceRepo: "test-org/integ-sharded-\(uid)",
+      repoId: "test-org/integ-sharded-\(uid)",
       files: [
         ComponentFile(relativePath: "config.json"),
         ComponentFile(relativePath: "model-00001-of-00003.safetensors"),
@@ -570,7 +570,7 @@ struct ComponentIntegrationTests {
     defer { Acervo.unregister(componentId) }
 
     // Create all files
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = tempDir.appendingPathComponent(slug)
     try FileManager.default.createDirectory(at: componentDir, withIntermediateDirectories: true)
     for file in descriptor.files {
@@ -629,7 +629,7 @@ struct ComponentIntegrationTests {
       id: "eq-test",
       type: .encoder,
       displayName: "Name A",
-      huggingFaceRepo: "org/repo-a",
+      repoId: "org/repo-a",
       files: [],
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 200
@@ -638,7 +638,7 @@ struct ComponentIntegrationTests {
       id: "eq-test",
       type: .decoder,
       displayName: "Name B",
-      huggingFaceRepo: "org/repo-b",
+      repoId: "org/repo-b",
       files: [ComponentFile(relativePath: "f.bin")],
       estimatedSizeBytes: 999,
       minimumMemoryBytes: 888

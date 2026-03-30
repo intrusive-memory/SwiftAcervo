@@ -8,7 +8,7 @@ import Testing
 ///
 /// These tests use temporary directories and the internal overloads that accept
 /// a base directory parameter to avoid touching the real SharedModels directory.
-/// Full integration tests with real HuggingFace downloads are in Sprint 14.
+/// Full integration tests with real CDN downloads are in Sprint 14.
 struct AcervoDownloadAPITests {
 
   // MARK: - Test Helpers

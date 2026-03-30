@@ -70,7 +70,7 @@ extension AcervoManager {
   /// available. Once acquired, the caller is responsible for releasing
   /// the lock via `releaseLock(for:)`.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier to lock.
+  /// - Parameter modelId: The model identifier to lock.
   private func acquireLock(for modelId: String) async {
     while downloadLocks[modelId] == true {
       try? await Task.sleep(for: .milliseconds(50))
@@ -83,7 +83,7 @@ extension AcervoManager {
   /// This should be called (typically via `defer`) after a locked operation
   /// completes, even if the operation threw an error.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier to unlock.
+  /// - Parameter modelId: The model identifier to unlock.
   private func releaseLock(for modelId: String) {
     downloadLocks[modelId] = false
   }
@@ -93,7 +93,7 @@ extension AcervoManager {
   /// This is primarily useful for testing to verify that locks are
   /// properly released after operations complete.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier to check.
+  /// - Parameter modelId: The model identifier to check.
   /// - Returns: `true` if the model is currently locked.
   func isLocked(_ modelId: String) -> Bool {
     downloadLocks[modelId] == true
@@ -106,7 +106,7 @@ extension AcervoManager {
 
   /// Returns the cached URL for the specified model ID, if present.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier.
+  /// - Parameter modelId: The model identifier.
   /// - Returns: The cached URL, or `nil` if the model is not in the cache.
   private func cachedURL(for modelId: String) -> URL? {
     urlCache[modelId]
@@ -116,7 +116,7 @@ extension AcervoManager {
   ///
   /// - Parameters:
   ///   - url: The model directory URL to cache.
-  ///   - modelId: The HuggingFace model identifier.
+  ///   - modelId: The model identifier.
   private func cacheURL(_ url: URL, for modelId: String) {
     urlCache[modelId] = url
   }
@@ -178,7 +178,7 @@ extension AcervoManager {
   ///
   /// Primarily useful for testing.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier to check.
+  /// - Parameter modelId: The model identifier to check.
   /// - Returns: `true` if the cache contains a URL for the model.
   func isCached(_ modelId: String) -> Bool {
     urlCache[modelId] != nil
@@ -192,7 +192,7 @@ extension AcervoManager {
   /// Returns the number of times `download()` has been called for the
   /// specified model ID.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier.
+  /// - Parameter modelId: The model identifier.
   /// - Returns: The download count, or 0 if the model has never been downloaded.
   ///
   /// ```swift
@@ -205,7 +205,7 @@ extension AcervoManager {
   /// Returns the number of times `withModelAccess()` has been called for the
   /// specified model ID.
   ///
-  /// - Parameter modelId: The HuggingFace model identifier.
+  /// - Parameter modelId: The model identifier.
   /// - Returns: The access count, or 0 if the model has never been accessed.
   ///
   /// ```swift
@@ -353,7 +353,7 @@ extension AcervoManager {
   /// same model directory. Access to different models is not blocked.
   ///
   /// - Parameters:
-  ///   - modelId: A HuggingFace model identifier in "org/repo" format
+  ///   - modelId: A model identifier in "org/repo" format
   ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   ///   - perform: A `@Sendable` closure that receives the model directory
   ///     URL and returns a value. The closure executes while the lock is held.
@@ -450,7 +450,7 @@ extension AcervoManager {
 
     // Resolve the component directory
     let componentDir = baseDirectory.appendingPathComponent(
-      Acervo.slugify(descriptor.huggingFaceRepo)
+      Acervo.slugify(descriptor.repoId)
     )
 
     // Verify all files are present

@@ -1,6 +1,6 @@
 ---
 name: update-cdn-model
-description: Upload or update a model on the Cloudflare R2 CDN. Downloads from HuggingFace, generates a manifest with SHA-256 checksums, and uploads to R2. Use when asked to "upload a model", "update the CDN", "sync a model to CDN", "push model to R2", or "add a model to the CDN".
+description: Upload or update a model on the Cloudflare R2 CDN. Downloads from upstream source, generates a manifest with SHA-256 checksums, and uploads to R2. This skill manages the operator-side upload pipeline. The library itself only downloads from CDN. Use when asked to "upload a model", "update the CDN", "sync a model to CDN", "push model to R2", or "add a model to the CDN".
 user_invocable: true
 ---
 
@@ -55,7 +55,7 @@ When the user asks to upload or update a model:
 
 5. **If upload-model.sh is not available or you need manual control**, do it step by step:
 
-   a. **Download from HuggingFace**:
+   a. **Download from upstream source (HuggingFace)**:
    ```bash
    SLUG="org_repo"
    STAGING="/tmp/acervo-staging/$SLUG"
@@ -86,7 +86,7 @@ When the user asks to upload or update a model:
 
 ## Updating an Existing Model
 
-When a model is updated on HuggingFace and needs to be re-synced:
+When a model is updated upstream and needs to be re-synced:
 
 1. Re-run the same upload process — it overwrites the existing files
 2. The manifest is regenerated with new checksums
@@ -99,7 +99,7 @@ When a model is updated on HuggingFace and needs to be re-synced:
 |----------|---------|-------------|
 | `RCLONE_REMOTE` | `r2` | rclone remote name |
 | `R2_BUCKET` | `pub-8e049ed02be340cbb18f921765fd24f3` | R2 bucket name |
-| `HF_TOKEN` | (none) | HuggingFace token for gated models |
+| `HF_TOKEN` | (none) | HuggingFace token for gated upstream models |
 | `STAGING_DIR` | `/tmp/acervo-staging` | Local staging directory |
 
 ## Manifest Format

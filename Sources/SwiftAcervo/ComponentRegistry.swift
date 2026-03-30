@@ -35,8 +35,8 @@ final class ComponentRegistry: @unchecked Sendable {
   /// Registers a component descriptor, applying deduplication rules.
   ///
   /// Deduplication behavior (per REQUIREMENTS A1.2):
-  /// - Same `id`, same `huggingFaceRepo` and `files`: silent overwrite.
-  /// - Same `id`, different `huggingFaceRepo` or `files`: warning logged, last registration wins.
+  /// - Same `id`, same `repoId` and `files`: silent overwrite.
+  /// - Same `id`, different `repoId` or `files`: warning logged, last registration wins.
   /// - `metadata` dictionaries are merged (newer keys overwrite on conflict).
   /// - `estimatedSizeBytes` and `minimumMemoryBytes` take the max of both values.
   ///
@@ -47,12 +47,12 @@ final class ComponentRegistry: @unchecked Sendable {
 
     if let existing = descriptors[descriptor.id] {
       // Check if this is a conflict (different repo or files)
-      let sameRepo = existing.huggingFaceRepo == descriptor.huggingFaceRepo
+      let sameRepo = existing.repoId == descriptor.repoId
       let sameFiles = existing.files == descriptor.files
       if !sameRepo || !sameFiles {
         // Log warning to stderr for conflicting registrations
         let message =
-          "[SwiftAcervo] Warning: re-registering component '\(descriptor.id)' with different huggingFaceRepo or files. Last registration wins."
+          "[SwiftAcervo] Warning: re-registering component '\(descriptor.id)' with different repoId or files. Last registration wins."
         FileHandle.standardError.write(Data((message + "\n").utf8))
       }
 
@@ -71,7 +71,7 @@ final class ComponentRegistry: @unchecked Sendable {
         id: descriptor.id,
         type: descriptor.type,
         displayName: descriptor.displayName,
-        huggingFaceRepo: descriptor.huggingFaceRepo,
+        repoId: descriptor.repoId,
         files: descriptor.files,
         estimatedSizeBytes: mergedEstimatedSize,
         minimumMemoryBytes: mergedMinimumMemory,

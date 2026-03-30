@@ -46,7 +46,7 @@ struct ComponentDownloadTests {
       id: id,
       type: .backbone,
       displayName: "Test Component",
-      huggingFaceRepo: repo,
+      repoId: repo,
       files: files,
       estimatedSizeBytes: estimatedSizeBytes,
       minimumMemoryBytes: 2000
@@ -59,7 +59,7 @@ struct ComponentDownloadTests {
     in baseDirectory: URL,
     content: Data = Data("test content".utf8)
   ) throws {
-    let slug = Acervo.slugify(descriptor.huggingFaceRepo)
+    let slug = Acervo.slugify(descriptor.repoId)
     let componentDir = baseDirectory.appendingPathComponent(slug)
     let fm = FileManager.default
 

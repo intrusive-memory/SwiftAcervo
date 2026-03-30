@@ -1,8 +1,8 @@
 # SwiftAcervo
 
-Shared AI model discovery and management for HuggingFace models on Apple platforms.
+Shared AI model discovery and management for Apple platforms.
 
-SwiftAcervo ("Swift Collection/Repository") provides a single canonical location for HuggingFace AI models so that models downloaded by one tool are immediately visible to all others. It handles path resolution, availability checks, discovery, downloading, fuzzy search, and migration -- with zero external dependencies.
+SwiftAcervo ("Swift Collection/Repository") provides a single canonical location for AI models so that models downloaded by one tool are immediately visible to all others. It handles path resolution, availability checks, discovery, downloading, fuzzy search, and migration -- with zero external dependencies.
 
 ## Why SwiftAcervo?
 
@@ -60,7 +60,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.5.3")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.5.4")
     ],
     targets: [
         .target(
@@ -82,7 +82,7 @@ Or add it through Xcode: **File > Add Package Dependencies** and enter the repos
 | Swift      | 6.2+           |
 | Xcode      | 26+            |
 
-SwiftAcervo has **zero external dependencies**. It uses only Foundation and CryptoKit (system frameworks) -- `URLSession` for downloads, `FileManager` for discovery, `SHA256` for integrity verification. No HuggingFace Hub library, no MLX, no model-specific imports.
+SwiftAcervo has **zero external dependencies**. It uses only Foundation and CryptoKit (system frameworks) -- `URLSession` for downloads, `FileManager` for discovery, `SHA256` for integrity verification. No external model hub libraries, no MLX, no model-specific imports.
 
 ## Quick Start
 
@@ -123,7 +123,7 @@ for model in models {
 
 ### Fuzzy search
 
-Model names from HuggingFace are long and easy to get slightly wrong. SwiftAcervo provides multiple search strategies:
+Model names are long and easy to get slightly wrong. SwiftAcervo provides multiple search strategies:
 
 ```swift
 // Exact substring match (case-insensitive)
@@ -176,7 +176,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 | Method | Description |
 |--------|-------------|
 | `sharedModelsDirectory` | Returns App Group container path + `SharedModels/` |
-| `modelDirectory(for:)` | Returns local directory URL for a HuggingFace model ID |
+| `modelDirectory(for:)` | Returns local directory URL for a model ID |
 | `slugify(_:)` | Converts `org/repo` to `org_repo` |
 
 #### Availability
@@ -239,7 +239,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 ### Supporting Types
 
 **`AcervoModel`** -- Model metadata (`Identifiable`, `Codable`, `Sendable`):
-- `id: String` -- HuggingFace model identifier (e.g., `"mlx-community/Qwen2.5-7B-Instruct-4bit"`)
+- `id: String` -- Model identifier (e.g., `"mlx-community/Qwen2.5-7B-Instruct-4bit"`)
 - `path: URL` -- Local filesystem directory
 - `sizeBytes: Int64` -- Total size of all files
 - `downloadDate: Date` -- Directory creation date
@@ -259,7 +259,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 **`ComponentDescriptor`** -- Declarative model component description (`Sendable`, `Identifiable`):
 - `id: String` -- Unique component identifier
 - `type: ComponentType` -- Functional role (`.encoder`, `.backbone`, `.decoder`, etc.)
-- `huggingFaceRepo: String` -- The origin repository identifier
+- `repoId: String` -- The origin repository identifier
 - `files: [ComponentFile]` -- Required files with optional checksums
 - `estimatedSizeBytes: Int64` -- Total expected download size
 
@@ -280,7 +280,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 ## Design Principles
 
 - **Stability first.** The API surface is intentionally small. Once set, it should rarely change.
-- **Zero dependencies.** Foundation + CryptoKit only. No HuggingFace Hub library, no MLX, no model-specific logic.
+- **Zero dependencies.** Foundation + CryptoKit only. No external model hub libraries, no MLX, no model-specific logic.
 - **Not a model loader.** SwiftAcervo finds and downloads models. Loading is the consumer's job.
 - **CDN-only downloads.** All models are served from a private CDN with per-file SHA-256 verification.
 - **Integrity by default.** Every download is verified against a CDN manifest. Corrupt files are rejected immediately.
@@ -520,7 +520,7 @@ xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS'
 
 ### Integration Tests
 
-Integration tests that hit the HuggingFace network are gated behind the `INTEGRATION_TESTS` compile flag. These are excluded from CI by default to keep the test suite fast and deterministic:
+Integration tests that hit the CDN are gated behind the `INTEGRATION_TESTS` compile flag. These are excluded from CI by default to keep the test suite fast and deterministic:
 
 ```bash
 xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS' \
