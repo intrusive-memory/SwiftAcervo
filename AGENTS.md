@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.5.4 (March 2026)
+**Current Version**: 0.5.5 (April 2026)
 
 ---
 
@@ -131,7 +131,7 @@ All downloads go through the private R2 CDN:
 - **CDN-only downloads**: All downloads go through private R2 CDN
 - **Manifest-driven integrity**: Per-file SHA-256 verification on every download
 - **Streaming SHA-256**: 4MB chunked reads with incremental hashing during download
-- **Concurrent file downloads**: TaskGroup-based parallel file fetches with monotonic progress tracking
+- **Concurrent file downloads**: TaskGroup-based parallel file fetches with byte-accurate cumulative progress tracking
 - **Redirect rejection**: `SecureDownloadSession` blocks redirects to non-CDN domains
 - **Per-model locking**: Same model serialized, different models concurrent
 - **Atomic downloads**: Download to temp, verify, move to destination
