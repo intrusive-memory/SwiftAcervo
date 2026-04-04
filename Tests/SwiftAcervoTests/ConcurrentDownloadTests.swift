@@ -56,7 +56,8 @@ struct ConcurrentDownloadTests {
     )
   }
 
-  @Test("ProgressCoordinator produces monotonically increasing overallProgress when sorted by index")
+  @Test(
+    "ProgressCoordinator produces monotonically increasing overallProgress when sorted by index")
   func progressCoordinatorProducesMonotonicProgress() async {
     let coordinator = ConcurrentProgressCoordinator()
     let totalFiles = 5

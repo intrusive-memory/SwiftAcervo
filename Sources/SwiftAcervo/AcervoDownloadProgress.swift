@@ -32,6 +32,15 @@ public struct AcervoDownloadProgress: Sendable {
   /// The total number of files being downloaded in this operation.
   public let totalFiles: Int
 
+  /// Internal override for byte-accurate overall progress in multi-file downloads.
+  ///
+  /// When set by `AcervoDownloader.downloadFiles()`, `overallProgress` returns
+  /// this value instead of the file-count formula. This ensures that overall
+  /// progress reflects actual bytes transferred rather than file completion count,
+  /// which would otherwise jump to 1.0 as soon as small config/JSON files finish
+  /// while large `.safetensors` files are still downloading.
+  let _overallProgressOverride: Double?
+
   /// Creates a new download progress instance.
   ///
   /// - Parameters:
@@ -52,16 +61,38 @@ public struct AcervoDownloadProgress: Sendable {
     self.totalBytes = totalBytes
     self.fileIndex = fileIndex
     self.totalFiles = totalFiles
+    self._overallProgressOverride = nil
+  }
+
+  /// Internal initializer used by `downloadFiles()` for byte-accurate progress.
+  init(
+    fileName: String,
+    bytesDownloaded: Int64,
+    totalBytes: Int64?,
+    fileIndex: Int,
+    totalFiles: Int,
+    _overallProgressOverride: Double?
+  ) {
+    self.fileName = fileName
+    self.bytesDownloaded = bytesDownloaded
+    self.totalBytes = totalBytes
+    self.fileIndex = fileIndex
+    self.totalFiles = totalFiles
+    self._overallProgressOverride = _overallProgressOverride
   }
 
   /// The overall progress of the entire download operation as a value from 0.0 to 1.0.
   ///
-  /// Combines file-level progress (which file we are on) with byte-level progress
-  /// (how much of the current file has been downloaded). If `totalBytes` is `nil`,
-  /// the current file's byte progress is treated as 0.0.
+  /// When downloading multiple files via `Acervo.download()`, this reflects
+  /// byte-accurate cumulative progress across all files. For single-file downloads
+  /// or external usage of this struct, it combines file-level and byte-level progress.
   ///
   /// The result is clamped to the range `0.0...1.0`.
   public var overallProgress: Double {
+    if let override = _overallProgressOverride {
+      return min(max(override, 0.0), 1.0)
+    }
+
     guard totalFiles > 0 else { return 0.0 }
 
     let fileProgress: Double

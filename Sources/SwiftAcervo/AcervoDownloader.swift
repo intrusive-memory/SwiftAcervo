@@ -53,30 +53,42 @@ struct AcervoDownloader: Sendable {
   private init() {}
 }
 
-// MARK: - Progress Coordinator
+// MARK: - Byte Progress Tracker
 
-/// Thread-safe actor that assigns monotonically increasing `fileIndex` values
-/// as individual files complete within a concurrent download operation.
+/// Thread-safe tracker for cumulative byte progress across concurrent file downloads.
 ///
-/// Because files may complete out of order when downloaded concurrently,
-/// a simple `enumerated()` index no longer reflects completion order.
-/// `ProgressCoordinator` hands out sequential indices as each file finishes,
-/// ensuring that `AcervoDownloadProgress.overallProgress` is always
-/// monotonically increasing regardless of which file completed first.
-private actor ProgressCoordinator {
-  private var completedCount: Int = 0
+/// Replaces the former `ProgressCoordinator`, which assigned file indices *inside*
+/// async tasks. Because Swift's cooperative thread pool typically runs the most-recently-
+/// added task first (LIFO), small config/JSON files added later to the task group often
+/// received the highest indices, completed in milliseconds, and pushed `overallProgress`
+/// to 1.0 while multi-GB model weights were still downloading.
+///
+/// `ByteProgressTracker` measures progress as cumulative bytes downloaded across all
+/// concurrent files divided by total bytes for the entire operation, giving an accurate
+/// signal regardless of file size distribution or task completion order.
+private final class ByteProgressTracker: @unchecked Sendable {
+  private let lock = NSLock()
+  private var fileBytes: [Int: Int64] = [:]
+  private let totalAllBytes: Int64
 
-  /// Returns the next sequential completion index (zero-based) and
-  /// increments the internal counter atomically.
-  func nextCompletedIndex() -> Int {
-    let index = completedCount
-    completedCount += 1
-    return index
+  init(totalAllBytes: Int64) {
+    self.totalAllBytes = totalAllBytes
   }
 
-  /// The total number of files that have completed so far.
-  func currentCompletedCount() -> Int {
-    completedCount
+  /// Records the latest cumulative byte count for a file and returns updated overall
+  /// progress (0.0–1.0) as `(sum of all file bytes) / totalAllBytes`.
+  ///
+  /// - Parameters:
+  ///   - fileIndex: The manifest-order index of the file being updated.
+  ///   - bytes: The cumulative bytes downloaded for this file so far.
+  /// - Returns: Overall progress clamped to 0.0…1.0.
+  func update(fileIndex: Int, bytes: Int64) -> Double {
+    lock.lock()
+    defer { lock.unlock() }
+    fileBytes[fileIndex] = bytes
+    guard totalAllBytes > 0 else { return 0.0 }
+    let downloaded = fileBytes.values.reduce(Int64(0), +)
+    return min(Double(downloaded) / Double(totalAllBytes), 1.0)
   }
 }
 
@@ -635,10 +647,15 @@ extension AcervoDownloader {
   /// This is the core download method. It:
   /// 1. Fetches and validates the CDN manifest
   /// 2. Filters to the requested files (or all files if none specified)
-  /// 3. Downloads each file from the CDN
+  /// 3. Downloads each file from the CDN concurrently (up to `maxConcurrentDownloads`)
   /// 4. Verifies each file's size and SHA-256 against the manifest
   ///
   /// Files that already exist and pass verification are skipped unless `force` is `true`.
+  ///
+  /// Progress is reported as byte-accurate cumulative progress:
+  /// `totalBytesDownloaded / totalBytesForAllFiles`. This prevents small config/JSON
+  /// files from jumping `overallProgress` to 1.0 while large model weights are still
+  /// downloading.
   ///
   /// - Parameters:
   ///   - modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
@@ -682,18 +699,22 @@ extension AcervoDownloader {
 
     // Step 4: Download files concurrently, up to maxConcurrentDownloads at a time.
     //
-    // A ProgressCoordinator assigns monotonically increasing completion indices
-    // so that `overallProgress` is always non-decreasing regardless of which
-    // file finishes first.
+    // Byte-accurate progress: indices are assigned in manifest order (outside async
+    // tasks, so they are deterministic) and a ByteProgressTracker accumulates bytes
+    // across all concurrent downloads. Each progress callback reports
+    // overallProgress = totalBytesDownloaded / totalBytesForAllFiles, eliminating
+    // the prior bug where small JSON/config files completed with high file-count
+    // indices and pushed overallProgress to 1.0 immediately.
     //
-    // On the first error the task group is cancelled, which signals cancellation
-    // to all in-flight child tasks via cooperative cancellation.
-    let coordinator = ProgressCoordinator()
+    // On the first error the task group is cancelled, signalling cooperative
+    // cancellation to all in-flight child tasks.
+    let totalAllBytes = filesToDownload.reduce(Int64(0)) { $0 + $1.sizeBytes }
+    let byteTracker = ByteProgressTracker(totalAllBytes: totalAllBytes)
 
     try await withThrowingTaskGroup(of: Void.self) { group in
       var inFlight = 0
 
-      for manifestFile in filesToDownload {
+      for (index, manifestFile) in filesToDownload.enumerated() {
         // Cooperative cancellation: check before starting each new task.
         try Task.checkCancellation()
 
@@ -710,16 +731,19 @@ extension AcervoDownloader {
         if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
           let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
           if existingSize == manifestFile.sizeBytes {
-            // Size matches -- skip this file and emit a completion progress event.
-            // Use the coordinator so the fileIndex reflects sequential completion order.
-            let completedIndex = await coordinator.nextCompletedIndex()
+            // Credit this file's full byte count so overall progress is accurate.
+            let overallFraction = byteTracker.update(
+              fileIndex: index,
+              bytes: manifestFile.sizeBytes
+            )
             progress?(
               AcervoDownloadProgress(
                 fileName: manifestFile.path,
                 bytesDownloaded: manifestFile.sizeBytes,
                 totalBytes: manifestFile.sizeBytes,
-                fileIndex: completedIndex,
-                totalFiles: totalFiles
+                fileIndex: index,
+                totalFiles: totalFiles,
+                _overallProgressOverride: overallFraction
               ))
             continue
           }
@@ -732,24 +756,41 @@ extension AcervoDownloader {
         let capturedManifestFile = manifestFile
         let capturedDestination = fileDestination
         let capturedURL = url
+        let capturedIndex = index
+
+        // Wrap the progress callback so each per-file update feeds the byte tracker
+        // and carries a byte-accurate _overallProgressOverride.
+        let wrappedProgress: (@Sendable (AcervoDownloadProgress) -> Void)? = progress.map {
+          originalProgress in
+          { @Sendable acervoProgress in
+            let overallFraction = byteTracker.update(
+              fileIndex: capturedIndex,
+              bytes: acervoProgress.bytesDownloaded
+            )
+            originalProgress(
+              AcervoDownloadProgress(
+                fileName: acervoProgress.fileName,
+                bytesDownloaded: acervoProgress.bytesDownloaded,
+                totalBytes: acervoProgress.totalBytes,
+                fileIndex: acervoProgress.fileIndex,
+                totalFiles: acervoProgress.totalFiles,
+                _overallProgressOverride: overallFraction
+              ))
+          }
+        }
 
         group.addTask {
           // Cooperative cancellation inside the child task.
           try Task.checkCancellation()
-
-          // Fetch a monotonically increasing file index from the coordinator
-          // before the download begins so intermediate progress callbacks
-          // during streaming also use the assigned slot.
-          let completedIndex = await coordinator.nextCompletedIndex()
 
           try await downloadFile(
             from: capturedURL,
             to: capturedDestination,
             manifestFile: capturedManifestFile,
             fileName: capturedManifestFile.path,
-            fileIndex: completedIndex,
+            fileIndex: capturedIndex,
             totalFiles: totalFiles,
-            progress: progress
+            progress: wrappedProgress
           )
         }
 
