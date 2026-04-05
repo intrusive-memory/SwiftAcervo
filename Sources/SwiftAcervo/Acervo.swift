@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.5.5"
+  public static let version = "0.5.6"
 }
 
 // MARK: - Path Resolution

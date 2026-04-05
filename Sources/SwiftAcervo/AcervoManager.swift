@@ -378,8 +378,22 @@ extension AcervoManager {
 
     trackAccess(for: modelId)
 
-    let modelDir = try Acervo.modelDirectory(for: modelId)
-    return try perform(modelDir)
+    // Try direct org/repo path resolution first.
+    if let modelDir = try? Acervo.modelDirectory(for: modelId) {
+      return try perform(modelDir)
+    }
+
+    // Fallback: treat modelId as a component ID and resolve via the component registry.
+    // This handles short IDs like "t5-xxl-encoder-int4" that lack the org/ prefix.
+    if let descriptor = Acervo.component(modelId) {
+      let componentDir = Acervo.sharedModelsDirectory.appendingPathComponent(
+        Acervo.slugify(descriptor.repoId)
+      )
+      return try perform(componentDir)
+    }
+
+    // Neither path worked — throw the original validation error.
+    throw AcervoError.invalidModelId(modelId)
   }
 }
 
