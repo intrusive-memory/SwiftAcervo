@@ -59,7 +59,6 @@ struct RealDownloadIntegrationTests {
   @Test("Download config.json from a real CDN model")
   func downloadConfigJson() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -105,7 +104,6 @@ struct RealDownloadIntegrationTests {
   @Test("Downloaded config.json has expected model keys")
   func downloadedConfigHasExpectedKeys() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -141,7 +139,6 @@ struct EnsureAvailableIntegrationTests {
   @Test("ensureAvailable() downloads model when it is missing")
   func ensureAvailableDownloadsWhenMissing() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -175,7 +172,6 @@ struct EnsureAvailableIntegrationTests {
   @Test("ensureAvailable() skips download when model already exists")
   func ensureAvailableSkipsWhenPresent() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -240,7 +236,6 @@ struct ForceReDownloadIntegrationTests {
   @Test("force=true re-downloads an existing file")
   func forceRedownloadsExistingFile() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -306,7 +301,6 @@ struct SubdirectoryFileDownloadIntegrationTests {
   @Test("Download creates model directory and places files correctly")
   func downloadCreatesModelDirectory() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -346,7 +340,6 @@ struct SubdirectoryFileDownloadIntegrationTests {
   @Test("buildURL constructs correct URL for subdirectory files")
   func buildURLForSubdirectory() {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -363,7 +356,6 @@ struct SubdirectoryFileDownloadIntegrationTests {
   @Test("downloadFiles creates subdirectory for nested file path")
   func downloadFilesCreatesSubdirForNestedPath() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -403,7 +395,6 @@ struct HTTPErrorHandlingIntegrationTests {
   @Test("404 error for nonexistent file in a real model")
   func notFoundForNonexistentFile() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -442,7 +433,6 @@ struct HTTPErrorHandlingIntegrationTests {
   @Test("404 error for completely nonexistent model")
   func notFoundForNonexistentModel() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -483,7 +473,6 @@ struct HTTPErrorHandlingIntegrationTests {
   @Test("Network error for nonexistent model on CDN")
   func networkErrorForNonexistentModel() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -512,7 +501,6 @@ struct HTTPErrorHandlingIntegrationTests {
   @Test("Error descriptions are non-empty for all download error types")
   func errorDescriptionsAreDescriptive() {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
@@ -534,7 +522,6 @@ struct HTTPErrorHandlingIntegrationTests {
   @Test("Download of nonexistent file throws descriptive error")
   func downloadNonexistentFileThrowsError() async throws {
     guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-      Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
       return
     }
 
