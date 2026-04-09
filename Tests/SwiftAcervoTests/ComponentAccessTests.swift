@@ -381,6 +381,53 @@ struct ComponentAccessTests {
     #expect(results.contains(componentId2))
   }
 
+  // MARK: - Exception Safety
+
+  @Test("withComponentAccess releases lock when perform closure throws")
+  func accessReleasesLockAfterClosureThrows() async throws {
+    let tempDir = try makeTempDir()
+    defer { removeTempDir(tempDir) }
+
+    let componentId = "access-throw-\(uid)"
+    let descriptor = makeTestDescriptor(id: componentId)
+    Acervo.register(descriptor)
+    defer { Acervo.unregister(componentId) }
+    try createFilesOnDisk(for: descriptor, in: tempDir)
+
+    let manager = AcervoManager.shared
+
+    // First call — closure throws
+    do {
+      _ = try await manager.withComponentAccess(
+        componentId,
+        in: tempDir
+      ) { _ -> String in
+        throw AcervoError.directoryCreationFailed("intentional test failure")
+      }
+      #expect(Bool(false), "Expected closure error to propagate")
+    } catch let error as AcervoError {
+      guard case .directoryCreationFailed = error else {
+        #expect(Bool(false), "Expected directoryCreationFailed, got \(error)")
+        return
+      }
+    }
+
+    // Lock should be released (uses the same downloadLocks pool as model access)
+    let locked = await manager.isLocked(componentId)
+    #expect(!locked, "Lock should be released after perform closure throws")
+
+    // Second call must complete without deadlock, proving the lock was released
+    let result = try await manager.withComponentAccess(
+      componentId,
+      in: tempDir
+    ) { handle in
+      return handle.descriptor.id
+    }
+    #expect(
+      result == componentId,
+      "Subsequent withComponentAccess should succeed after prior closure threw")
+  }
+
   // MARK: - Files with No Checksum (skip integrity)
 
   @Test("withComponentAccess skips integrity for files without checksums")

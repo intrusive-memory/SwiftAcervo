@@ -139,4 +139,27 @@ struct AcervoPathTests {
     let result = Acervo.slugify("a/b")
     #expect(result == "a_b")
   }
+
+  @Test("slugify preserves spaces")
+  func slugifyPreservesSpaces() {
+    let result = Acervo.slugify("org/model with spaces")
+    #expect(result == "org_model with spaces")
+  }
+
+  @Test("slugify preserves uppercase")
+  func slugifyPreservesUppercase() {
+    let result = Acervo.slugify("Org/Model-Name")
+    #expect(result == "Org_Model-Name")
+  }
+
+  // MARK: - customBaseDirectory
+
+  @Test("customBaseDirectory redirects sharedModelsDirectory")
+  func customBaseDirectoryRedirectsSharedModelsDirectory() {
+    let tempRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("acervo-test-\(UUID())")
+    Acervo.customBaseDirectory = tempRoot
+    defer { Acervo.customBaseDirectory = nil }
+    #expect(Acervo.sharedModelsDirectory.path.hasPrefix(tempRoot.path))
+  }
 }

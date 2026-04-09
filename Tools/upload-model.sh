@@ -57,7 +57,7 @@ fi
 
 # Configuration
 RCLONE_REMOTE="${RCLONE_REMOTE:-r2}"
-R2_BUCKET="${R2_BUCKET:-pub-8e049ed02be340cbb18f921765fd24f3}"
+R2_BUCKET="${R2_BUCKET:-intrusive-memory-audio}"
 STAGING_DIR="${STAGING_DIR:-/tmp/acervo-staging}"
 SLUG="${MODEL_ID//\//_}"
 MODEL_STAGING="$STAGING_DIR/$SLUG"

@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.5.6 (April 2026)
+**Current Version**: 0.6.0 (April 2026)
 
 ---
 
@@ -47,6 +47,7 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentDescriptor.swift` -- Declarative component types
 - `Sources/SwiftAcervo/ComponentHandle.swift` -- Type-safe file access after download
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
+- `Sources/SwiftAcervo/LocalHandle.swift` -- Scoped access handle for caller-supplied local paths
 - `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
 - `Tools/upload-model.sh` -- Full upstream → manifest → R2 upload workflow
 - `Tests/SwiftAcervoTests/` -- 371 unit tests
@@ -122,6 +123,8 @@ All downloads go through the private R2 CDN:
 |--------|-------------|
 | `download(_:files:force:progress:)` | Download with per-model serialization |
 | `withModelAccess(_:perform:)` | Exclusive access to a model directory |
+| `withComponentAccess(_:perform:)` | Scoped access to a registered component with integrity verification |
+| `withLocalAccess(_:perform:)` | Scoped access to a caller-supplied local URL (e.g., LoRA adapter) |
 | `clearCache()` | Clear model metadata cache |
 | `preloadModels()` | Preload all model metadata into cache |
 
@@ -138,6 +141,7 @@ All downloads go through the private R2 CDN:
 - **config.json as validity marker**: Universal across all model types
 - **Zero external dependencies**: Foundation + CryptoKit only (system frameworks)
 - **Strict concurrency**: Swift 6 language mode, `@Sendable` closures
+- **Local path access**: `withLocalAccess(_:perform:)` + `LocalHandle` for caller-supplied paths not registered in the component registry (e.g., LoRA adapters)
 
 ## Platform Requirements
 
