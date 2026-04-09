@@ -69,6 +69,9 @@ public enum AcervoError: LocalizedError, Sendable {
   /// A requested file is not listed in the CDN manifest.
   case fileNotInManifest(fileName: String, modelId: String)
 
+  /// A caller-supplied local URL does not exist on disk.
+  case localPathNotFound(url: URL)
+
   public var errorDescription: String? {
     switch self {
     case .directoryCreationFailed(let path):
@@ -125,6 +128,9 @@ public enum AcervoError: LocalizedError, Sendable {
 
     case .fileNotInManifest(let fileName, let modelId):
       return "File '\(fileName)' is not listed in the CDN manifest for '\(modelId)'"
+
+    case .localPathNotFound(let url):
+      return "Local path not found: \(url.path)"
     }
   }
 }

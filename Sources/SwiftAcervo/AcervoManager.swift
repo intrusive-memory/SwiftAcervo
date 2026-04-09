@@ -504,4 +504,36 @@ extension AcervoManager {
     )
     return try perform(handle)
   }
+
+  /// Provides scoped access to a caller-supplied local directory or file that
+  /// is not registered in the Acervo component registry.
+  ///
+  /// Use this when the caller holds a URL to a local adapter or weight file
+  /// that Acervo did not download — e.g., a user-supplied LoRA adapter on disk.
+  /// Acervo validates the path exists and provides a `LocalHandle`; the caller
+  /// never needs to touch `FileManager` or construct URLs themselves.
+  ///
+  /// - Parameters:
+  ///   - url: The local URL to access. Must point to an existing file or directory.
+  ///   - perform: A `@Sendable` closure that receives a `LocalHandle` for
+  ///     path-agnostic file access. The handle is valid only within this closure.
+  /// - Returns: The value returned by `perform`.
+  /// - Throws: `AcervoError.localPathNotFound(url:)` if `url` does not exist on disk.
+  ///
+  /// ```swift
+  /// let weights = try await AcervoManager.shared.withLocalAccess(loraURL) { handle in
+  ///     let url = try handle.url(matching: ".safetensors")
+  ///     return try loadSafetensors(from: url)
+  /// }
+  /// ```
+  public func withLocalAccess<T: Sendable>(
+    _ url: URL,
+    perform: @Sendable (LocalHandle) throws -> T
+  ) async throws -> T {
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      throw AcervoError.localPathNotFound(url: url)
+    }
+    let handle = LocalHandle(rootURL: url)
+    return try perform(handle)
+  }
 }
