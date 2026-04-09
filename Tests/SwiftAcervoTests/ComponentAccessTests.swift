@@ -423,7 +423,9 @@ struct ComponentAccessTests {
     ) { handle in
       return handle.descriptor.id
     }
-    #expect(result == componentId, "Subsequent withComponentAccess should succeed after prior closure threw")
+    #expect(
+      result == componentId,
+      "Subsequent withComponentAccess should succeed after prior closure threw")
   }
 
   // MARK: - Files with No Checksum (skip integrity)

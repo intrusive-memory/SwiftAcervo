@@ -8,7 +8,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.5.6
+**Version**: 0.6.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -18,6 +18,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 - CDN-only downloads with per-file SHA-256 manifest verification
 - `SecureDownloadSession` that rejects redirects to non-CDN domains
 - Component registry for declarative model component management
+- `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
 
 **Important Notes**:

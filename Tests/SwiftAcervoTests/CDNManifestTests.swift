@@ -266,9 +266,11 @@ struct CDNManifestTests {
     #expect {
       try manifest.validate(for: "org/requested-repo")
     } throws: { error in
-      guard case AcervoError.manifestModelIdMismatch(
-        let expected, let actual
-      ) = error else { return false }
+      guard
+        case AcervoError.manifestModelIdMismatch(
+          let expected, let actual
+        ) = error
+      else { return false }
       return expected == "org/requested-repo" && actual == "org/actual-repo"
     }
   }

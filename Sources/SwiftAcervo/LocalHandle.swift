@@ -91,11 +91,12 @@ public struct LocalHandle: Sendable {
       return rootURL.path.hasSuffix(suffix) ? [rootURL] : []
     }
 
-    let contents = (try? FileManager.default.contentsOfDirectory(
-      at: rootURL,
-      includingPropertiesForKeys: nil,
-      options: .skipsHiddenFiles
-    )) ?? []
+    let contents =
+      (try? FileManager.default.contentsOfDirectory(
+        at: rootURL,
+        includingPropertiesForKeys: nil,
+        options: .skipsHiddenFiles
+      )) ?? []
 
     return contents.filter { $0.path.hasSuffix(suffix) }.sorted { $0.path < $1.path }
   }

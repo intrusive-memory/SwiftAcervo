@@ -19,7 +19,9 @@ struct AcervoStressConcurrencyTests {
 
   // MARK: - 12 Concurrent Downloads of Different Models
 
-  @Test("12 concurrent downloads of different models complete without deadlock", .timeLimit(.minutes(2)))
+  @Test(
+    "12 concurrent downloads of different models complete without deadlock", .timeLimit(.minutes(2))
+  )
   func twelveConcurrentDownloadsCompleteWithoutDeadlock() async throws {
     let manager = AcervoManager.shared
 
@@ -52,7 +54,9 @@ struct AcervoStressConcurrencyTests {
     }
 
     // All 12 tasks must complete — no deadlock
-    #expect(completedCount == 12, "All 12 concurrent downloads should complete without deadlock, got \(completedCount)")
+    #expect(
+      completedCount == 12,
+      "All 12 concurrent downloads should complete without deadlock, got \(completedCount)")
 
     // Verify no locks remain held after all tasks complete
     for modelId in modelIds {
@@ -90,6 +94,7 @@ struct AcervoStressConcurrencyTests {
     let finalCount = await manager.getAccessCount(for: modelId)
     #expect(
       finalCount == baseline + taskCount,
-      "getAccessCount should reflect all \(taskCount) concurrent increments; expected \(baseline + taskCount), got \(finalCount)")
+      "getAccessCount should reflect all \(taskCount) concurrent increments; expected \(baseline + taskCount), got \(finalCount)"
+    )
   }
 }

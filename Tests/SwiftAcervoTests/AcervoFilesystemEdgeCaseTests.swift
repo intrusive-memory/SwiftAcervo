@@ -176,7 +176,8 @@ struct AcervoSymlinkEdgeCaseTests {
     let realModelDir = try makeFakeModel(id: "test-org/symlinked-model", in: realModelRoot)
 
     // Create a symlink inside tempRoot pointing to the real model directory.
-    let symlinkPath = tempRoot
+    let symlinkPath =
+      tempRoot
       .appendingPathComponent(Acervo.slugify("test-org/symlinked-model"))
       .path
     try FileManager.default.createSymbolicLink(
@@ -213,10 +214,12 @@ struct AcervoSymlinkEdgeCaseTests {
     defer { Acervo.customBaseDirectory = nil }
 
     // Create a symlink whose destination does not exist.
-    let brokenSymlinkPath = tempRoot
+    let brokenSymlinkPath =
+      tempRoot
       .appendingPathComponent("test-org_broken-model")
       .path
-    let nonexistentTarget = tempRoot
+    let nonexistentTarget =
+      tempRoot
       .appendingPathComponent("does-not-exist-\(UUID())")
       .path
     try FileManager.default.createSymbolicLink(

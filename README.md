@@ -60,7 +60,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.5.6")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.6.0")
     ],
     targets: [
         .target(
@@ -276,6 +276,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 - `integrityCheckFailed(file:expected:actual:)` -- File SHA-256 mismatch
 - `downloadSizeMismatch(fileName:expected:actual:)` -- File size mismatch
 - `fileNotInManifest(fileName:modelId:)` -- Requested file not in CDN manifest
+- `localPathNotFound(url:)` -- Caller-supplied local URL does not exist on disk
 
 ## Design Principles
 
@@ -495,6 +496,26 @@ let configData = try await AcervoManager.shared.withModelAccess(
 ```
 
 The lock is automatically released when the closure returns or throws, via `defer`. All closures must be `@Sendable` to satisfy Swift 6 strict concurrency.
+
+### Local Path Access
+
+Use `withLocalAccess(_:perform:)` to access a caller-supplied local file or directory that Acervo did not download — for example, a user-supplied LoRA adapter or weight file. Acervo validates the path exists and provides a `LocalHandle` for path-agnostic file resolution:
+
+```swift
+let loraURL = URL(filePath: "/path/to/my-lora-adapter")
+
+let weights = try await AcervoManager.shared.withLocalAccess(loraURL) { handle in
+    let fileURL = try handle.url(matching: ".safetensors")
+    return try Data(contentsOf: fileURL)
+}
+```
+
+`LocalHandle` provides three resolution methods:
+- `url(for:)` — resolve a file by relative path from the root
+- `url(matching:)` — find the first file whose path ends with a suffix
+- `urls(matching:)` — list all files matching a suffix
+
+If the URL does not exist on disk, `AcervoError.localPathNotFound(url:)` is thrown.
 
 ### Usage Statistics
 

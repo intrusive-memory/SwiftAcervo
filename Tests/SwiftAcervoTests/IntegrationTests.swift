@@ -10,8 +10,9 @@
 //       -destination 'platform=macOS,arch=arm64'
 //
 
-import Testing
 import Foundation
+import Testing
+
 @testable import SwiftAcervo
 
 // MARK: - Integration Test Helpers
