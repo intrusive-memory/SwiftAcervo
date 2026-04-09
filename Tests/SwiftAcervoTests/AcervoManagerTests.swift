@@ -279,6 +279,56 @@ struct AcervoManagerTests {
     #expect(!locked, "Lock should be released after closure error")
   }
 
+  @Test("withModelAccess subsequent access succeeds after closure throws")
+  func withModelAccessSubsequentAccessAfterThrow() async throws {
+    let manager = AcervoManager.shared
+    let modelId = "test-org/subsequent-access-test"
+
+    // First call — closure throws
+    do {
+      let _ = try await manager.withModelAccess(modelId) { _ -> Int in
+        throw AcervoError.directoryCreationFailed("intentional test failure")
+      }
+    } catch {
+      // Expected
+    }
+
+    // Second call must complete without deadlock, proving the lock was released
+    let result = try await manager.withModelAccess(modelId) { url -> String in
+      return url.lastPathComponent
+    }
+    #expect(!result.isEmpty, "Subsequent withModelAccess should succeed after prior closure threw")
+
+    // Lock still released after second call
+    let locked = await manager.isLocked(modelId)
+    #expect(!locked, "Lock should be released after the second successful call")
+  }
+
+  @Test("withModelAccess lock not leaked under concurrent throws")
+  func withModelAccessLockNotLeakedUnderConcurrentThrows() async {
+    let manager = AcervoManager.shared
+    let modelId = "test-org/concurrent-throws-test"
+
+    // Dispatch 3 concurrent calls that each throw — none should deadlock
+    await withTaskGroup(of: Void.self) { group in
+      for index in 1...3 {
+        group.addTask { @Sendable in
+          do {
+            let _ = try await manager.withModelAccess(modelId) { _ -> Int in
+              throw AcervoError.directoryCreationFailed("concurrent throw \(index)")
+            }
+          } catch {
+            // Expected — all three should throw, not deadlock
+          }
+        }
+      }
+    }
+
+    // After all tasks complete, the lock must be free
+    let locked = await manager.isLocked(modelId)
+    #expect(!locked, "Lock should not be leaked after concurrent throwing closures")
+  }
+
   @Test("withModelAccess concurrent access to same model is serialized")
   func withModelAccessConcurrentSameModelSerialized() async throws {
     let manager = AcervoManager.shared

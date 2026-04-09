@@ -91,4 +91,24 @@ extension CDNManifest {
   func file(at path: String) -> CDNManifestFile? {
     files.first { $0.path == path }
   }
+
+  /// Validates this manifest against the requested model ID.
+  ///
+  /// Checks that the manifest version is supported and that the `modelId`
+  /// field matches the requested model. Call after decoding and before using
+  /// the manifest for downloads.
+  ///
+  /// - Parameter requestedModelId: The `org/repo` model identifier the caller
+  ///   requested. Must match the manifest's `modelId` field.
+  /// - Throws: `AcervoError.manifestVersionUnsupported` if `manifestVersion`
+  ///   is not `supportedVersion`, or `AcervoError.manifestModelIdMismatch` if
+  ///   `modelId` does not match `requestedModelId`.
+  func validate(for requestedModelId: String) throws {
+    guard manifestVersion == Self.supportedVersion else {
+      throw AcervoError.manifestVersionUnsupported(manifestVersion)
+    }
+    guard modelId == requestedModelId else {
+      throw AcervoError.manifestModelIdMismatch(expected: requestedModelId, actual: modelId)
+    }
+  }
 }

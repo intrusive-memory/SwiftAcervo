@@ -165,4 +165,111 @@ struct CDNManifestTests {
   func supportedVersion() {
     #expect(CDNManifest.supportedVersion == 1)
   }
+
+  @Test("Manifest version 0 returns manifestVersionUnsupported(0)")
+  func manifestVersionUnsupported0() throws {
+    let json = """
+      {
+          "manifestVersion": 0,
+          "modelId": "org/repo",
+          "slug": "org_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [],
+          "manifestChecksum": "placeholder"
+      }
+      """
+    let manifest = try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    #expect {
+      try manifest.validate(for: "org/repo")
+    } throws: { error in
+      guard case AcervoError.manifestVersionUnsupported(let version) = error else { return false }
+      return version == 0
+    }
+  }
+
+  @Test("Manifest version 99 returns manifestVersionUnsupported(99)")
+  func manifestVersionUnsupported99() throws {
+    let json = """
+      {
+          "manifestVersion": 99,
+          "modelId": "org/repo",
+          "slug": "org_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [],
+          "manifestChecksum": "placeholder"
+      }
+      """
+    let manifest = try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    #expect {
+      try manifest.validate(for: "org/repo")
+    } throws: { error in
+      guard case AcervoError.manifestVersionUnsupported(let version) = error else { return false }
+      return version == 99
+    }
+  }
+
+  @Test("CDNManifestFile sha256 field preserved exactly — no lowercasing")
+  func sha256CasePreserved() throws {
+    let mixedCaseSha256 = "AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789AbCdEf0123456789"
+    let json = """
+      {
+          "manifestVersion": 1,
+          "modelId": "org/repo",
+          "slug": "org_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [
+              {
+                  "path": "config.json",
+                  "sha256": "\(mixedCaseSha256)",
+                  "sizeBytes": 100
+              }
+          ],
+          "manifestChecksum": "placeholder"
+      }
+      """
+    let manifest = try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    // Verify stored sha256 is character-for-character identical — no lowercasing applied
+    #expect(manifest.files[0].sha256 == mixedCaseSha256)
+  }
+
+  @Test("Manifest fails to decode JSON missing required version field")
+  func manifestMissingRequiredVersionField() {
+    // JSON without the required "manifestVersion" key must fail to decode
+    let json = """
+      {
+          "modelId": "org/repo",
+          "slug": "org_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [],
+          "manifestChecksum": "placeholder"
+      }
+      """
+    #expect(throws: (any Error).self) {
+      try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    }
+  }
+
+  @Test("Model ID mismatch returns manifestModelIdMismatch")
+  func manifestModelIdMismatch() throws {
+    let checksum = CDNManifest.computeChecksum(from: [])
+    let json = """
+      {
+          "manifestVersion": 1,
+          "modelId": "org/actual-repo",
+          "slug": "org_actual_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [],
+          "manifestChecksum": "\(checksum)"
+      }
+      """
+    let manifest = try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    #expect {
+      try manifest.validate(for: "org/requested-repo")
+    } throws: { error in
+      guard case AcervoError.manifestModelIdMismatch(
+        let expected, let actual
+      ) = error else { return false }
+      return expected == "org/requested-repo" && actual == "org/actual-repo"
+    }
+  }
 }

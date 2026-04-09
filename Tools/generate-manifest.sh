@@ -93,25 +93,34 @@ MANIFEST_CHECKSUM=$(echo -e "$ALL_CHECKSUMS" | sort | tr -d '\n' | shasum -a 256
 echo ""
 echo "  Manifest checksum: $MANIFEST_CHECKSUM"
 
-# Write manifest.json using python3 for proper JSON formatting
+# Write manifest.json using python3 for proper JSON formatting.
+# FILE_ENTRIES contains newlines, so pass all shell variables via the
+# environment rather than interpolating them into the -c string literal.
+FILE_ENTRIES_JSON="[$FILE_ENTRIES]" \
+MODEL_ID="$MODEL_ID" \
+SLUG="$SLUG" \
+UPDATED_AT="$UPDATED_AT" \
+MANIFEST_CHECKSUM="$MANIFEST_CHECKSUM" \
+MODEL_DIR="$MODEL_DIR" \
 python3 -c "
-import json, sys
+import json, os
 
 manifest = {
     'manifestVersion': 1,
-    'modelId': '$MODEL_ID',
-    'slug': '$SLUG',
-    'updatedAt': '$UPDATED_AT',
-    'files': json.loads('[$FILE_ENTRIES]'),
-    'manifestChecksum': '$MANIFEST_CHECKSUM'
+    'modelId': os.environ['MODEL_ID'],
+    'slug': os.environ['SLUG'],
+    'updatedAt': os.environ['UPDATED_AT'],
+    'files': json.loads(os.environ['FILE_ENTRIES_JSON']),
+    'manifestChecksum': os.environ['MANIFEST_CHECKSUM']
 }
 
-with open('$MODEL_DIR/manifest.json', 'w') as f:
+model_dir = os.environ['MODEL_DIR']
+with open(model_dir + '/manifest.json', 'w') as f:
     json.dump(manifest, f, indent=2)
     f.write('\n')
 
-print(f'  Wrote: $MODEL_DIR/manifest.json')
-print(f'  Files: {len(manifest[\"files\"])}')
+print('  Wrote: ' + model_dir + '/manifest.json')
+print('  Files: ' + str(len(manifest['files'])))
 "
 
 echo ""
