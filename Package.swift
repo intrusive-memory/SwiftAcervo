@@ -37,6 +37,11 @@ let package = Package(
       name: "SwiftAcervoTests",
       dependencies: ["SwiftAcervo"]
     ),
+    .testTarget(
+      name: "AcervoToolTests",
+      dependencies: ["acervo", "SwiftAcervo"],
+      path: "Tests/AcervoToolTests"
+    ),
   ],
   swiftLanguageModes: [.v6]
 )

@@ -54,14 +54,16 @@ release-acervo: resolve
 	  echo "Error: Could not find $(ACERVO_BINARY) in DerivedData"; exit 1; \
 	fi
 
-test-acervo-unit:
-	xcodebuild test -scheme AcervoToolTests -destination $(DESTINATION)
+test-acervo-unit: resolve
+	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
+	  -only-testing:AcervoToolTests
 
-test-acervo-integration:
-	xcodebuild test -scheme AcervoToolIntegrationTests -destination $(DESTINATION)
+test-acervo-integration: resolve
+	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
+	  -only-testing:AcervoToolIntegrationTests
 
-test-acervo-cdn:
-	xcodebuild test -scheme AcervoToolTests -destination $(DESTINATION) \
+test-acervo-cdn: resolve
+	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests/CDNManifestFetchTests
 
 help:
