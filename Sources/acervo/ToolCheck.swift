@@ -9,10 +9,24 @@ enum AcervoToolError: Error, CustomStringConvertible {
   /// A required external CLI tool was not found on `PATH`.
   case missingTool(String)
 
+  /// A file in the staging directory is zero bytes. The manifest
+  /// generator refuses to write a manifest that references a
+  /// zero-byte file (CHECK 2 from the acervo tool requirements).
+  case zeroByteFile(String)
+
+  /// After writing `manifest.json`, the re-read manifest's
+  /// `manifestChecksum` did not match the recomputed checksum
+  /// (CHECK 3 from the acervo tool requirements).
+  case manifestChecksumMismatch(path: String)
+
   var description: String {
     switch self {
     case .missingTool(let name):
       return "Required tool not found on PATH: \(name)"
+    case .zeroByteFile(let path):
+      return "Refusing to write manifest: zero-byte file in staging: \(path)"
+    case .manifestChecksumMismatch(let path):
+      return "Post-write manifest checksum mismatch at \(path) (CHECK 3 failed)"
     }
   }
 }
