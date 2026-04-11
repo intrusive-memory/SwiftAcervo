@@ -19,6 +19,30 @@ enum AcervoToolError: Error, CustomStringConvertible {
   /// (CHECK 3 from the acervo tool requirements).
   case manifestChecksumMismatch(path: String)
 
+  /// A file listed in the manifest was mutated between manifest
+  /// generation and the pre-upload integrity sweep
+  /// (CHECK 4 from the acervo tool requirements).
+  case stagingMutation(filename: String, expected: String, actual: String)
+
+  /// A file served by the CDN did not match the SHA-256 recorded
+  /// in the manifest (CHECK 6 from the acervo tool requirements).
+  case cdnChecksumMismatch(filename: String, expected: String, actual: String)
+
+  /// An invocation of the `aws` CLI exited with a non-zero status.
+  /// `stderr` carries the captured error output.
+  case awsProcessFailed(command: String, exitCode: Int32, stderr: String)
+
+  /// A CDN HTTP fetch did not return HTTP 200.
+  case cdnHTTPStatus(url: String, statusCode: Int)
+
+  /// The CDN manifest decoded successfully but failed
+  /// `CDNManifest.verifyChecksum()` (CHECK 5).
+  case cdnManifestChecksumInvalid(url: String)
+
+  /// A required environment variable was not set when invoking
+  /// `aws` (for example, `R2_ACCESS_KEY_ID`).
+  case missingEnvironmentVariable(String)
+
   var description: String {
     switch self {
     case .missingTool(let name):
@@ -27,6 +51,20 @@ enum AcervoToolError: Error, CustomStringConvertible {
       return "Refusing to write manifest: zero-byte file in staging: \(path)"
     case .manifestChecksumMismatch(let path):
       return "Post-write manifest checksum mismatch at \(path) (CHECK 3 failed)"
+    case .stagingMutation(let filename, let expected, let actual):
+      return
+        "Staging mutation detected for \(filename) (CHECK 4 failed): expected \(expected), got \(actual)"
+    case .cdnChecksumMismatch(let filename, let expected, let actual):
+      return
+        "CDN checksum mismatch for \(filename) (CHECK 6 failed): expected \(expected), got \(actual)"
+    case .awsProcessFailed(let command, let exitCode, let stderr):
+      return "aws command failed (\(command)) with exit code \(exitCode): \(stderr)"
+    case .cdnHTTPStatus(let url, let statusCode):
+      return "CDN fetch failed for \(url): HTTP \(statusCode)"
+    case .cdnManifestChecksumInvalid(let url):
+      return "CDN manifest at \(url) failed verifyChecksum() (CHECK 5 failed)"
+    case .missingEnvironmentVariable(let name):
+      return "Required environment variable not set: \(name)"
     }
   }
 }
