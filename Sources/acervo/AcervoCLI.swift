@@ -19,20 +19,9 @@ struct AcervoCLI: AsyncParsableCommand {
 
 // MARK: - Subcommand Stubs
 //
-// These stubs exist so `acervo --help` surfaces every subcommand while later
-// sorties flesh out the real implementations. Each will be rewritten in a
-// future sortie; keep them minimal.
-
-struct DownloadCommand: AsyncParsableCommand {
-  static let configuration = CommandConfiguration(
-    commandName: "download",
-    abstract: "Download a model from HuggingFace into the staging directory."
-  )
-
-  func run() async throws {
-    // Implemented in Sortie 5.
-  }
-}
+// `DownloadCommand`, `ManifestCommand`, and `VerifyCommand` have moved to
+// their own files now that Sortie 5 has implemented them. `UploadCommand`
+// and `ShipCommand` remain stubs until Sortie 6 fleshes them out.
 
 struct UploadCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
@@ -53,27 +42,5 @@ struct ShipCommand: AsyncParsableCommand {
 
   func run() async throws {
     // Implemented in Sortie 6.
-  }
-}
-
-struct ManifestCommand: AsyncParsableCommand {
-  static let configuration = CommandConfiguration(
-    commandName: "manifest",
-    abstract: "Generate a CDN manifest.json for a local model directory."
-  )
-
-  func run() async throws {
-    // Implemented in Sortie 5.
-  }
-}
-
-struct VerifyCommand: AsyncParsableCommand {
-  static let configuration = CommandConfiguration(
-    commandName: "verify",
-    abstract: "Verify a local or CDN-hosted model against its manifest."
-  )
-
-  func run() async throws {
-    // Implemented in Sortie 5.
   }
 }
