@@ -6,7 +6,7 @@ import SwiftAcervo
 /// staging directory and runs CHECK 1 (`HuggingFaceClient.verifyLFS`) on
 /// every downloaded file.
 ///
-/// The command shells out to `huggingface-cli download` for the actual
+/// The command shells out to `hf download` for the actual
 /// transfer and then walks the staging directory hashing each file with
 /// `IntegrityVerification.sha256(of:)`. When the locally-computed hash
 /// does not match the `oid` HuggingFace advertises for that file, the
@@ -102,11 +102,11 @@ struct DownloadCommand: AsyncParsableCommand {
     )
   }
 
-  // MARK: - huggingface-cli invocation
+  // MARK: - hf invocation
 
   private func runHuggingFaceDownload(into stagingURL: URL) throws {
     var arguments: [String] = [
-      "huggingface-cli",
+      "hf",
       "download",
       modelId,
     ]
@@ -136,7 +136,7 @@ struct DownloadCommand: AsyncParsableCommand {
       try process.run()
     } catch {
       throw AcervoToolError.missingTool(
-        "huggingface-cli (failed to launch: \(error.localizedDescription))"
+        "hf (failed to launch: \(error.localizedDescription))"
       )
     }
 
@@ -150,10 +150,10 @@ struct DownloadCommand: AsyncParsableCommand {
 
     if process.terminationStatus != 0 {
       let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-      let message = "error: huggingface-cli download exited \(process.terminationStatus): \(stderrText)\n"
+      let message = "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
       FileHandle.standardError.write(Data(message.utf8))
       throw AcervoToolError.awsProcessFailed(
-        command: "huggingface-cli download",
+        command: "hf download",
         exitCode: process.terminationStatus,
         stderr: stderrText
       )

@@ -47,7 +47,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install huggingface-cli
+      - name: Install hf CLI
         run: brew install huggingface-hub
 
       - name: Install acervo

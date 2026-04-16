@@ -86,11 +86,11 @@ enum ToolCheck {
       throw AcervoToolError.missingTool("aws")
     }
 
-    if !isToolAvailable(name: "huggingface-cli") {
+    if !isToolAvailable(name: "hf") {
       let message =
-        "error: required tool 'huggingface-cli' not found on PATH. Install it with: brew install huggingface-hub\n"
+        "error: required tool 'hf' not found on PATH. Install it with: brew install huggingface-hub\n"
       FileHandle.standardError.write(Data(message.utf8))
-      throw AcervoToolError.missingTool("huggingface-cli")
+      throw AcervoToolError.missingTool("hf")
     }
   }
 
