@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.6.0 (April 2026)
+**Current Version**: 0.7.0 (April 2026)
 
 ---
 
@@ -48,9 +48,22 @@ All downloads come exclusively from a private Cloudflare R2 CDN with per-file SH
 - `Sources/SwiftAcervo/ComponentHandle.swift` -- Type-safe file access after download
 - `Sources/SwiftAcervo/ComponentRegistry.swift` -- Thread-safe global component registry
 - `Sources/SwiftAcervo/LocalHandle.swift` -- Scoped access handle for caller-supplied local paths
-- `Tools/generate-manifest.sh` -- Generate manifest.json for a model directory
-- `Tools/upload-model.sh` -- Full upstream → manifest → R2 upload workflow
-- `Tests/SwiftAcervoTests/` -- 371 unit tests
+- `Sources/acervo/AcervoCLI.swift` -- ArgumentParser root command
+- `Sources/acervo/UploadCommand.swift` -- Upload staged files to R2 CDN
+- `Sources/acervo/ShipCommand.swift` -- Download from HuggingFace + upload to CDN in one step
+- `Sources/acervo/DownloadCommand.swift` -- Download model files from HuggingFace
+- `Sources/acervo/VerifyCommand.swift` -- Run all 6 integrity checks against staged files
+- `Sources/acervo/ManifestCommand.swift` -- Generate a CDN manifest for a staging directory
+- `Sources/acervo/CDNUploader.swift` -- R2 upload via aws CLI with manifest verification
+- `Sources/acervo/ManifestGenerator.swift` -- SHA-256 manifest generation with CHECK 2/3
+- `Sources/acervo/HuggingFaceClient.swift` -- HuggingFace LFS download + CHECK 1 verification
+- `Sources/acervo/ToolCheck.swift` -- Validates aws and hf are on PATH before commands run
+- `Sources/acervo/Version.swift` -- acervo CLI version constant
+- `Tools/generate-manifest.sh` -- Legacy shell script (superseded by `acervo manifest`)
+- `Tools/upload-model.sh` -- Legacy shell script (superseded by `acervo ship`)
+- `Tests/SwiftAcervoTests/` -- library unit tests
+- `Tests/AcervoToolTests/` -- acervo CLI unit tests (argument builders, integrity, manifest)
+- `Tests/AcervoToolIntegrationTests/` -- acervo CLI integration tests (skip without credentials)
 - `Package.swift` -- Swift 6.2+, iOS 26.0+, macOS 26.0+
 
 ## CDN Download Architecture
@@ -158,26 +171,40 @@ SwiftAcervo has **zero external dependencies**. It uses only Foundation and Cryp
 ## Build and Test
 
 ```bash
-make build    # Build the SwiftAcervo scheme
-make test     # Run all tests
-make lint     # Format all Swift source files
-make clean    # Clean build artifacts
-make resolve  # Resolve Swift package dependencies
+make build              # Build the SwiftAcervo library scheme
+make test               # Run all tests (SwiftAcervo-Package scheme)
+make lint               # Format all Swift source files
+make clean              # Clean build artifacts
+make resolve            # Resolve Swift package dependencies
+make build-acervo       # Build the acervo CLI binary
+make install-acervo     # Build acervo and install to bin/ (Debug)
+make release-acervo     # Build acervo and install to bin/ (Release)
+make test-acervo-unit   # Run acervo unit tests (no credentials needed)
 ```
 
 ## CDN Upload Workflow
 
-To add or update a model on the CDN:
+To add or update a model on the CDN, use the `acervo` CLI tool:
 
 ```bash
-# Full workflow: download from upstream source, generate manifest, upload to R2
-./Tools/upload-model.sh "org/repo"
+# Full pipeline: download from HuggingFace, generate manifest, upload to R2
+acervo ship --model-id "org/repo"
 
-# Or generate manifest only for a local directory
+# Or run steps individually:
+acervo download --model-id "org/repo"        # download from HuggingFace
+acervo manifest --model-id "org/repo"        # generate manifest.json
+acervo verify --model-id "org/repo"          # run all 6 integrity checks
+acervo upload --model-id "org/repo"          # upload to R2 CDN
+
+# Legacy shell scripts (still functional but superseded by acervo):
+./Tools/upload-model.sh "org/repo"
 ./Tools/generate-manifest.sh "org/repo" /path/to/model/files
 ```
 
-See `Tools/upload-model.sh` for environment variables (`RCLONE_REMOTE`, `R2_BUCKET`, `HF_TOKEN`).
+Required environment variables: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `HF_TOKEN`.
+Optional: `R2_BUCKET`, `R2_ENDPOINT`, `R2_PUBLIC_URL`, `STAGING_DIR`.
+
+Build the CLI: `make build-acervo` or `make install-acervo` (installs to `bin/`).
 
 ## What This Library is NOT
 

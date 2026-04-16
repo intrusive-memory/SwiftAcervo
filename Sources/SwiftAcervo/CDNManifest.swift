@@ -16,40 +16,64 @@ import Foundation
 /// The manifest lives at `{cdnBase}/models/{slug}/manifest.json`
 /// alongside the model files. It is the single source of truth
 /// for what files exist and their expected checksums.
-struct CDNManifest: Codable, Sendable {
+public struct CDNManifest: Codable, Sendable {
 
   /// Schema version. The client rejects versions it does not understand.
-  let manifestVersion: Int
+  public let manifestVersion: Int
 
   /// The canonical `org/repo` model identifier.
-  let modelId: String
+  public let modelId: String
 
   /// The `org_repo` filesystem slug (mirrors local directory naming).
-  let slug: String
+  public let slug: String
 
   /// ISO-8601 timestamp of the last manifest update.
-  let updatedAt: String
+  public let updatedAt: String
 
   /// Every downloadable file in this model, with checksums and sizes.
-  let files: [CDNManifestFile]
+  public let files: [CDNManifestFile]
 
   /// SHA-256 of all file checksums concatenated in sorted order.
   /// Verifies manifest integrity without cryptographic signing.
-  let manifestChecksum: String
+  public let manifestChecksum: String
+
+  /// Memberwise initializer for constructing manifests programmatically.
+  public init(
+    manifestVersion: Int,
+    modelId: String,
+    slug: String,
+    updatedAt: String,
+    files: [CDNManifestFile],
+    manifestChecksum: String
+  ) {
+    self.manifestVersion = manifestVersion
+    self.modelId = modelId
+    self.slug = slug
+    self.updatedAt = updatedAt
+    self.files = files
+    self.manifestChecksum = manifestChecksum
+  }
 }
 
 /// A single file entry in a CDN manifest.
-struct CDNManifestFile: Codable, Sendable {
+public struct CDNManifestFile: Codable, Sendable {
 
   /// Relative path within the model directory (e.g., "config.json"
   /// or "speech_tokenizer/config.json").
-  let path: String
+  public let path: String
 
   /// Lowercase hex SHA-256 digest (64 characters). Required.
-  let sha256: String
+  public let sha256: String
 
   /// Exact file size in bytes. Required.
-  let sizeBytes: Int64
+  public let sizeBytes: Int64
+
+  /// Memberwise initializer.
+  public init(path: String, sha256: String, sizeBytes: Int64) {
+    self.path = path
+    self.sha256 = sha256
+    self.sizeBytes = sizeBytes
+  }
 }
 
 // MARK: - Manifest Validation
@@ -57,7 +81,7 @@ struct CDNManifestFile: Codable, Sendable {
 extension CDNManifest {
 
   /// The only manifest version this client understands.
-  static let supportedVersion = 1
+  public static let supportedVersion = 1
 
   /// Verifies the `manifestChecksum` field against the file checksums.
   ///
@@ -65,7 +89,7 @@ extension CDNManifest {
   /// SHA-256 the result, and compare to `manifestChecksum`.
   ///
   /// - Returns: `true` if the checksum matches.
-  func verifyChecksum() -> Bool {
+  public func verifyChecksum() -> Bool {
     let computed = Self.computeChecksum(from: files.map(\.sha256))
     return computed == manifestChecksum
   }
@@ -77,7 +101,7 @@ extension CDNManifest {
   ///
   /// - Parameter fileChecksums: The SHA-256 hashes of all files in the manifest.
   /// - Returns: The computed manifest checksum as a lowercase hex string.
-  static func computeChecksum(from fileChecksums: [String]) -> String {
+  public static func computeChecksum(from fileChecksums: [String]) -> String {
     let sorted = fileChecksums.sorted()
     let concatenated = sorted.joined()
     let digest = SHA256.hash(data: Data(concatenated.utf8))
@@ -88,7 +112,7 @@ extension CDNManifest {
   ///
   /// - Parameter path: The relative file path to search for.
   /// - Returns: The manifest file entry, or `nil` if not found.
-  func file(at path: String) -> CDNManifestFile? {
+  public func file(at path: String) -> CDNManifestFile? {
     files.first { $0.path == path }
   }
 
