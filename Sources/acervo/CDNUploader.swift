@@ -288,6 +288,10 @@ actor CDNUploader {
   /// Captures stdout and stderr via `Pipe`. On non-zero exit the
   /// stderr contents are wrapped in `AcervoToolError.awsProcessFailed`.
   private func runAWS(arguments: [String], label: String) throws {
+    #if !os(macOS)
+    throw AcervoToolError.awsProcessFailed(
+      command: label, exitCode: -1, stderr: "Not available on this platform")
+    #else
     guard let accessKey = environmentSnapshot["R2_ACCESS_KEY_ID"] else {
       throw AcervoToolError.missingEnvironmentVariable("R2_ACCESS_KEY_ID")
     }
@@ -336,6 +340,7 @@ actor CDNUploader {
         stderr: stderrText
       )
     }
+    #endif
   }
 
   // MARK: - Helpers

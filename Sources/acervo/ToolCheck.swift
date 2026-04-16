@@ -101,6 +101,7 @@ enum ToolCheck {
   /// Uses a synchronous `Process.run()` + `waitUntilExit()` pattern so no
   /// concurrency hopping is required under Swift 6 strict concurrency.
   private static func isToolAvailable(name: String) -> Bool {
+    #if os(macOS)
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
     process.arguments = [name]
@@ -119,5 +120,8 @@ enum ToolCheck {
     }
     process.waitUntilExit()
     return process.terminationStatus == 0
+    #else
+    return false
+    #endif
   }
 }

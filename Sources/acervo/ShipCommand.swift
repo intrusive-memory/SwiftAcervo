@@ -233,6 +233,9 @@ struct ShipCommand: AsyncParsableCommand {
   // MARK: - hf invocation
 
   private func runHuggingFaceDownload(into stagingURL: URL) throws {
+    #if !os(macOS)
+    throw AcervoToolError.missingTool("hf (not available on this platform)")
+    #else
     var arguments: [String] = [
       "hf",
       "download",
@@ -285,6 +288,7 @@ struct ShipCommand: AsyncParsableCommand {
         stderr: stderrText
       )
     }
+    #endif
   }
 
   // MARK: - Helpers
