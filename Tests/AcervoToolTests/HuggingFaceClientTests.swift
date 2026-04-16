@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -233,3 +234,4 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
   override func stopLoading() {}
 }
+#endif

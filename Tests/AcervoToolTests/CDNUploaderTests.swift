@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -138,3 +139,4 @@ struct CDNUploaderTests {
     #expect(args.contains("--dryrun"))
   }
 }
+#endif

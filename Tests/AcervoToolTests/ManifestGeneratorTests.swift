@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -108,3 +109,4 @@ struct ManifestGeneratorTests {
     #expect(manifest.verifyChecksum() == true)
   }
 }
+#endif

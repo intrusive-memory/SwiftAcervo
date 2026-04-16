@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -120,3 +121,4 @@ final class ToolCheckTests {
     #expect(text.contains("brew install awscli"))
   }
 }
+#endif

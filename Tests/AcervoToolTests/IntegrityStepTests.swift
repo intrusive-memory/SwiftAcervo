@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -161,3 +162,4 @@ struct IntegrityStepTests {
     try await uploader.verifyBeforeUpload(directory: dir, manifest: manifest)
   }
 }
+#endif
