@@ -58,7 +58,7 @@ final class ToolCheckTests {
     #expect(name == "aws")
   }
 
-  @Test("validate throws on huggingface-cli when only aws is present")
+  @Test("validate throws on hf when only aws is present")
   func huggingFaceCLIMissing() throws {
     try installStub(named: "aws")
 
@@ -72,13 +72,13 @@ final class ToolCheckTests {
       Issue.record("Expected AcervoToolError.missingTool, got \(String(describing: thrown))")
       return
     }
-    #expect(name == "huggingface-cli")
+    #expect(name == "hf")
   }
 
   @Test("validate succeeds silently when both stubs are present")
   func bothToolsPresent() throws {
     try installStub(named: "aws")
-    try installStub(named: "huggingface-cli")
+    try installStub(named: "hf")
     // Must not throw.
     try ToolCheck.validate()
   }

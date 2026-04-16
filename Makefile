@@ -1,4 +1,5 @@
 SCHEME = SwiftAcervo
+TEST_SCHEME = SwiftAcervo-Package
 DESTINATION = 'platform=macOS,arch=arm64'
 
 ACERVO_SCHEME = acervo
@@ -14,7 +15,7 @@ build:
 	xcodebuild build -scheme $(SCHEME) -destination $(DESTINATION)
 
 test:
-	xcodebuild test -scheme $(SCHEME) -destination $(DESTINATION)
+	xcodebuild test -scheme $(TEST_SCHEME) -destination $(DESTINATION)
 
 clean:
 	xcodebuild clean -scheme $(SCHEME) -destination $(DESTINATION)
