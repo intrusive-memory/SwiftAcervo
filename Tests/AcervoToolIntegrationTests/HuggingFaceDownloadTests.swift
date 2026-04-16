@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import XCTest
 
@@ -146,3 +147,4 @@ final class HuggingFaceDownloadTests: XCTestCase {
     }
   }
 }
+#endif

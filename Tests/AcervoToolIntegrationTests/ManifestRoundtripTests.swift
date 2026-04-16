@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import XCTest
 
@@ -145,3 +146,4 @@ final class ManifestRoundtripTests: XCTestCase {
     process.waitUntilExit()
   }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import XCTest
 
@@ -203,3 +204,4 @@ final class ShipCommandTests: XCTestCase {
     process.waitUntilExit()
   }
 }
+#endif

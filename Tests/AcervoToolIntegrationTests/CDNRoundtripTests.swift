@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import XCTest
 
@@ -202,3 +203,4 @@ final class CDNRoundtripTests: XCTestCase {
     // Ignore exit code — cleanup is best-effort.
   }
 }
+#endif
