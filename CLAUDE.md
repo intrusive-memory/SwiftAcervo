@@ -8,7 +8,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.6.0
+**Version**: 0.7.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -20,6 +20,7 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 - Component registry for declarative model component management
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
+- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download (`Sources/acervo/`)
 
 **Important Notes**:
 - Canonical path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
