@@ -18,7 +18,7 @@ import Foundation
 /// This type is internal to SwiftAcervo. External consumers interact with
 /// integrity verification through `Acervo.verifyComponent(_:)` and
 /// `Acervo.verifyAllComponents()`.
-public struct IntegrityVerification: Sendable {
+struct IntegrityVerification: Sendable {
 
   /// Size of chunks used for streaming SHA-256 computation.
   /// 4 MB balances memory usage and I/O efficiency.
@@ -32,7 +32,7 @@ public struct IntegrityVerification: Sendable {
   /// - Parameter fileURL: The URL of the file to hash.
   /// - Returns: The SHA-256 hash as a lowercase hexadecimal string (64 characters).
   /// - Throws: Errors from opening or reading the file.
-  public static func sha256(of fileURL: URL) throws -> String {
+  static func sha256(of fileURL: URL) throws -> String {
     let handle = try FileHandle(forReadingFrom: fileURL)
     defer { try? handle.close() }
 
