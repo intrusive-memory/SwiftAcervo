@@ -8,7 +8,20 @@ import SwiftAcervo
 struct ManifestCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "manifest",
-    abstract: "Generate a CDN manifest.json for a local model directory."
+    abstract: "Generate a CDN manifest.json for a local model directory.",
+    discussion: """
+      Scans <directory>, computes SHA-256 for every file, and writes
+      manifest.json alongside the model files (CHECK 2 + CHECK 3):
+
+        CHECK 2  Refuses to write a manifest if any file is zero bytes.
+        CHECK 3  Re-reads manifest.json after writing and verifies its checksum.
+
+      Prints the absolute path to the written manifest.json on stdout.
+
+      EXAMPLES
+        acervo manifest mlx-community/Qwen2.5-7B-Instruct-4bit \\
+          /tmp/acervo-staging/mlx-community_Qwen2.5-7B-Instruct-4bit
+      """
   )
 
   @Argument(help: "HuggingFace model identifier in 'org/repo' form.")

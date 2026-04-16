@@ -16,7 +16,33 @@ import SwiftAcervo
 struct VerifyCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "verify",
-    abstract: "Verify a local or CDN-hosted model against its manifest."
+    abstract: "Verify a local or CDN-hosted model against its manifest.",
+    discussion: """
+      Two modes depending on whether <directory> is supplied:
+
+      LOCAL MODE (with <directory>)
+        Regenerates a fresh manifest from the directory and re-hashes every
+        file to confirm nothing has changed since the manifest was written.
+        Exits non-zero and lists all mismatches.
+
+      CDN MODE (without <directory>)
+        Resolves the staging directory from $STAGING_DIR, fetches the
+        authoritative manifest.json from the CDN (CHECK 5), and verifies
+        every local file against the CDN manifest. Useful for auditing a
+        staging tree against what was previously published.
+
+      OPTIONAL ENVIRONMENT VARIABLES (CDN mode only)
+        R2_PUBLIC_URL   Public CDN base URL (default: https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev)
+        STAGING_DIR     Staging root (default: /tmp/acervo-staging)
+
+      EXAMPLES
+        # Local mode: verify staged files match the manifest
+        acervo verify mlx-community/Qwen2.5-7B-Instruct-4bit \\
+          /tmp/acervo-staging/mlx-community_Qwen2.5-7B-Instruct-4bit
+
+        # CDN mode: compare staging directory against live CDN manifest
+        acervo verify mlx-community/Qwen2.5-7B-Instruct-4bit
+      """
   )
 
   @Argument(help: "HuggingFace model identifier in 'org/repo' form.")
@@ -135,7 +161,8 @@ struct VerifyCommand: AsyncParsableCommand {
     }
 
     FileHandle.standardOutput.write(
-      Data("Verified \(manifest.files.count) files in \(stagingURL.path) against CDN manifest\n".utf8)
+      Data(
+        "Verified \(manifest.files.count) files in \(stagingURL.path) against CDN manifest\n".utf8)
     )
   }
 

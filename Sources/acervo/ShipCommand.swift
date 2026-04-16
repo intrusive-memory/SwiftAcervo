@@ -30,7 +30,34 @@ import SwiftAcervo
 struct ShipCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "ship",
-    abstract: "Download a model from HuggingFace and mirror it to the CDN."
+    abstract: "Download a model from HuggingFace and mirror it to the CDN.",
+    discussion: """
+      Runs the full 6-step integrity pipeline in one command:
+
+        CHECK 1  Download files from HuggingFace and verify each file's SHA-256
+                 against the HuggingFace LFS API. (Skip with --no-verify.)
+        CHECK 2  Refuse to generate a manifest if any file is zero bytes.
+        CHECK 3  Re-read manifest.json after writing and verify its checksum.
+        CHECK 4  Re-hash every staged file against the manifest before uploading.
+        CHECK 5  Fetch manifest.json from the CDN and validate its checksum.
+        CHECK 6  Download config.json from the CDN and verify its SHA-256.
+
+      REQUIRED ENVIRONMENT VARIABLES
+        HF_TOKEN               HuggingFace token (or pass --token)
+        R2_ACCESS_KEY_ID       Cloudflare R2 access key
+        R2_SECRET_ACCESS_KEY   Cloudflare R2 secret key
+
+      OPTIONAL ENVIRONMENT VARIABLES
+        R2_BUCKET              Bucket name (default: intrusive-memory-models)
+        R2_ENDPOINT            S3-compatible endpoint URL
+        R2_PUBLIC_URL          Public CDN base URL used for CHECK 5/6
+        STAGING_DIR            Staging root (default: /tmp/acervo-staging)
+
+      EXAMPLES
+        acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
+        acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit config.json tokenizer.json
+        acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --no-verify --dry-run
+      """
   )
 
   // MARK: - Download options
@@ -41,7 +68,8 @@ struct ShipCommand: AsyncParsableCommand {
   @Argument(help: "Optional subset of files to download. Defaults to the whole repo.")
   var files: [String] = []
 
-  @Option(name: [.short, .customLong("source")], help: "Source registry (only 'hf' is supported today).")
+  @Option(
+    name: [.short, .customLong("source")], help: "Source registry (only 'hf' is supported today).")
   var source: String = "hf"
 
   @Option(
@@ -50,10 +78,13 @@ struct ShipCommand: AsyncParsableCommand {
   )
   var output: String?
 
-  @Option(name: [.short, .customLong("token")], help: "HuggingFace token. Falls back to $HF_TOKEN when unset.")
+  @Option(
+    name: [.short, .customLong("token")],
+    help: "HuggingFace token. Falls back to $HF_TOKEN when unset.")
   var token: String?
 
-  @Flag(name: .customLong("no-verify"), help: "Skip HuggingFace LFS SHA-256 verification (CHECK 1).")
+  @Flag(
+    name: .customLong("no-verify"), help: "Skip HuggingFace LFS SHA-256 verification (CHECK 1).")
   var noVerify: Bool = false
 
   // MARK: - Upload options
@@ -234,60 +265,60 @@ struct ShipCommand: AsyncParsableCommand {
 
   private func runHuggingFaceDownload(into stagingURL: URL) throws {
     #if !os(macOS)
-    throw AcervoToolError.missingTool("hf (not available on this platform)")
+      throw AcervoToolError.missingTool("hf (not available on this platform)")
     #else
-    var arguments: [String] = [
-      "hf",
-      "download",
-      modelId,
-    ]
-    arguments.append(contentsOf: files)
-    arguments.append(contentsOf: [
-      "--local-dir",
-      stagingURL.path,
-    ])
+      var arguments: [String] = [
+        "hf",
+        "download",
+        modelId,
+      ]
+      arguments.append(contentsOf: files)
+      arguments.append(contentsOf: [
+        "--local-dir",
+        stagingURL.path,
+      ])
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = arguments
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = arguments
 
-    var environment = ProcessInfo.processInfo.environment
-    if let token, !token.isEmpty {
-      environment["HF_TOKEN"] = token
-      environment["HUGGING_FACE_HUB_TOKEN"] = token
-    }
-    process.environment = environment
+      var environment = ProcessInfo.processInfo.environment
+      if let token, !token.isEmpty {
+        environment["HF_TOKEN"] = token
+        environment["HUGGING_FACE_HUB_TOKEN"] = token
+      }
+      process.environment = environment
 
-    let stdoutPipe = Pipe()
-    let stderrPipe = Pipe()
-    process.standardOutput = stdoutPipe
-    process.standardError = stderrPipe
+      let stdoutPipe = Pipe()
+      let stderrPipe = Pipe()
+      process.standardOutput = stdoutPipe
+      process.standardError = stderrPipe
 
-    do {
-      try process.run()
-    } catch {
-      throw AcervoToolError.missingTool(
-        "hf (failed to launch: \(error.localizedDescription))"
-      )
-    }
+      do {
+        try process.run()
+      } catch {
+        throw AcervoToolError.missingTool(
+          "hf (failed to launch: \(error.localizedDescription))"
+        )
+      }
 
-    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-    _ = stdoutData
+      let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+      let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+      _ = stdoutData
 
-    process.waitUntilExit()
+      process.waitUntilExit()
 
-    if process.terminationStatus != 0 {
-      let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-      let message =
-        "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
-      FileHandle.standardError.write(Data(message.utf8))
-      throw AcervoToolError.awsProcessFailed(
-        command: "hf download",
-        exitCode: process.terminationStatus,
-        stderr: stderrText
-      )
-    }
+      if process.terminationStatus != 0 {
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
+        let message =
+          "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
+        FileHandle.standardError.write(Data(message.utf8))
+        throw AcervoToolError.awsProcessFailed(
+          command: "hf download",
+          exitCode: process.terminationStatus,
+          stderr: stderrText
+        )
+      }
     #endif
   }
 

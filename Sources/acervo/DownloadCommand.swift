@@ -15,7 +15,26 @@ import SwiftAcervo
 struct DownloadCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "download",
-    abstract: "Download a model from HuggingFace into the staging directory."
+    abstract: "Download a model from HuggingFace into the staging directory.",
+    discussion: """
+      Shells out to `hf download` and then verifies every downloaded file's
+      SHA-256 against the HuggingFace LFS API (CHECK 1). Files whose hash
+      does not match are deleted and the command exits non-zero.
+
+      The staging directory is: $STAGING_DIR/<slug>  or  /tmp/acervo-staging/<slug>
+      where <slug> is the model ID with '/' replaced by '_'.
+
+      REQUIRED TOOLS
+        hf   HuggingFace CLI (brew install huggingface-hub)
+
+      REQUIRED ENVIRONMENT VARIABLES
+        HF_TOKEN   Required for private or gated models (or pass --token)
+
+      EXAMPLES
+        acervo download mlx-community/Qwen2.5-7B-Instruct-4bit
+        acervo download mlx-community/Qwen2.5-7B-Instruct-4bit config.json tokenizer.json
+        acervo download mlx-community/Qwen2.5-7B-Instruct-4bit --output /tmp/my-staging --no-verify
+      """
   )
 
   @Argument(help: "HuggingFace model identifier in 'org/repo' form.")
@@ -24,16 +43,22 @@ struct DownloadCommand: AsyncParsableCommand {
   @Argument(help: "Optional subset of files to download. Defaults to the whole repo.")
   var files: [String] = []
 
-  @Option(name: [.short, .customLong("source")], help: "Source registry (only 'hf' is supported today).")
+  @Option(
+    name: [.short, .customLong("source")], help: "Source registry (only 'hf' is supported today).")
   var source: String = "hf"
 
-  @Option(name: [.short, .customLong("output")], help: "Override staging directory root (default: $STAGING_DIR or /tmp/acervo-staging).")
+  @Option(
+    name: [.short, .customLong("output")],
+    help: "Override staging directory root (default: $STAGING_DIR or /tmp/acervo-staging).")
   var output: String?
 
-  @Option(name: [.short, .customLong("token")], help: "HuggingFace token. Falls back to $HF_TOKEN when unset.")
+  @Option(
+    name: [.short, .customLong("token")],
+    help: "HuggingFace token. Falls back to $HF_TOKEN when unset.")
   var token: String?
 
-  @Flag(name: .customLong("no-verify"), help: "Skip HuggingFace LFS SHA-256 verification (CHECK 1).")
+  @Flag(
+    name: .customLong("no-verify"), help: "Skip HuggingFace LFS SHA-256 verification (CHECK 1).")
   var noVerify: Bool = false
 
   func run() async throws {
@@ -106,61 +131,61 @@ struct DownloadCommand: AsyncParsableCommand {
 
   private func runHuggingFaceDownload(into stagingURL: URL) throws {
     #if !os(macOS)
-    throw AcervoToolError.missingTool("hf (not available on this platform)")
+      throw AcervoToolError.missingTool("hf (not available on this platform)")
     #else
-    var arguments: [String] = [
-      "hf",
-      "download",
-      modelId,
-    ]
-    arguments.append(contentsOf: files)
-    arguments.append(contentsOf: [
-      "--local-dir",
-      stagingURL.path,
-    ])
+      var arguments: [String] = [
+        "hf",
+        "download",
+        modelId,
+      ]
+      arguments.append(contentsOf: files)
+      arguments.append(contentsOf: [
+        "--local-dir",
+        stagingURL.path,
+      ])
 
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = arguments
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+      process.arguments = arguments
 
-    var environment = ProcessInfo.processInfo.environment
-    if let token, !token.isEmpty {
-      environment["HF_TOKEN"] = token
-      environment["HUGGING_FACE_HUB_TOKEN"] = token
-    }
-    process.environment = environment
+      var environment = ProcessInfo.processInfo.environment
+      if let token, !token.isEmpty {
+        environment["HF_TOKEN"] = token
+        environment["HUGGING_FACE_HUB_TOKEN"] = token
+      }
+      process.environment = environment
 
-    let stdoutPipe = Pipe()
-    let stderrPipe = Pipe()
-    process.standardOutput = stdoutPipe
-    process.standardError = stderrPipe
+      let stdoutPipe = Pipe()
+      let stderrPipe = Pipe()
+      process.standardOutput = stdoutPipe
+      process.standardError = stderrPipe
 
-    do {
-      try process.run()
-    } catch {
-      throw AcervoToolError.missingTool(
-        "hf (failed to launch: \(error.localizedDescription))"
-      )
-    }
+      do {
+        try process.run()
+      } catch {
+        throw AcervoToolError.missingTool(
+          "hf (failed to launch: \(error.localizedDescription))"
+        )
+      }
 
-    // Drain pipes before waiting so the child cannot deadlock on a full
-    // pipe buffer during a large download.
-    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-    _ = stdoutData
+      // Drain pipes before waiting so the child cannot deadlock on a full
+      // pipe buffer during a large download.
+      let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+      let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+      _ = stdoutData
 
-    process.waitUntilExit()
+      process.waitUntilExit()
 
-    if process.terminationStatus != 0 {
-      let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-      let message = "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
-      FileHandle.standardError.write(Data(message.utf8))
-      throw AcervoToolError.awsProcessFailed(
-        command: "hf download",
-        exitCode: process.terminationStatus,
-        stderr: stderrText
-      )
-    }
+      if process.terminationStatus != 0 {
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
+        let message = "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
+        FileHandle.standardError.write(Data(message.utf8))
+        throw AcervoToolError.awsProcessFailed(
+          command: "hf download",
+          exitCode: process.terminationStatus,
+          stderr: stderrText
+        )
+      }
     #endif
   }
 

@@ -23,7 +23,36 @@ import SwiftAcervo
 struct UploadCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "upload",
-    abstract: "Upload a staged model directory to the intrusive-memory CDN."
+    abstract: "Upload a staged model directory to the intrusive-memory CDN.",
+    discussion: """
+      Runs integrity CHECKs 2–6 against a locally-staged model directory:
+
+        CHECK 2  Refuse manifest generation if any file is zero bytes.
+        CHECK 3  Re-read manifest.json after writing and verify its checksum.
+        CHECK 4  Re-hash every staged file against the manifest before uploading.
+        CHECK 5  Fetch manifest.json from the CDN and validate its checksum.
+        CHECK 6  Download config.json from the CDN and verify its SHA-256.
+
+      The <directory> argument must be the path to the staged model files.
+      Use `acervo download` first if you need to fetch from HuggingFace,
+      or use `acervo ship` to run the full pipeline in one step.
+
+      REQUIRED TOOLS
+        aws   AWS CLI v2 (brew install awscli)
+
+      REQUIRED ENVIRONMENT VARIABLES
+        R2_ACCESS_KEY_ID       Cloudflare R2 access key
+        R2_SECRET_ACCESS_KEY   Cloudflare R2 secret key
+
+      OPTIONAL ENVIRONMENT VARIABLES
+        R2_BUCKET     Bucket name (default: intrusive-memory-models)
+        R2_ENDPOINT   S3-compatible endpoint URL
+        R2_PUBLIC_URL Public CDN base URL used for CHECK 5/6
+
+      EXAMPLES
+        acervo upload mlx-community/Qwen2.5-7B-Instruct-4bit /tmp/acervo-staging/mlx-community_Qwen2.5-7B-Instruct-4bit
+        acervo upload mlx-community/Qwen2.5-7B-Instruct-4bit /tmp/staging --dry-run
+      """
   )
 
   @Argument(help: "HuggingFace model identifier in 'org/repo' form.")
