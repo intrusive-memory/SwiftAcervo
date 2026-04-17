@@ -2,7 +2,7 @@
 
 This file provides comprehensive documentation for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.7.1 (April 2026)
+**Current Version**: 0.7.2 (April 2026)
 
 ---
 
