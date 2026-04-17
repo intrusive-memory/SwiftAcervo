@@ -130,6 +130,80 @@ All downloads go through the private R2 CDN:
 | `verifyComponent(_:)` | Verify component files against SHA-256 checksums |
 | `registeredComponents()` | List all registered components |
 
+## ModelDownloadManager
+
+ModelDownloadManager provides standardized multi-model download orchestration for consuming libraries. It handles concurrent progress tracking, disk space validation, and error context.
+
+### Usage Example: Consuming Library Startup
+
+```swift
+import SwiftAcervo
+
+// In your library's initialization phase
+func loadModels() async throws {
+    // Validate disk space first
+    let totalBytes = try await ModelDownloadManager.shared.validateCanDownload([
+        "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+    ])
+    
+    print("Will download \(totalBytes / (1024*1024)) MB total")
+    
+    // Download with progress reporting
+    try await ModelDownloadManager.shared.ensureModelsAvailable([
+        "mlx-community/Qwen2.5-7B-Instruct-4bit",
+        "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+    ]) { progress in
+        let percent = Int(progress.fraction * 100)
+        let mb = progress.bytesDownloaded / (1024 * 1024)
+        let total = progress.bytesTotal / (1024 * 1024)
+        print("\r[\(progress.model)] \(progress.currentFileName): \(percent)% (\(mb)/\(total) MB)", terminator: "")
+        fflush(stdout)
+    }
+    
+    // All models now available
+    print("\nModels ready!")
+}
+```
+
+### Public API
+
+| Method | Description |
+|--------|-------------|
+| `ensureModelsAvailable(_:progress:)` | Download all specified models if not already available |
+| `validateCanDownload(_:)` | Check disk space and return total bytes needed |
+
+### Return Types
+
+```swift
+public struct ModelDownloadProgress: Sendable {
+    public let model: String           // e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    public let fraction: Double        // 0.0 to 1.0 cumulative progress
+    public let bytesDownloaded: Int64  // Total bytes downloaded across all models
+    public let bytesTotal: Int64       // Total bytes to download across all models
+    public let currentFileName: String // e.g., "model.safetensors"
+}
+```
+
+### Error Handling
+
+`ModelDownloadManager.ensureModelsAvailable()` throws `AcervoError`:
+
+- `modelNotFound(modelId: String)` — Model doesn't exist on CDN
+- `manifestChecksumMismatch(modelId: String)` — Manifest integrity check failed
+- `downloadFailed(reason: String)` — Network error (transient)
+- `checksumMismatch(fileName: String)` — File corrupted during download
+
+Catch these at the consuming library level and convert to app-specific error types.
+
+### Best Practices
+
+1. **Always validate disk space first**: Call `validateCanDownload()` before user-initiated downloads
+2. **Show aggregate progress**: Display cumulative MB downloaded, not per-model percentages
+3. **Serialize model downloads**: Manager handles this (sequential, not parallel)
+4. **Handle cancellation gracefully**: If user cancels, partial files remain (resume on next attempt)
+5. **Distinguish model types in messages**: Include model name in progress callback output
+
 ### AcervoManager Methods
 
 | Method | Description |
@@ -140,6 +214,111 @@ All downloads go through the private R2 CDN:
 | `withLocalAccess(_:perform:)` | Scoped access to a caller-supplied local URL (e.g., LoRA adapter) |
 | `clearCache()` | Clear model metadata cache |
 | `preloadModels()` | Preload all model metadata into cache |
+
+## CDN-First Validation Pattern for Consuming Libraries
+
+Consuming libraries (e.g., SwiftBruja, SwiftProyecto) often have required model dependencies. Rather than fail silently or download unexpectedly, use this pattern to validate CDN availability upfront, then optionally download with user feedback.
+
+### Pattern: Check Local → Validate CDN → Download if Needed
+
+**Goal**: Ensure a required model exists on the CDN and has all expected files, without side effects unless validation fails.
+
+**Flow**:
+1. Check if model is already available locally (`isModelAvailable`)
+2. If not, fetch metadata from CDN (`modelInfo`) to validate manifest — **no download yet**
+3. Consuming library validates that all required files exist in the manifest
+4. If validation passes, optionally download with progress feedback (`ensureAvailable`)
+
+**Consuming Library Responsibilities**:
+- Define which files it requires (e.g., `["config.json", "model.safetensors"]`)
+- Validate that `AcervoModel.files` contains all required files
+- Decide whether to proceed with download or fail gracefully
+- Provide user feedback during download (progress bar, file count, estimated size)
+
+### Implementation Example
+
+```swift
+import SwiftAcervo
+
+// In SwiftBruja or SwiftProyecto startup
+func validateAndEnsureModel(modelId: String, requiredFiles: [String]) async throws {
+    // Step 1: Check local availability (fast path)
+    if Acervo.isModelAvailable(modelId) {
+        return  // Model already available, no validation needed
+    }
+    
+    // Step 2: Validate on CDN without downloading (read-only)
+    let model = try Acervo.modelInfo(modelId)
+    
+    // Step 3: Verify all required files exist in manifest
+    let manifestFiles = Set(model.files.map { $0.path })
+    let requiredSet = Set(requiredFiles)
+    
+    guard requiredSet.isSubset(of: manifestFiles) else {
+        let missing = Array(requiredSet.subtracting(manifestFiles))
+        throw AcervoError.modelNotFound(modelId)  // Or app-specific error
+    }
+    
+    // Step 4: Download if validation passed
+    // (Show progress UI to user)
+    try await Acervo.ensureAvailable(modelId, files: requiredFiles) { progress in
+        let percent = Int(progress.fractionCompleted * 100)
+        let mb = progress.completedUnitCount / (1024 * 1024)
+        print("Downloading: \(percent)% (\(mb) MB)")
+    }
+}
+```
+
+### Return Value: AcervoModel
+
+When `modelInfo(_:)` is called, it returns an `AcervoModel` struct containing:
+
+```swift
+struct AcervoModel {
+    let id: String                  // e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    let slug: String                // e.g., "mlx-community_Qwen2.5-7B-Instruct-4bit"
+    let files: [CDNFile]            // Array of available files from manifest
+    let manifestChecksum: String    // Integrity marker for the manifest itself
+    let updatedAt: Date             // When model was last updated on CDN
+}
+
+struct CDNFile {
+    let path: String                // e.g., "config.json", "model.safetensors"
+    let sizeBytes: Int64            // File size for progress estimation
+    let sha256: String              // SHA-256 checksum for verification
+}
+```
+
+This allows consuming libraries to:
+- Validate all required files are present before downloading
+- Estimate total download size upfront
+- Provide accurate progress feedback (total MB, file count)
+
+### Error Handling
+
+**Validation Errors** (fail-fast, no side effects):
+- Model not found on CDN: `AcervoError.modelNotFound`
+- Manifest corrupted or tampered: `AcervoError.manifestChecksumMismatch`
+- Missing required files: Validate against `AcervoModel.files` and throw app-specific error
+
+**Download Errors** (after validation passes):
+- Network failure: `AcervoError.downloadFailed`
+- Checksum mismatch: `AcervoError.checksumMismatch`
+- Disk space exhausted: Handle as OS-level error (`URLError.fileOutOfSpace`)
+
+### Best Practices for Consuming Libraries
+
+Use **ModelDownloadManager** for standardized multi-model download orchestration:
+
+```swift
+try await ModelDownloadManager.shared.ensureModelsAvailable(modelIds) { progress in
+    // Handle progress callback
+}
+```
+
+For advanced patterns (custom progress UI, library-specific error mapping), see [ModelDownloadManager](#modeldownloadmanager) section above.
+
+Single-model validation can still use `Acervo.modelInfo()` directly for fast CDN checks.
 
 ## Design Patterns
 
