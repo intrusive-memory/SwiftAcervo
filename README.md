@@ -44,6 +44,19 @@ LLM, TTS, audio, and vision models are all peers in the same flat directory. The
 
 ## Installation
 
+### Homebrew (acervo CLI)
+
+```bash
+brew tap intrusive-memory/tap
+brew install acervo
+```
+
+Requires Apple Silicon (M1+) and macOS 26+. The `aws` and `hf` CLIs are required at runtime for upload and download operations:
+
+```bash
+brew install awscli huggingface-hub
+```
+
 ### Swift Package Manager
 
 Add SwiftAcervo to your `Package.swift`:
