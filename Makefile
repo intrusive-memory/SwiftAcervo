@@ -7,7 +7,7 @@ ACERVO_BINARY = acervo
 BIN_DIR = bin
 DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 
-.PHONY: build test clean resolve lint help \
+.PHONY: build test clean resolve lint help release \
         build-acervo install-acervo release-acervo \
         test-acervo-unit test-acervo-integration test-acervo-cdn
 
@@ -41,6 +41,8 @@ install-acervo: resolve
 	else \
 	  echo "Error: Could not find $(ACERVO_BINARY) in DerivedData"; exit 1; \
 	fi
+
+release: release-acervo
 
 release-acervo: resolve
 	xcodebuild -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
@@ -76,6 +78,7 @@ help:
 	@echo "  lint                     - Format all Swift source files"
 	@echo "  build-acervo             - Build the acervo CLI binary"
 	@echo "  install-acervo           - Build acervo and install to $(BIN_DIR)/ (Debug)"
+	@echo "  release                  - Alias for release-acervo (used by CI)"
 	@echo "  release-acervo           - Build acervo and install to $(BIN_DIR)/ (Release)"
 	@echo "  test-acervo-unit         - Run acervo unit tests (no credentials)"
 	@echo "  test-acervo-integration  - Run acervo integration tests (requires R2_* + HF_TOKEN)"
