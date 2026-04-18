@@ -1,8 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
+This file provides guidance to Claude Code (claude.ai/code) when working with SwiftAcervo.
 
 ## Quick Reference
 
@@ -20,14 +18,107 @@ For detailed project documentation, see **[AGENTS.md](AGENTS.md)**.
 - Component registry for declarative model component management
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
-- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download (`Sources/acervo/`)
+- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download
 
-**Important Notes**:
-- Canonical path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
+**Critical Rules**:
 - ONLY supports iOS 26.0+ and macOS 26.0+ (NEVER add code for older platforms)
 - Zero external dependencies (Foundation + CryptoKit only)
-- This library does NOT load models -- it finds and downloads them. Loading is the consumer's job.
-- `config.json` presence is the universal model validity marker
 - All downloads go through the private R2 CDN
-- See [AGENTS.md](AGENTS.md) for complete API reference and design patterns
-- See [REQUIREMENTS.md](REQUIREMENTS.md) for full specification
+- `config.json` presence is the universal model validity marker
+- Canonical path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
+
+---
+
+## For Different Users
+
+### 🎯 **Consuming Libraries** (Most Users)
+
+**Start here** if you're adding SwiftAcervo to your app or library:
+
+- **[USAGE.md](USAGE.md)** — Integration guide, examples, common patterns, FAQ
+  - Quick start (add to Package.swift)
+  - Integration checklist
+  - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta)
+  - Error handling and best practices
+  - **Read this first!**
+
+### 📚 **API Documentation**
+
+Complete reference for all methods and types:
+
+- **[API_REFERENCE.md](API_REFERENCE.md)** — All Acervo and AcervoManager methods, types, error handling
+- **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** — Where models are stored, directory structure, migration
+
+### 🛠️ **Building and Testing**
+
+For developers building SwiftAcervo itself or using the CLI:
+
+- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** — Make targets, acervo CLI tool, unit/integration tests, CI/CD
+
+### 🌐 **CDN Operations**
+
+For uploading models to the CDN:
+
+- **[CDN_UPLOAD.md](CDN_UPLOAD.md)** — Full pipeline (`acervo ship`), step-by-step commands, environment variables
+- **[CDN_ARCHITECTURE.md](CDN_ARCHITECTURE.md)** — How downloads work, verification, security properties
+
+### 🏗️ **Architecture & Design**
+
+For understanding the system:
+
+- **[DESIGN_PATTERNS.md](DESIGN_PATTERNS.md)** — Core patterns (Static+Actor, streaming SHA-256, per-model locking, atomic downloads)
+- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** — File organization, module layout, test structure
+- **[REQUIREMENTS.md](REQUIREMENTS.md)** — v2 component registry specification (draft)
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Ecosystem dependency map, interface contracts
+
+### 📖 **User Documentation**
+
+- **[README.md](README.md)** — High-level overview, quick start, installation
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Development guidelines and contribution process
+
+---
+
+## Quick Commands
+
+**Common Make targets** (preferred over raw xcodebuild):
+
+```bash
+make build              # Build the library
+make test               # Run all tests
+make install-acervo     # Build and install CLI to bin/
+```
+
+**acervo CLI** (for CDN operations):
+
+```bash
+acervo ship --model-id "org/repo"     # Full pipeline: download, manifest, verify, upload
+acervo download --model-id "org/repo" # Download from HuggingFace only
+acervo manifest --model-id "org/repo" # Generate manifest.json
+acervo verify --model-id "org/repo"   # Verify all integrity checks
+acervo upload --model-id "org/repo"   # Upload to R2 CDN
+```
+
+See [BUILD_AND_TEST.md](BUILD_AND_TEST.md) for full details.
+
+---
+
+## Important: This library does NOT load models
+
+SwiftAcervo finds and downloads models. Loading (inference) is the consumer's job:
+- SwiftBruja loads with MLX
+- mlx-audio-swift loads with MLX
+- Your library loads with your framework
+
+This separation keeps SwiftAcervo lightweight and framework-agnostic.
+
+---
+
+## See AGENTS.md for:
+
+- Complete API overview (all methods in one place)
+- ModelDownloadManager for batch downloads
+- Design patterns and architectural decisions
+- Platform requirements
+- Dependencies and build notes
+
+[AGENTS.md](AGENTS.md) is a comprehensive reference. For specific questions, use the docs above.
