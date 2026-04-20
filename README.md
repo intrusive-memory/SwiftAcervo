@@ -42,6 +42,20 @@ For example:
 
 LLM, TTS, audio, and vision models are all peers in the same flat directory. The presence of `config.json` marks a model as valid. SwiftAcervo finds and downloads models -- it does **not** load them. Loading is the consumer's job.
 
+## Getting Started
+
+**For app and library developers integrating SwiftAcervo**, start here:
+
+- **[USAGE.md](USAGE.md)** — Complete integration guide
+  - How to add SwiftAcervo to your project
+  - Common patterns and best practices
+  - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta)
+  - Error handling and FAQ
+
+**For complete API reference**, see [API_REFERENCE.md](API_REFERENCE.md).
+
+**For all documentation**, see the [documentation map in AGENTS.md](AGENTS.md#documentation-map).
+
 ## Installation
 
 ### Homebrew (acervo CLI)
