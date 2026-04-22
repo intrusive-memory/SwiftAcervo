@@ -1123,7 +1123,7 @@ extension Acervo {
       return false
     }
 
-    // TODO(Sortie 4): auto-hydrate here
+    // Un-hydrated descriptors have no file list; return false (safe default — not ready, ask for it).
     guard descriptor.isHydrated else {
       return false
     }
@@ -1149,6 +1149,24 @@ extension Acervo {
     }
 
     return true
+  }
+
+  /// Async variant of `isComponentReady` that auto-hydrates un-hydrated descriptors before checking.
+  ///
+  /// - Throws: `AcervoError.componentNotRegistered` if `id` is not in the registry.
+  public static func isComponentReadyAsync(_ id: String) async throws -> Bool {
+    try await isComponentReadyAsync(id, in: sharedModelsDirectory)
+  }
+
+  /// Internal overload of `isComponentReadyAsync` for testing with custom base directories.
+  static func isComponentReadyAsync(_ id: String, in baseDirectory: URL) async throws -> Bool {
+    guard let descriptor = ComponentRegistry.shared.component(id) else {
+      throw AcervoError.componentNotRegistered(id)
+    }
+    if descriptor.needsHydration {
+      try await hydrateComponent(id)
+    }
+    return isComponentReady(id, in: baseDirectory)
   }
 
   /// Returns all registered components that are not yet downloaded.
@@ -1239,7 +1257,7 @@ extension Acervo {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
-    // TODO(Sortie 4): auto-hydrate here
+    // Verification requires a file list; throw rather than silently masking configuration errors.
     guard descriptor.isHydrated else {
       throw AcervoError.componentNotHydrated(id: componentId)
     }
@@ -1454,12 +1472,17 @@ extension Acervo {
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL
   ) async throws {
-    guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+    guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
-    // TODO(Sortie 4): auto-hydrate here
-    guard descriptor.isHydrated else {
+    if initialDescriptor.needsHydration {
+      try await hydrateComponent(componentId)
+    }
+
+    guard let descriptor = ComponentRegistry.shared.component(componentId),
+      descriptor.isHydrated
+    else {
       throw AcervoError.componentNotHydrated(id: componentId)
     }
 
@@ -1523,13 +1546,12 @@ extension Acervo {
     in baseDirectory: URL
   ) async throws {
     // Check registration first
-    guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+    guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
-    // TODO(Sortie 4): auto-hydrate here
-    guard descriptor.isHydrated else {
-      throw AcervoError.componentNotHydrated(id: componentId)
+    if initialDescriptor.needsHydration {
+      try await hydrateComponent(componentId)
     }
 
     // If already ready, no-op
@@ -1537,7 +1559,7 @@ extension Acervo {
       return
     }
 
-    // Download the component
+    // Download the component (descriptor is now hydrated; downloadComponent will not re-hydrate)
     try await downloadComponent(
       componentId,
       force: false,
