@@ -174,7 +174,8 @@ actor CDNUploader {
   ///     `verifyChecksum()` returns false.
   ///   - Errors from `URLSession` / `JSONDecoder`.
   func verifyManifestOnCDN(publicBaseURL: URL, slug: String) async throws -> CDNManifest {
-    let manifestURL = publicBaseURL
+    let manifestURL =
+      publicBaseURL
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent("manifest.json")
@@ -208,7 +209,8 @@ actor CDNUploader {
     filename: String,
     expectedSHA256: String
   ) async throws {
-    let fileURL = publicBaseURL
+    let fileURL =
+      publicBaseURL
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent(filename)

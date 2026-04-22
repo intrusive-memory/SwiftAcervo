@@ -38,7 +38,7 @@ actor ManifestGenerator {
   /// Path component prefixes that cause a file to be skipped entirely
   /// (mirrors the `--exclude` patterns used by `CDNUploader`).
   private static let excludedPathPrefixes: [String] = [
-    ".huggingface/",
+    ".huggingface/"
   ]
 
   init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {

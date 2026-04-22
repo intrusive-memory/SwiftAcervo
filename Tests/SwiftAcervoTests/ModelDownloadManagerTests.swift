@@ -81,8 +81,9 @@ struct ModelDownloadManagerTests {
 
     // Seed the model so it appears locally available.
     try seedFakeModel(testModelId, in: tempDir)
-    #expect(Acervo.isModelAvailable(testModelId, in: tempDir),
-            "Seeded model should be detected as available before the call")
+    #expect(
+      Acervo.isModelAvailable(testModelId, in: tempDir),
+      "Seeded model should be detected as available before the call")
 
     // Redirect Acervo's file system to our temp directory.
     Acervo.customBaseDirectory = tempDir
@@ -99,15 +100,18 @@ struct ModelDownloadManagerTests {
 
     // The manager emits a final bookkeeping callback after each model,
     // even when the model was already available locally.
-    #expect(!reports.isEmpty,
-            "Progress callback must fire at least once (final 100% event)")
+    #expect(
+      !reports.isEmpty,
+      "Progress callback must fire at least once (final 100% event)")
 
     // The last callback must indicate completion (fraction == 1.0).
     if let last = reports.last {
-      #expect(last.fraction == 1.0,
-              "Final progress fraction should be 1.0 for an already-local model")
-      #expect(last.model == testModelId,
-              "Progress model field should match the requested model ID")
+      #expect(
+        last.fraction == 1.0,
+        "Final progress fraction should be 1.0 for an already-local model")
+      #expect(
+        last.model == testModelId,
+        "Progress model field should match the requested model ID")
     }
 
     // Confirm no redundant download occurred: the fake config.json is still
@@ -136,8 +140,9 @@ struct ModelDownloadManagerTests {
     }
 
     // Nothing seeded — model is absent.
-    #expect(!Acervo.isModelAvailable(testModelId, in: tempDir),
-            "Model should not be available before the call")
+    #expect(
+      !Acervo.isModelAvailable(testModelId, in: tempDir),
+      "Model should not be available before the call")
 
     // Redirect file system to temp directory and download only config.json.
     // We restrict to config.json by pre-seeding all *other* files so only
@@ -154,16 +159,18 @@ struct ModelDownloadManagerTests {
     }
 
     // Verify model is now available.
-    #expect(Acervo.isModelAvailable(testModelId, in: tempDir),
-            "Model should be available after ensureModelsAvailable completes")
+    #expect(
+      Acervo.isModelAvailable(testModelId, in: tempDir),
+      "Model should be available after ensureModelsAvailable completes")
 
     // Verify config.json actually exists on disk.
     let configURL =
       tempDir
       .appendingPathComponent(Acervo.slugify(testModelId))
       .appendingPathComponent("config.json")
-    #expect(FileManager.default.fileExists(atPath: configURL.path),
-            "config.json must exist after download")
+    #expect(
+      FileManager.default.fileExists(atPath: configURL.path),
+      "config.json must exist after download")
 
     // Verify that progress was reported.
     let reports = await collector.getReports()
@@ -171,15 +178,17 @@ struct ModelDownloadManagerTests {
 
     // Verify sequence: last report is the model we requested.
     if let last = reports.last {
-      #expect(last.model == testModelId,
-              "Final progress report should reference the downloaded model")
+      #expect(
+        last.model == testModelId,
+        "Final progress report should reference the downloaded model")
       #expect(last.fraction == 1.0, "Final progress fraction should be 1.0")
     }
 
     // Verify monotonic fraction: no fraction should exceed 1.0.
     for report in reports {
-      #expect(report.fraction >= 0.0 && report.fraction <= 1.0,
-              "fraction must stay in [0.0, 1.0]: got \(report.fraction)")
+      #expect(
+        report.fraction >= 0.0 && report.fraction <= 1.0,
+        "fraction must stay in [0.0, 1.0]: got \(report.fraction)")
     }
   }
 
@@ -223,36 +232,43 @@ struct ModelDownloadManagerTests {
     // Fraction must be monotonically non-decreasing overall.
     var previousFraction = -1.0
     for report in reports {
-      #expect(report.fraction >= previousFraction,
-              "fraction must be non-decreasing: \(report.fraction) < \(previousFraction)")
+      #expect(
+        report.fraction >= previousFraction,
+        "fraction must be non-decreasing: \(report.fraction) < \(previousFraction)")
       previousFraction = report.fraction
     }
 
     // The last callback should be at 1.0.
-    #expect(reports.last?.fraction == 1.0,
-            "Final cumulative fraction must be 1.0")
+    #expect(
+      reports.last?.fraction == 1.0,
+      "Final cumulative fraction must be 1.0")
 
     // Both model IDs should appear in the reports.
     let observedModels = Set(reports.map(\.model))
-    #expect(observedModels.contains(testModelId),
-            "Reports should include the first model: \(testModelId)")
-    #expect(observedModels.contains(testModelId2),
-            "Reports should include the second model: \(testModelId2)")
+    #expect(
+      observedModels.contains(testModelId),
+      "Reports should include the first model: \(testModelId)")
+    #expect(
+      observedModels.contains(testModelId2),
+      "Reports should include the second model: \(testModelId2)")
 
     // Verify the currentFileName field is populated for mid-download callbacks.
     // The final bookkeeping callback uses "" — filter those out.
     let midCallbacks = reports.filter { !$0.currentFileName.isEmpty }
     if !midCallbacks.isEmpty {
       for r in midCallbacks {
-        #expect(!r.currentFileName.isEmpty,
-                "currentFileName should be non-empty for mid-download callbacks")
+        #expect(
+          !r.currentFileName.isEmpty,
+          "currentFileName should be non-empty for mid-download callbacks")
       }
     }
 
     // Cumulative bytesDownloaded must not exceed bytesTotal.
     for report in reports {
-      #expect(report.bytesDownloaded <= report.bytesTotal,
-              "bytesDownloaded (\(report.bytesDownloaded)) must not exceed bytesTotal (\(report.bytesTotal))")
+      #expect(
+        report.bytesDownloaded <= report.bytesTotal,
+        "bytesDownloaded (\(report.bytesDownloaded)) must not exceed bytesTotal (\(report.bytesTotal))"
+      )
     }
   }
 
@@ -312,8 +328,10 @@ struct ModelDownloadManagerTests {
 
     // The error must be an AcervoError — not wrapped in any other type.
     guard let acervoError = caughtError as? AcervoError else {
-      #expect(Bool(false),
-              "Error must be AcervoError, got \(type(of: caughtError as Any)): \(String(describing: caughtError))")
+      #expect(
+        Bool(false),
+        "Error must be AcervoError, got \(type(of: caughtError as Any)): \(String(describing: caughtError))"
+      )
       return
     }
 
@@ -325,8 +343,8 @@ struct ModelDownloadManagerTests {
     // can produce when the CDN rejects an unknown model.
     switch acervoError {
     case .manifestDownloadFailed, .networkError, .manifestDecodingFailed,
-         .manifestIntegrityFailed, .manifestVersionUnsupported,
-         .manifestModelIdMismatch, .downloadFailed:
+      .manifestIntegrityFailed, .manifestVersionUnsupported,
+      .manifestModelIdMismatch, .downloadFailed:
       break  // All are acceptable — CDN behaviour for unknown models varies.
     default:
       // Any AcervoError is acceptable; this branch is here to document
