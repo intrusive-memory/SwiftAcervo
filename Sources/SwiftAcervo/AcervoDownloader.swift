@@ -201,18 +201,25 @@ extension AcervoDownloader {
   /// 4. Validates the model ID matches the request
   /// 5. Verifies the manifest's checksum-of-checksums
   ///
-  /// - Parameter modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Parameters:
+  ///   - modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  ///   - session: The URLSession used to fetch the manifest. Defaults to
+  ///     `SecureDownloadSession.shared`, which rejects redirects to non-CDN
+  ///     domains. Tests may inject a mock session.
   /// - Returns: The validated manifest.
   /// - Throws: `AcervoError` for download, decoding, or validation failures.
-  static func downloadManifest(for modelId: String) async throws -> CDNManifest {
+  public static func downloadManifest(
+    for modelId: String,
+    session: URLSession = SecureDownloadSession.shared
+  ) async throws -> CDNManifest {
     let url = buildManifestURL(modelId: modelId)
     let request = buildRequest(from: url)
 
-    // Download manifest using secure session
+    // Download manifest using the provided session
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await SecureDownloadSession.shared.data(for: request)
+      (data, response) = try await session.data(for: request)
     } catch {
       throw AcervoError.networkError(error)
     }

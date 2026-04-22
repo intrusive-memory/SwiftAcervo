@@ -1307,6 +1307,16 @@ extension Acervo {
   }
 }
 
+// MARK: - Manifest Access
+
+extension Acervo {
+
+  /// Returns the CDN manifest for the given component without hydrating the registry. Use this for custom catalogs, cache warmers, or CI verification tools that need manifest data but don't want to trigger downloads.
+  public static func fetchManifest(for componentId: String) async throws -> CDNManifest {
+    try await AcervoDownloader.downloadManifest(for: componentId)
+  }
+}
+
 // MARK: - Component Downloads
 
 extension Acervo {
