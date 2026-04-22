@@ -156,6 +156,53 @@ struct ComponentDescriptorTests {
     #expect(desc.metadata.isEmpty)
   }
 
+  // MARK: - Hydration State
+
+  @Test("ComponentDescriptor built without files is not hydrated")
+  func descriptorBareInitNeedsHydration() {
+    let desc = ComponentDescriptor(
+      id: "test/bare",
+      type: .backbone,
+      displayName: "Bare",
+      repoId: "test/bare",
+      minimumMemoryBytes: 0
+    )
+    #expect(desc.isHydrated == false)
+    #expect(desc.needsHydration == true)
+    #expect(desc.files.isEmpty)
+    #expect(desc.estimatedSizeBytes == 0)
+  }
+
+  @Test("ComponentDescriptor built with files is hydrated")
+  func descriptorWithFilesIsHydrated() {
+    let desc = ComponentDescriptor(
+      id: "test/declared",
+      type: .backbone,
+      displayName: "Declared",
+      repoId: "test/declared",
+      files: [ComponentFile(relativePath: "config.json")],
+      estimatedSizeBytes: 1024,
+      minimumMemoryBytes: 0
+    )
+    #expect(desc.isHydrated == true)
+    #expect(desc.needsHydration == false)
+  }
+
+  @Test("ComponentDescriptor with empty declared file list is still hydrated")
+  func descriptorWithEmptyFilesIsHydrated() {
+    let desc = ComponentDescriptor(
+      id: "test/empty-declared",
+      type: .auxiliary,
+      displayName: "Empty",
+      repoId: "test/empty-declared",
+      files: [],
+      estimatedSizeBytes: 0,
+      minimumMemoryBytes: 0
+    )
+    #expect(desc.isHydrated == true)
+    #expect(desc.needsHydration == false)
+  }
+
   @Test("ComponentDescriptor is Hashable consistent with Equatable")
   func descriptorHashable() {
     let desc1 = makeDescriptor(id: "same-id", displayName: "Name A")

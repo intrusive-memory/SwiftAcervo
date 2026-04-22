@@ -1123,6 +1123,11 @@ extension Acervo {
       return false
     }
 
+    // TODO(Sortie 4): auto-hydrate here
+    guard descriptor.isHydrated else {
+      return false
+    }
+
     let fm = FileManager.default
     let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
 
@@ -1234,6 +1239,11 @@ extension Acervo {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
+    // TODO(Sortie 4): auto-hydrate here
+    guard descriptor.isHydrated else {
+      throw AcervoError.componentNotHydrated(id: componentId)
+    }
+
     let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
 
     // Check that all files exist first
@@ -1339,6 +1349,11 @@ extension Acervo {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
+    // TODO(Sortie 4): auto-hydrate here
+    guard descriptor.isHydrated else {
+      throw AcervoError.componentNotHydrated(id: componentId)
+    }
+
     let fileList = descriptor.files.map(\.relativePath)
 
     // Manifest-driven download with CDN integrity verification
@@ -1399,8 +1414,13 @@ extension Acervo {
     in baseDirectory: URL
   ) async throws {
     // Check registration first
-    guard ComponentRegistry.shared.component(componentId) != nil else {
+    guard let descriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
+    }
+
+    // TODO(Sortie 4): auto-hydrate here
+    guard descriptor.isHydrated else {
+      throw AcervoError.componentNotHydrated(id: componentId)
     }
 
     // If already ready, no-op
