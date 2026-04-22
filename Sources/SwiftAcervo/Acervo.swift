@@ -1173,6 +1173,8 @@ extension Acervo {
   ///
   /// Filters `registeredComponents()` to those where `isComponentReady` is `false`.
   ///
+  /// Un-hydrated components are excluded from this result; their size is unknown until `hydrateComponent` is called. Use `unhydratedComponents()` to enumerate them.
+  ///
   /// - Returns: An array of component descriptors for components awaiting download.
   public static func pendingComponents() -> [ComponentDescriptor] {
     pendingComponents(in: sharedModelsDirectory)
@@ -1186,7 +1188,7 @@ extension Acervo {
   /// - Parameter baseDirectory: The base directory to resolve component paths against.
   /// - Returns: An array of component descriptors for components awaiting download.
   static func pendingComponents(in baseDirectory: URL) -> [ComponentDescriptor] {
-    registeredComponents().filter { !isComponentReady($0.id, in: baseDirectory) }
+    registeredComponents().filter { $0.isHydrated && !isComponentReady($0.id, in: baseDirectory) }
   }
 
   /// Returns the total catalog size split between downloaded and pending components.
@@ -1194,6 +1196,8 @@ extension Acervo {
   /// Sums `estimatedSizeBytes` for ready components (downloaded) and
   /// not-ready components (pending). This allows a UI to display something
   /// like "3 of 7 components downloaded, 4.2 GB cached, 8.1 GB available."
+  ///
+  /// Un-hydrated components are excluded from this result; their size is unknown until `hydrateComponent` is called. Use `unhydratedComponents()` to enumerate them.
   ///
   /// - Returns: A tuple of `(downloaded: Int64, pending: Int64)` byte counts.
   public static func totalCatalogSize() -> (downloaded: Int64, pending: Int64) {
@@ -1211,7 +1215,7 @@ extension Acervo {
     var downloaded: Int64 = 0
     var pending: Int64 = 0
 
-    for descriptor in registeredComponents() {
+    for descriptor in registeredComponents() where descriptor.isHydrated {
       if isComponentReady(descriptor.id, in: baseDirectory) {
         downloaded += descriptor.estimatedSizeBytes
       } else {
@@ -1220,6 +1224,13 @@ extension Acervo {
     }
 
     return (downloaded: downloaded, pending: pending)
+  }
+
+  /// Returns the IDs of all registered components that are awaiting hydration.
+  ///
+  /// - Returns: An array of component IDs for components whose file list has not yet been populated.
+  public static func unhydratedComponents() -> [String] {
+    registeredComponents().filter(\.needsHydration).map(\.id)
   }
 }
 
