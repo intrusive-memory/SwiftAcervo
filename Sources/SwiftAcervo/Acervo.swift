@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.7.3"
+  public static let version = "0.8.0"
 }
 
 // MARK: - Path Resolution
@@ -1123,6 +1123,11 @@ extension Acervo {
       return false
     }
 
+    // Un-hydrated descriptors have no file list; return false (safe default — not ready, ask for it).
+    guard descriptor.isHydrated else {
+      return false
+    }
+
     let fm = FileManager.default
     let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
 
@@ -1146,9 +1151,29 @@ extension Acervo {
     return true
   }
 
+  /// Async variant of `isComponentReady` that auto-hydrates un-hydrated descriptors before checking.
+  ///
+  /// - Throws: `AcervoError.componentNotRegistered` if `id` is not in the registry.
+  public static func isComponentReadyAsync(_ id: String) async throws -> Bool {
+    try await isComponentReadyAsync(id, in: sharedModelsDirectory)
+  }
+
+  /// Internal overload of `isComponentReadyAsync` for testing with custom base directories.
+  static func isComponentReadyAsync(_ id: String, in baseDirectory: URL) async throws -> Bool {
+    guard let descriptor = ComponentRegistry.shared.component(id) else {
+      throw AcervoError.componentNotRegistered(id)
+    }
+    if descriptor.needsHydration {
+      try await hydrateComponent(id)
+    }
+    return isComponentReady(id, in: baseDirectory)
+  }
+
   /// Returns all registered components that are not yet downloaded.
   ///
   /// Filters `registeredComponents()` to those where `isComponentReady` is `false`.
+  ///
+  /// Un-hydrated components are excluded from this result; their size is unknown until `hydrateComponent` is called. Use `unhydratedComponents()` to enumerate them.
   ///
   /// - Returns: An array of component descriptors for components awaiting download.
   public static func pendingComponents() -> [ComponentDescriptor] {
@@ -1163,7 +1188,7 @@ extension Acervo {
   /// - Parameter baseDirectory: The base directory to resolve component paths against.
   /// - Returns: An array of component descriptors for components awaiting download.
   static func pendingComponents(in baseDirectory: URL) -> [ComponentDescriptor] {
-    registeredComponents().filter { !isComponentReady($0.id, in: baseDirectory) }
+    registeredComponents().filter { $0.isHydrated && !isComponentReady($0.id, in: baseDirectory) }
   }
 
   /// Returns the total catalog size split between downloaded and pending components.
@@ -1171,6 +1196,8 @@ extension Acervo {
   /// Sums `estimatedSizeBytes` for ready components (downloaded) and
   /// not-ready components (pending). This allows a UI to display something
   /// like "3 of 7 components downloaded, 4.2 GB cached, 8.1 GB available."
+  ///
+  /// Un-hydrated components are excluded from this result; their size is unknown until `hydrateComponent` is called. Use `unhydratedComponents()` to enumerate them.
   ///
   /// - Returns: A tuple of `(downloaded: Int64, pending: Int64)` byte counts.
   public static func totalCatalogSize() -> (downloaded: Int64, pending: Int64) {
@@ -1188,7 +1215,7 @@ extension Acervo {
     var downloaded: Int64 = 0
     var pending: Int64 = 0
 
-    for descriptor in registeredComponents() {
+    for descriptor in registeredComponents() where descriptor.isHydrated {
       if isComponentReady(descriptor.id, in: baseDirectory) {
         downloaded += descriptor.estimatedSizeBytes
       } else {
@@ -1197,6 +1224,13 @@ extension Acervo {
     }
 
     return (downloaded: downloaded, pending: pending)
+  }
+
+  /// Returns the IDs of all registered components that are awaiting hydration.
+  ///
+  /// - Returns: An array of component IDs for components whose file list has not yet been populated.
+  public static func unhydratedComponents() -> [String] {
+    registeredComponents().filter(\.needsHydration).map(\.id)
   }
 }
 
@@ -1232,6 +1266,11 @@ extension Acervo {
   static func verifyComponent(_ componentId: String, in baseDirectory: URL) throws -> Bool {
     guard let descriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
+    }
+
+    // Verification requires a file list; throw rather than silently masking configuration errors.
+    guard descriptor.isHydrated else {
+      throw AcervoError.componentNotHydrated(id: componentId)
     }
 
     let componentDir = baseDirectory.appendingPathComponent(slugify(descriptor.repoId))
@@ -1297,6 +1336,115 @@ extension Acervo {
   }
 }
 
+// MARK: - Manifest Access
+
+extension Acervo {
+
+  /// Returns the CDN manifest for the given component without hydrating the registry. Use this for custom catalogs, cache warmers, or CI verification tools that need manifest data but don't want to trigger downloads.
+  public static func fetchManifest(for componentId: String) async throws -> CDNManifest {
+    try await AcervoDownloader.downloadManifest(for: componentId)
+  }
+}
+
+// MARK: - Hydration
+
+/// Coalesces concurrent hydration requests for the same component ID into a
+/// single in-flight `Task`. All subsequent callers await the same work until
+/// it completes; the slot is cleared on completion so a later call re-fetches.
+internal actor HydrationCoalescer {
+  private var inflight: [String: Task<Void, Error>] = [:]
+
+  func hydrate(
+    _ id: String,
+    fetch: @Sendable @escaping () async throws -> Void
+  ) async throws {
+    if let existing = inflight[id] {
+      try await existing.value
+      return
+    }
+    let task = Task { try await fetch() }
+    inflight[id] = task
+    defer { inflight[id] = nil }
+    try await task.value
+  }
+}
+
+extension Acervo {
+
+  /// Shared coalescer; single-flight key is componentId.
+  private static let hydrationCoalescer = HydrationCoalescer()
+
+  /// Fetches the CDN manifest for a registered component and rebuilds its
+  /// descriptor with a populated file list.
+  ///
+  /// Concurrent calls for the same `componentId` coalesce into a single
+  /// network fetch. A later call (after completion) re-fetches so that
+  /// CDN manifest updates between app launches are picked up.
+  ///
+  /// - Parameter componentId: The ID of a component registered with Acervo.
+  /// - Throws: `AcervoError.componentNotRegistered` if `componentId` is
+  ///   unknown; any manifest-related error from `fetchManifest`.
+  public static func hydrateComponent(_ componentId: String) async throws {
+    try await hydrateComponent(componentId, session: SecureDownloadSession.shared)
+  }
+
+  /// Internal overload that accepts an injected `URLSession` so tests can
+  /// stub the CDN via `MockURLProtocol`.
+  static func hydrateComponent(
+    _ componentId: String,
+    session: URLSession
+  ) async throws {
+    try await hydrationCoalescer.hydrate(componentId) {
+      try await performHydration(componentId, session: session)
+    }
+  }
+
+  /// Does the actual manifest fetch + descriptor rebuild + registry replace.
+  /// Called from within the coalescer so only one runs per componentId at a time.
+  private static func performHydration(
+    _ componentId: String,
+    session: URLSession
+  ) async throws {
+    guard let existing = ComponentRegistry.shared.component(componentId) else {
+      throw AcervoError.componentNotRegistered(componentId)
+    }
+
+    let manifest = try await AcervoDownloader.downloadManifest(
+      for: existing.repoId,
+      session: session
+    )
+
+    // Drift warning: compare pre-existing declared file count against manifest.
+    if existing.isHydrated && existing.files.count != manifest.files.count {
+      let message =
+        "[SwiftAcervo] Manifest drift detected for \(componentId): declared \(existing.files.count) files, manifest has \(manifest.files.count) files. Using manifest."
+      FileHandle.standardError.write(Data((message + "\n").utf8))
+    }
+
+    let hydratedFiles = manifest.files.map { entry in
+      ComponentFile(
+        relativePath: entry.path,
+        expectedSizeBytes: entry.sizeBytes,
+        sha256: entry.sha256
+      )
+    }
+    let totalSize = hydratedFiles.reduce(Int64(0)) { $0 + ($1.expectedSizeBytes ?? 0) }
+
+    let hydrated = ComponentDescriptor(
+      id: existing.id,
+      type: existing.type,
+      displayName: existing.displayName,
+      repoId: existing.repoId,
+      files: hydratedFiles,
+      estimatedSizeBytes: totalSize,
+      minimumMemoryBytes: existing.minimumMemoryBytes,
+      metadata: existing.metadata
+    )
+
+    ComponentRegistry.shared.replace(hydrated)
+  }
+}
+
 // MARK: - Component Downloads
 
 extension Acervo {
@@ -1335,8 +1483,18 @@ extension Acervo {
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL
   ) async throws {
-    guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+    guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
+    }
+
+    if initialDescriptor.needsHydration {
+      try await hydrateComponent(componentId)
+    }
+
+    guard let descriptor = ComponentRegistry.shared.component(componentId),
+      descriptor.isHydrated
+    else {
+      throw AcervoError.componentNotHydrated(id: componentId)
     }
 
     let fileList = descriptor.files.map(\.relativePath)
@@ -1399,8 +1557,12 @@ extension Acervo {
     in baseDirectory: URL
   ) async throws {
     // Check registration first
-    guard ComponentRegistry.shared.component(componentId) != nil else {
+    guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
+    }
+
+    if initialDescriptor.needsHydration {
+      try await hydrateComponent(componentId)
     }
 
     // If already ready, no-op
@@ -1408,7 +1570,7 @@ extension Acervo {
       return
     }
 
-    // Download the component
+    // Download the component (descriptor is now hydrated; downloadComponent will not re-hydrate)
     try await downloadComponent(
       componentId,
       force: false,

@@ -2,7 +2,7 @@
 
 This file serves as a navigation hub for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.7.3 (April 2026)
+**Current Version**: 0.8.0 (April 2026)
 
 **For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](USAGE.md)**.
 

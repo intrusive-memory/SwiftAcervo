@@ -72,6 +72,10 @@ public enum AcervoError: LocalizedError, Sendable {
   /// A caller-supplied local URL does not exist on disk.
   case localPathNotFound(url: URL)
 
+  /// A registered component has no populated file list; `hydrateComponent` must be
+  /// called (or use an auto-hydrating entry point) before this operation.
+  case componentNotHydrated(id: String)
+
   public var errorDescription: String? {
     switch self {
     case .directoryCreationFailed(let path):
@@ -131,6 +135,10 @@ public enum AcervoError: LocalizedError, Sendable {
 
     case .localPathNotFound(let url):
       return "Local path not found: \(url.path)"
+
+    case .componentNotHydrated(let id):
+      return
+        "Component '\(id)' has no file list yet. Call Acervo.hydrateComponent(_:) to populate it from the CDN manifest, or use an auto-hydrating API such as ensureComponentReady(_:)."
     }
   }
 }

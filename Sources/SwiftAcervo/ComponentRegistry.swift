@@ -95,6 +95,17 @@ final class ComponentRegistry: @unchecked Sendable {
     }
   }
 
+  /// Overwrites the stored descriptor for `descriptor.id` with no merging.
+  ///
+  /// Unlike `register(_:)`, this method replaces every field wholesale.
+  /// Used by hydration where the CDN manifest is authoritative and merge
+  /// semantics would silently mask drift.
+  func replace(_ descriptor: ComponentDescriptor) {
+    lock.lock()
+    defer { lock.unlock() }
+    descriptors[descriptor.id] = descriptor
+  }
+
   // MARK: - Unregistration
 
   /// Removes a component from the registry by its ID.
