@@ -87,7 +87,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.7.2")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.7.3")
     ],
     targets: [
         .target(
@@ -138,6 +138,54 @@ try await Acervo.ensureAvailable(
 ```
 
 `ensureAvailable` skips the download if the model is already present. Use `download` with `force: true` to re-download regardless.
+
+### CLI progress bars
+
+Every download entry point exposes a `@Sendable` progress callback that a command-line tool can use to render a live progress bar. The callback receives `AcervoDownloadProgress` (for single-model downloads via `Acervo` / `AcervoManager`) or `ModelDownloadProgress` (for batches via `ModelDownloadManager`). Both carry a `0.0...1.0` fraction, the current file/model, and cumulative byte counts — everything a terminal bar needs.
+
+The library itself pulls in no terminal dependencies, so consuming CLIs stay in control of how the bar looks. A minimal, zero-dependency renderer:
+
+```swift
+import SwiftAcervo
+
+func renderBar(_ fraction: Double, label: String) {
+    let width = 30
+    let filled = Int((fraction * Double(width)).rounded())
+    let bar = String(repeating: "█", count: filled)
+               + String(repeating: "·", count: width - filled)
+    let pct = Int((fraction * 100).rounded())
+    // \r returns to the start of the line so the bar updates in place.
+    print("\r\(label) [\(bar)] \(pct)%", terminator: "")
+    fflush(stdout)
+}
+
+// Single-model download
+try await Acervo.ensureAvailable(
+    "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    files: ["config.json", "model.safetensors"]
+) { progress in
+    renderBar(progress.overallProgress, label: progress.fileName)
+}
+print()  // newline when finished
+
+// Multi-model batch
+try await ModelDownloadManager.shared.ensureModelsAvailable([
+    "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+]) { progress in
+    renderBar(progress.fraction, label: progress.model)
+}
+print()
+```
+
+A few conventions worth following so your CLI behaves well in pipes, CI logs, and `--quiet` invocations:
+
+- **Check `isatty(fileno(stdout))` before drawing a bar.** When stdout isn't a TTY (piped, redirected, CI log capture), skip the bar and emit plain line-based progress — or nothing at all. ANSI control sequences in log files are noise.
+- **Offer a `--quiet` / `-q` flag** that suppresses the bar. Errors should still go to stderr.
+- **Pass `nil` for the progress callback** when you genuinely want silence; SwiftAcervo does no extra work in that case.
+- **The callback fires on a background task**, so don't capture UI or non-`Sendable` state inside it. For terminal output `print` is fine.
+
+The `acervo` CLI in this repo uses [Progress.swift](https://github.com/jkandzi/Progress.swift) for a richer renderer (elapsed time, ETA, throughput). That's a reasonable drop-in if you don't want to hand-roll one — see `Sources/acervo/ProgressReporter.swift` for the wiring, including the TTY guard and the `--quiet` `@OptionGroup`. SwiftAcervo itself does not depend on Progress.swift; the library stays Foundation + CryptoKit only.
 
 ### List all models
 

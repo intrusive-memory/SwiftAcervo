@@ -92,6 +92,8 @@ struct UploadCommand: AsyncParsableCommand {
   )
   var force: Bool = false
 
+  @OptionGroup var progressOptions: ProgressOptions
+
   func run() async throws {
     try ToolCheck.validate()
 
@@ -103,7 +105,8 @@ struct UploadCommand: AsyncParsableCommand {
 
     // CHECK 2+3: generate manifest, refuse zero-byte files, verify on re-read.
     let generator = ManifestGenerator(modelId: modelId)
-    let manifestURL = try await generator.generate(directory: directoryURL)
+    let manifestURL = try await generator.generate(
+      directory: directoryURL, quiet: progressOptions.quiet)
     FileHandle.standardOutput.write(
       Data("manifest written to \(manifestURL.path)\n".utf8)
     )
@@ -113,7 +116,14 @@ struct UploadCommand: AsyncParsableCommand {
 
     // CHECK 4: re-hash every file against the manifest before any aws process is spawned.
     let uploader = CDNUploader()
-    try await uploader.verifyBeforeUpload(directory: directoryURL, manifest: manifest)
+    let check4Reporter = ProgressReporter(
+      label: "CHECK 4 re-hash: ",
+      total: manifest.files.count,
+      quiet: progressOptions.quiet
+    )
+    try await uploader.verifyBeforeUpload(
+      directory: directoryURL, manifest: manifest, reporter: check4Reporter
+    )
     FileHandle.standardOutput.write(
       Data("CHECK 4 passed: all staged files match the manifest.\n".utf8)
     )
@@ -125,7 +135,8 @@ struct UploadCommand: AsyncParsableCommand {
       bucket: resolvedBucket,
       endpoint: resolvedEndpoint,
       dryRun: dryRun,
-      force: force
+      force: force,
+      quiet: progressOptions.quiet
     )
 
     // Upload manifest separately after sync completes.
@@ -134,7 +145,8 @@ struct UploadCommand: AsyncParsableCommand {
       slug: slug,
       bucket: resolvedBucket,
       endpoint: resolvedEndpoint,
-      dryRun: dryRun
+      dryRun: dryRun,
+      quiet: progressOptions.quiet
     )
     FileHandle.standardOutput.write(
       Data("manifest.json uploaded to CDN.\n".utf8)

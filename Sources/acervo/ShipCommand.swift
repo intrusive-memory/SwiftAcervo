@@ -120,6 +120,8 @@ struct ShipCommand: AsyncParsableCommand {
   )
   var force: Bool = false
 
+  @OptionGroup var progressOptions: ProgressOptions
+
   // MARK: - run()
 
   func run() async throws {
@@ -149,8 +151,14 @@ struct ShipCommand: AsyncParsableCommand {
       let client = HuggingFaceClient()
       let discovered = try DownloadCommand.enumerateDownloadedFiles(in: stagingURL)
 
+      let verifyReporter = ProgressReporter(
+        label: "Verifying HF LFS: ",
+        total: discovered.count,
+        quiet: progressOptions.quiet
+      )
       var failures: [String] = []
       for (relativePath, fileURL) in discovered {
+        defer { verifyReporter.advance() }
         let actualSHA256: String
         do {
           actualSHA256 = try IntegrityVerification.sha256(of: fileURL)
@@ -196,7 +204,8 @@ struct ShipCommand: AsyncParsableCommand {
 
     // CHECK 2+3: generate manifest, refuse zero-byte files, verify on re-read.
     let generator = ManifestGenerator(modelId: modelId)
-    let manifestURL = try await generator.generate(directory: stagingURL)
+    let manifestURL = try await generator.generate(
+      directory: stagingURL, quiet: progressOptions.quiet)
     FileHandle.standardOutput.write(
       Data("manifest written to \(manifestURL.path)\n".utf8)
     )
@@ -206,7 +215,14 @@ struct ShipCommand: AsyncParsableCommand {
 
     // CHECK 4: re-hash every file against the manifest before spawning aws.
     let uploader = CDNUploader()
-    try await uploader.verifyBeforeUpload(directory: stagingURL, manifest: manifest)
+    let check4Reporter = ProgressReporter(
+      label: "CHECK 4 re-hash: ",
+      total: manifest.files.count,
+      quiet: progressOptions.quiet
+    )
+    try await uploader.verifyBeforeUpload(
+      directory: stagingURL, manifest: manifest, reporter: check4Reporter
+    )
     FileHandle.standardOutput.write(
       Data("CHECK 4 passed: all staged files match the manifest.\n".utf8)
     )
@@ -218,7 +234,8 @@ struct ShipCommand: AsyncParsableCommand {
       bucket: resolvedBucket,
       endpoint: resolvedEndpoint,
       dryRun: dryRun,
-      force: force
+      force: force,
+      quiet: progressOptions.quiet
     )
 
     // Upload manifest separately after sync completes.
@@ -227,7 +244,8 @@ struct ShipCommand: AsyncParsableCommand {
       slug: slug,
       bucket: resolvedBucket,
       endpoint: resolvedEndpoint,
-      dryRun: dryRun
+      dryRun: dryRun,
+      quiet: progressOptions.quiet
     )
     FileHandle.standardOutput.write(
       Data("manifest.json uploaded to CDN.\n".utf8)
@@ -278,44 +296,30 @@ struct ShipCommand: AsyncParsableCommand {
         stagingURL.path,
       ])
 
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = arguments
-
       var environment = ProcessInfo.processInfo.environment
       if let token, !token.isEmpty {
         environment["HF_TOKEN"] = token
         environment["HUGGING_FACE_HUB_TOKEN"] = token
       }
-      process.environment = environment
 
-      let stdoutPipe = Pipe()
-      let stderrPipe = Pipe()
-      process.standardOutput = stdoutPipe
-      process.standardError = stderrPipe
+      let result = try ProcessRunner.run(
+        executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+        arguments: arguments,
+        environment: environment,
+        quiet: progressOptions.quiet,
+        label: "hf download"
+      )
 
-      do {
-        try process.run()
-      } catch {
-        throw AcervoToolError.missingTool(
-          "hf (failed to launch: \(error.localizedDescription))"
-        )
-      }
-
-      let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-      let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-      _ = stdoutData
-
-      process.waitUntilExit()
-
-      if process.terminationStatus != 0 {
-        let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-        let message =
-          "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
+      if result.exitCode != 0 {
+        let stderrText =
+          result.capturedStderr.isEmpty
+          ? "(stderr not captured; subprocess stdio was live — see above)"
+          : result.capturedStderr
+        let message = "error: hf download exited \(result.exitCode): \(stderrText)\n"
         FileHandle.standardError.write(Data(message.utf8))
         throw AcervoToolError.awsProcessFailed(
           command: "hf download",
-          exitCode: process.terminationStatus,
+          exitCode: result.exitCode,
           stderr: stderrText
         )
       }

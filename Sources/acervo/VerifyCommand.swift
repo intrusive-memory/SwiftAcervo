@@ -51,6 +51,8 @@ struct VerifyCommand: AsyncParsableCommand {
   @Argument(help: "Local directory to verify; omit to use staging directory")
   var directory: String?
 
+  @OptionGroup var progressOptions: ProgressOptions
+
   func run() async throws {
     if let directory {
       try await verifyLocalDirectory(path: directory)
@@ -65,13 +67,20 @@ struct VerifyCommand: AsyncParsableCommand {
     let directoryURL = URL(fileURLWithPath: path, isDirectory: true)
 
     let generator = ManifestGenerator(modelId: modelId)
-    let manifestURL = try await generator.generate(directory: directoryURL)
+    let manifestURL = try await generator.generate(
+      directory: directoryURL, quiet: progressOptions.quiet)
 
     let manifestData = try Data(contentsOf: manifestURL)
     let manifest = try JSONDecoder().decode(CDNManifest.self, from: manifestData)
 
+    let reporter = ProgressReporter(
+      label: "Verifying local: ",
+      total: manifest.files.count,
+      quiet: progressOptions.quiet
+    )
     var failures: [String] = []
     for entry in manifest.files {
+      defer { reporter.advance() }
       let fileURL = directoryURL.appendingPathComponent(entry.path)
       let actual: String
       do {
@@ -133,8 +142,14 @@ struct VerifyCommand: AsyncParsableCommand {
       throw ExitCode.failure
     }
 
+    let reporter = ProgressReporter(
+      label: "Verifying vs CDN: ",
+      total: manifest.files.count,
+      quiet: progressOptions.quiet
+    )
     var failures: [String] = []
     for entry in manifest.files {
+      defer { reporter.advance() }
       let fileURL = stagingURL.appendingPathComponent(entry.path)
       guard FileManager.default.fileExists(atPath: fileURL.path) else {
         failures.append("\(entry.path): missing in staging")

@@ -16,7 +16,8 @@ let package = Package(
     .executable(name: "acervo", targets: ["acervo"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.7.1"))
+    .package(url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.7.1")),
+    .package(url: "https://github.com/jkandzi/Progress.swift", .upToNextMajor(from: "0.4.0")),
   ],
   targets: [
     .target(
@@ -27,6 +28,7 @@ let package = Package(
       dependencies: [
         "SwiftAcervo",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
+        .product(name: "Progress", package: "Progress.swift"),
       ],
       path: "Sources/acervo",
       swiftSettings: [

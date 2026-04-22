@@ -30,11 +30,16 @@ struct ManifestCommand: AsyncParsableCommand {
   @Argument(help: "Local directory whose contents should be enumerated into a manifest.")
   var directory: String
 
+  @OptionGroup var progressOptions: ProgressOptions
+
   func run() async throws {
     let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
 
     let generator = ManifestGenerator(modelId: modelId)
-    let manifestURL = try await generator.generate(directory: directoryURL)
+    let manifestURL = try await generator.generate(
+      directory: directoryURL,
+      quiet: progressOptions.quiet
+    )
 
     FileHandle.standardOutput.write(Data((manifestURL.path + "\n").utf8))
   }

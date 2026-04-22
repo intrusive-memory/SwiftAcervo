@@ -102,26 +102,26 @@ enum ToolCheck {
   /// concurrency hopping is required under Swift 6 strict concurrency.
   private static func isToolAvailable(name: String) -> Bool {
     #if os(macOS)
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-    process.arguments = [name]
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+      process.arguments = [name]
 
-    // Silence stdout/stderr from `which`; we only care about exit status.
-    let devNull = FileHandle(forWritingAtPath: "/dev/null")
-    if let devNull {
-      process.standardOutput = devNull
-      process.standardError = devNull
-    }
+      // Silence stdout/stderr from `which`; we only care about exit status.
+      let devNull = FileHandle(forWritingAtPath: "/dev/null")
+      if let devNull {
+        process.standardOutput = devNull
+        process.standardError = devNull
+      }
 
-    do {
-      try process.run()
-    } catch {
-      return false
-    }
-    process.waitUntilExit()
-    return process.terminationStatus == 0
+      do {
+        try process.run()
+      } catch {
+        return false
+      }
+      process.waitUntilExit()
+      return process.terminationStatus == 0
     #else
-    return false
+      return false
     #endif
   }
 }
