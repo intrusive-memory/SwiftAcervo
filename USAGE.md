@@ -22,7 +22,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.7.3")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.8.0")
     ],
     targets: [
         .target(
@@ -406,6 +406,105 @@ Different models download in parallel; the same model is serialized.
 ### Q: Can I cancel a download?
 
 Not directly. SwiftAcervo uses URLSession, which respects task cancellation. If you cancel the calling task, the download stops (and partial files remain for resume on next attempt).
+
+---
+
+## Manifest-Driven Components (v0.8.0+)
+
+Starting with v0.8.0, consumers no longer need to hardcode a `files:` array in `ComponentDescriptor`. SwiftAcervo fetches the CDN manifest on first use and populates the file list itself. The CDN manifest is the single source of truth for file paths, sizes, and SHA-256 checksums.
+
+### Bare-minimum descriptor
+
+```swift
+// v0.8.0+: no files:, no estimatedSizeBytes required
+let descriptor = ComponentDescriptor(
+    id: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    type: .languageModel,
+    displayName: "Qwen2.5 3B Instruct (4-bit MLX)",
+    repoId: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    minimumMemoryBytes: 2_400_000_000
+)
+Acervo.register([descriptor])
+```
+
+### Auto-hydration on first use
+
+`ensureComponentReady` hydrates the descriptor transparently on first call — no explicit step needed:
+
+```swift
+// Fetches manifest, populates files, then downloads all component files
+try await Acervo.ensureComponentReady("mlx-community/Qwen2.5-3B-Instruct-4bit")
+
+// After this call, the registry has the full file list
+let dir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-3B-Instruct-4bit")
+```
+
+To hydrate explicitly (e.g., for prefetching or custom catalogs) without triggering a download:
+
+```swift
+try await Acervo.hydrateComponent("mlx-community/Qwen2.5-3B-Instruct-4bit")
+```
+
+To read the raw manifest without touching the registry:
+
+```swift
+let manifest = try await Acervo.fetchManifest(for: "mlx-community/Qwen2.5-3B-Instruct-4bit")
+for file in manifest.files {
+    print("\(file.path) — \(file.sizeBytes) bytes")
+}
+```
+
+### Migration from v0.7.x
+
+**Before (v0.7.x):**
+
+```swift
+ComponentDescriptor(
+    id: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    type: .languageModel,
+    displayName: "Qwen2.5 3B Instruct (4-bit MLX)",
+    repoId: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    files: [
+        ComponentFile(relativePath: "config.json"),
+        ComponentFile(relativePath: "tokenizer.json"),
+        ComponentFile(relativePath: "tokenizer_config.json"),
+        ComponentFile(relativePath: "model.safetensors"),
+    ],
+    estimatedSizeBytes: 2_147_483_648,
+    minimumMemoryBytes: 2_400_000_000
+)
+```
+
+**After (v0.8.0+):**
+
+```swift
+ComponentDescriptor(
+    id: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    type: .languageModel,
+    displayName: "Qwen2.5 3B Instruct (4-bit MLX)",
+    repoId: "mlx-community/Qwen2.5-3B-Instruct-4bit",
+    minimumMemoryBytes: 2_400_000_000
+    // files and estimatedSizeBytes derived from CDN manifest on first use
+)
+```
+
+Migration is two steps:
+
+1. Drop the `files:` array. No other code changes. `ensureComponentReady` hydrates transparently on first call.
+2. Drop `estimatedSizeBytes` where it was a placeholder (e.g., `0`). Keep it where you want a pre-hydration estimate for UI (the declared value is used until hydration completes).
+
+The existing `init` that takes `files:` continues to work unchanged. Consumers that need to pin an exact file list (e.g., pre-release models not yet on the CDN) can continue using it.
+
+### Sync vs async readiness check
+
+`Acervo.isComponentReady(_:)` (sync) returns `false` for un-hydrated descriptors — it cannot perform a network fetch and takes the safe default of "not ready." Callers that need an accurate answer after hydration should prefer:
+
+```swift
+// Hydrates if needed, then checks readiness
+let ready = try await Acervo.isComponentReadyAsync("mlx-community/Qwen2.5-3B-Instruct-4bit")
+```
+
+The sync version remains correct for descriptors declared with an explicit `files:` list.
 
 ---
 

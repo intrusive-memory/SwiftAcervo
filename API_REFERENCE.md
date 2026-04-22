@@ -54,9 +54,19 @@ Stateless namespace for model discovery and downloading. Safe to call from any t
 |--------|---------|-------------|
 | `register(_:)` | `Void` | Register a component descriptor (returns `Void`, side effect is registration) |
 | `downloadComponent(_:force:progress:)` | `Void` | Download a registered component using registry file list |
-| `ensureComponentReady(_:progress:)` | `Void` | Ensure component is downloaded and verified |
+| `ensureComponentReady(_:progress:)` | `Void` | Ensure component is downloaded and verified; auto-hydrates bare descriptors on first call |
 | `verifyComponent(_:)` | `Void` | Verify component's files against SHA-256 checksums |
+| `isComponentReady(_:)` | `Bool` | Sync readiness check. Returns `false` for un-hydrated descriptors (safe default — network fetch not possible sync). Use `isComponentReadyAsync(_:)` for accuracy on bare descriptors. |
+| `isComponentReadyAsync(_:)` | `Bool` | Async readiness check; hydrates descriptor first if needed. Recommended for bare descriptors. Throws `AcervoError`. |
 | `registeredComponents()` | `[ComponentDescriptor]` | List all registered component descriptors |
+| `unhydratedComponents()` | `[String]` | Returns component IDs whose descriptors have no file list yet (require CDN hydration). Un-hydrated components are excluded from `pendingComponents()` and `totalCatalogSize()`. |
+
+### Manifest API
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `hydrateComponent(_:)` | `Void` | Fetches CDN manifest for a registered component and populates its `files`, per-file sizes, SHA-256 hashes, and `estimatedSizeBytes`. Idempotent. Concurrent calls for the same ID coalesce into one network fetch. Throws `AcervoError.componentNotRegistered` if the component is not in the registry. |
+| `fetchManifest(for:)` | `CDNManifest` | Returns the CDN manifest for the given component without hydrating the registry. Use this for custom catalogs, cache warmers, or CI verification tools that need manifest data but don't want to trigger downloads. |
 
 ### Migration
 
@@ -196,12 +206,20 @@ struct ComponentDescriptor {
     let type: ComponentType             // .encoder, .backbone, .decoder, etc.
     let displayName: String             // Human-readable name
     let repoId: String                  // Origin repository identifier
-    let files: [ComponentFile]          // Required files with optional checksums
-    let estimatedSizeBytes: Int64       // Total expected download size
+    let files: [ComponentFile]          // Required files with optional checksums (nil for bare descriptors)
+    let estimatedSizeBytes: Int64       // Total expected download size (0 until hydrated if not declared)
     let minimumMemoryBytes: Int64       // RAM needed to load
     let metadata: [String: String]      // Model-specific key-value pairs
+
+    var isHydrated: Bool                // true if files have been populated (declared or manifest-fetched)
+    var needsHydration: Bool            // true if no files declared and manifest not yet fetched (inverse of isHydrated)
 }
 ```
+
+**Initializers**:
+
+- `init(id:type:displayName:repoId:files:estimatedSizeBytes:minimumMemoryBytes:metadata:)` — Full init with explicit file list. `isHydrated` is `true` immediately. Existing callers are unaffected.
+- `init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)` — Bare init (v0.8.0+). Omits `files` and `estimatedSizeBytes`; these are populated from the CDN manifest on first `ensureComponentReady` or explicit `hydrateComponent` call. `isHydrated` is `false` until hydration completes.
 
 ### ComponentType
 
@@ -277,6 +295,7 @@ Error type conforming to `LocalizedError`, `Sendable`.
 | `componentNotRegistered(String)` | Component ID not in registry |
 | `componentNotDownloaded(String)` | Component files not yet downloaded |
 | `componentFileNotFound(component:file:)` | Requested file not in component |
+| `componentNotHydrated(id:)` | Component descriptor exists but has no file list; thrown from sync-only paths (e.g., `verifyComponent`) where hydration is not possible. Call `hydrateComponent` or `ensureComponentReady` first. |
 
 All errors have `localizedDescription` for user-facing messages.
 
