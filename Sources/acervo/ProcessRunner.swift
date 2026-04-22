@@ -43,53 +43,61 @@ enum ProcessRunner {
     quiet: Bool,
     label: String
   ) throws -> Result {
-    let process = Process()
-    process.executableURL = executableURL
-    process.arguments = arguments
-    if let environment {
-      process.environment = environment
-    }
+    #if os(macOS)
+      let process = Process()
+      process.executableURL = executableURL
+      process.arguments = arguments
+      if let environment {
+        process.environment = environment
+      }
 
-    var stderrPipe: Pipe? = nil
-    var stdoutPipe: Pipe? = nil
+      var stderrPipe: Pipe? = nil
+      var stdoutPipe: Pipe? = nil
 
-    if quiet {
-      let outPipe = Pipe()
-      let errPipe = Pipe()
-      stdoutPipe = outPipe
-      stderrPipe = errPipe
-      process.standardOutput = outPipe
-      process.standardError = errPipe
-    } else {
-      // Let the subprocess talk directly to the user's terminal. This is
-      // what makes `hf download` and `aws s3 sync` render their native
-      // progress bars. In non-TTY contexts (CI logs, pipes) the child
-      // will still emit its regular line-oriented output, which is what
-      // we want there too.
-      process.standardOutput = FileHandle.standardOutput
-      process.standardError = FileHandle.standardError
-    }
+      if quiet {
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        stdoutPipe = outPipe
+        stderrPipe = errPipe
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+      } else {
+        // Let the subprocess talk directly to the user's terminal. This is
+        // what makes `hf download` and `aws s3 sync` render their native
+        // progress bars. In non-TTY contexts (CI logs, pipes) the child
+        // will still emit its regular line-oriented output, which is what
+        // we want there too.
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+      }
 
-    do {
-      try process.run()
-    } catch {
+      do {
+        try process.run()
+      } catch {
+        throw AcervoToolError.awsProcessFailed(
+          command: label,
+          exitCode: -1,
+          stderr: "failed to launch \(label): \(error.localizedDescription)"
+        )
+      }
+
+      var capturedStderr = ""
+      if quiet, let stdoutPipe, let stderrPipe {
+        // Drain pipes before waitUntilExit() so the child cannot deadlock
+        // on a full pipe buffer during a long transfer.
+        _ = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        capturedStderr = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
+      }
+
+      process.waitUntilExit()
+      return Result(exitCode: process.terminationStatus, capturedStderr: capturedStderr)
+    #else
       throw AcervoToolError.awsProcessFailed(
         command: label,
         exitCode: -1,
-        stderr: "failed to launch \(label): \(error.localizedDescription)"
+        stderr: "ProcessRunner is only available on macOS"
       )
-    }
-
-    var capturedStderr = ""
-    if quiet, let stdoutPipe, let stderrPipe {
-      // Drain pipes before waitUntilExit() so the child cannot deadlock
-      // on a full pipe buffer during a long transfer.
-      _ = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-      let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-      capturedStderr = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-    }
-
-    process.waitUntilExit()
-    return Result(exitCode: process.terminationStatus, capturedStderr: capturedStderr)
+    #endif
   }
 }
