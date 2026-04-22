@@ -49,15 +49,19 @@ actor ManifestGenerator {
   /// Scans `directory`, verifies every file is non-empty (CHECK 2), writes
   /// `manifest.json`, then re-reads and verifies it (CHECK 3).
   ///
-  /// - Parameter directory: Local staging directory. Must exist and be
-  ///   readable.
+  /// - Parameters:
+  ///   - directory: Local staging directory. Must exist and be readable.
+  ///   - quiet: When `false` and stdout is a TTY, renders a TUI progress
+  ///     bar advanced once per file as the per-file SHA-256 is computed.
+  ///     The default preserves the original silent behaviour used by
+  ///     unit tests and other library callers.
   /// - Returns: Absolute `URL` of the written `manifest.json`.
   /// - Throws:
   ///   - `AcervoToolError.zeroByteFile` when any scanned file is 0 bytes.
   ///   - `AcervoToolError.manifestChecksumMismatch` when the just-written
   ///     manifest fails `verifyChecksum()` on re-read.
   ///   - Errors from `FileManager` / `FileHandle` / `JSONEncoder`.
-  func generate(directory: URL) async throws -> URL {
+  func generate(directory: URL, quiet: Bool = true) async throws -> URL {
     let resolvedDirectory = directory.resolvingSymlinksInPath()
     let discovered = try scan(directory: resolvedDirectory)
 
@@ -66,10 +70,17 @@ actor ManifestGenerator {
       throw AcervoToolError.zeroByteFile(entry.relativePath)
     }
 
+    let reporter = ProgressReporter(
+      label: "Hashing manifest: ",
+      total: discovered.count,
+      quiet: quiet
+    )
+
     // Hash every surviving file and build manifest entries.
     var manifestFiles: [CDNManifestFile] = []
     manifestFiles.reserveCapacity(discovered.count)
     for entry in discovered {
+      defer { reporter.advance() }
       let sha = try IntegrityVerification.sha256(of: entry.url)
       manifestFiles.append(
         CDNManifestFile(

@@ -57,11 +57,18 @@ actor CDNUploader {
   ///   - directory: Local staging directory whose layout matches the
   ///     `path` fields in `manifest.files`.
   ///   - manifest: The just-generated manifest from `ManifestGenerator`.
+  ///   - reporter: Optional TUI progress reporter advanced once per file.
+  ///     `nil` produces the original silent behaviour used by unit tests.
   /// - Throws: `AcervoToolError.stagingMutation` on the first file whose
   ///   recomputed SHA-256 does not match the manifest entry.
-  func verifyBeforeUpload(directory: URL, manifest: CDNManifest) throws {
+  func verifyBeforeUpload(
+    directory: URL,
+    manifest: CDNManifest,
+    reporter: ProgressReporter? = nil
+  ) throws {
     let resolvedDirectory = directory.resolvingSymlinksInPath()
     for entry in manifest.files {
+      defer { reporter?.advance() }
       let fileURL = resolvedDirectory.appendingPathComponent(entry.path)
       let actual: String
       do {
@@ -116,7 +123,8 @@ actor CDNUploader {
     bucket: String,
     endpoint: String,
     dryRun: Bool,
-    force: Bool
+    force: Bool,
+    quiet: Bool = false
   ) async throws {
     let arguments = Self.buildSyncArguments(
       localDirectory: localDirectory,
@@ -126,7 +134,7 @@ actor CDNUploader {
       dryRun: dryRun,
       force: force
     )
-    try runAWS(arguments: arguments, label: "s3 sync")
+    try runAWS(arguments: arguments, label: "s3 sync", quiet: quiet)
   }
 
   /// Uploads `manifest.json` in a dedicated `aws s3 cp` invocation
@@ -141,7 +149,8 @@ actor CDNUploader {
     slug: String,
     bucket: String,
     endpoint: String,
-    dryRun: Bool
+    dryRun: Bool,
+    quiet: Bool = false
   ) async throws {
     let arguments = Self.buildManifestUploadArguments(
       localManifestURL: localURL,
@@ -150,7 +159,7 @@ actor CDNUploader {
       endpoint: endpoint,
       dryRun: dryRun
     )
-    try runAWS(arguments: arguments, label: "s3 cp")
+    try runAWS(arguments: arguments, label: "s3 cp", quiet: quiet)
   }
 
   // MARK: - CHECK 5: verify manifest on CDN
@@ -282,64 +291,48 @@ actor CDNUploader {
 
   // MARK: - Process execution
 
-  /// Launches `aws` via `/usr/bin/env` with the given argv and the
+  /// Launches `aws` via `awsExecutableURL` with the given argv and the
   /// R2 credentials remapped into AWS env vars.
   ///
-  /// Captures stdout and stderr via `Pipe`. On non-zero exit the
-  /// stderr contents are wrapped in `AcervoToolError.awsProcessFailed`.
-  private func runAWS(arguments: [String], label: String) throws {
+  /// When `quiet` is false (default for CLI callers), stdout/stderr are
+  /// inherited from the parent so `aws s3 sync`'s transfer progress is
+  /// visible live. When `quiet` is true, both streams are drained via
+  /// pipes and stderr is captured for the error path.
+  private func runAWS(arguments: [String], label: String, quiet: Bool) throws {
     #if !os(macOS)
-    throw AcervoToolError.awsProcessFailed(
-      command: label, exitCode: -1, stderr: "Not available on this platform")
+      throw AcervoToolError.awsProcessFailed(
+        command: label, exitCode: -1, stderr: "Not available on this platform")
     #else
-    guard let accessKey = environmentSnapshot["R2_ACCESS_KEY_ID"] else {
-      throw AcervoToolError.missingEnvironmentVariable("R2_ACCESS_KEY_ID")
-    }
-    guard let secretKey = environmentSnapshot["R2_SECRET_ACCESS_KEY"] else {
-      throw AcervoToolError.missingEnvironmentVariable("R2_SECRET_ACCESS_KEY")
-    }
+      guard let accessKey = environmentSnapshot["R2_ACCESS_KEY_ID"] else {
+        throw AcervoToolError.missingEnvironmentVariable("R2_ACCESS_KEY_ID")
+      }
+      guard let secretKey = environmentSnapshot["R2_SECRET_ACCESS_KEY"] else {
+        throw AcervoToolError.missingEnvironmentVariable("R2_SECRET_ACCESS_KEY")
+      }
 
-    let process = Process()
-    process.executableURL = awsExecutableURL
-    process.arguments = arguments
+      var env = environmentSnapshot
+      env["AWS_ACCESS_KEY_ID"] = accessKey
+      env["AWS_SECRET_ACCESS_KEY"] = secretKey
 
-    var env = environmentSnapshot
-    env["AWS_ACCESS_KEY_ID"] = accessKey
-    env["AWS_SECRET_ACCESS_KEY"] = secretKey
-    process.environment = env
-
-    let stdoutPipe = Pipe()
-    let stderrPipe = Pipe()
-    process.standardOutput = stdoutPipe
-    process.standardError = stderrPipe
-
-    do {
-      try process.run()
-    } catch {
-      throw AcervoToolError.awsProcessFailed(
-        command: label,
-        exitCode: -1,
-        stderr: "failed to launch aws: \(error.localizedDescription)"
+      let result = try ProcessRunner.run(
+        executableURL: awsExecutableURL,
+        arguments: arguments,
+        environment: env,
+        quiet: quiet,
+        label: label
       )
-    }
 
-    // Drain the pipes before waiting so `aws` can't deadlock on a
-    // full pipe buffer for large sync output.
-    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-    _ = stdoutData  // captured but not surfaced on success paths
-
-    process.waitUntilExit()
-
-    if process.terminationStatus != 0 {
-      let stderrText =
-        String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-      throw AcervoToolError.awsProcessFailed(
-        command: label,
-        exitCode: process.terminationStatus,
-        stderr: stderrText
-      )
-    }
+      if result.exitCode != 0 {
+        let stderrText =
+          result.capturedStderr.isEmpty
+          ? "(stderr not captured; subprocess stdio was live — see above)"
+          : result.capturedStderr
+        throw AcervoToolError.awsProcessFailed(
+          command: label,
+          exitCode: result.exitCode,
+          stderr: stderrText
+        )
+      }
     #endif
   }
 

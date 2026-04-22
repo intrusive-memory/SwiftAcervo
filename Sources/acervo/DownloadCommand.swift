@@ -61,6 +61,8 @@ struct DownloadCommand: AsyncParsableCommand {
     name: .customLong("no-verify"), help: "Skip HuggingFace LFS SHA-256 verification (CHECK 1).")
   var noVerify: Bool = false
 
+  @OptionGroup var progressOptions: ProgressOptions
+
   func run() async throws {
     try ToolCheck.validate()
 
@@ -89,8 +91,14 @@ struct DownloadCommand: AsyncParsableCommand {
     let client = HuggingFaceClient()
     let discovered = try Self.enumerateDownloadedFiles(in: stagingURL)
 
+    let reporter = ProgressReporter(
+      label: "Verifying HF LFS: ",
+      total: discovered.count,
+      quiet: progressOptions.quiet
+    )
     var failures: [String] = []
     for (relativePath, fileURL) in discovered {
+      defer { reporter.advance() }
       let actualSHA256: String
       do {
         actualSHA256 = try IntegrityVerification.sha256(of: fileURL)
@@ -144,45 +152,30 @@ struct DownloadCommand: AsyncParsableCommand {
         stagingURL.path,
       ])
 
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = arguments
-
       var environment = ProcessInfo.processInfo.environment
       if let token, !token.isEmpty {
         environment["HF_TOKEN"] = token
         environment["HUGGING_FACE_HUB_TOKEN"] = token
       }
-      process.environment = environment
 
-      let stdoutPipe = Pipe()
-      let stderrPipe = Pipe()
-      process.standardOutput = stdoutPipe
-      process.standardError = stderrPipe
+      let result = try ProcessRunner.run(
+        executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+        arguments: arguments,
+        environment: environment,
+        quiet: progressOptions.quiet,
+        label: "hf download"
+      )
 
-      do {
-        try process.run()
-      } catch {
-        throw AcervoToolError.missingTool(
-          "hf (failed to launch: \(error.localizedDescription))"
-        )
-      }
-
-      // Drain pipes before waiting so the child cannot deadlock on a full
-      // pipe buffer during a large download.
-      let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-      let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-      _ = stdoutData
-
-      process.waitUntilExit()
-
-      if process.terminationStatus != 0 {
-        let stderrText = String(data: stderrData, encoding: .utf8) ?? "<non-utf8 stderr>"
-        let message = "error: hf download exited \(process.terminationStatus): \(stderrText)\n"
+      if result.exitCode != 0 {
+        let stderrText =
+          result.capturedStderr.isEmpty
+          ? "(stderr not captured; subprocess stdio was live — see above)"
+          : result.capturedStderr
+        let message = "error: hf download exited \(result.exitCode): \(stderrText)\n"
         FileHandle.standardError.write(Data(message.utf8))
         throw AcervoToolError.awsProcessFailed(
           command: "hf download",
-          exitCode: process.terminationStatus,
+          exitCode: result.exitCode,
           stderr: stderrText
         )
       }
