@@ -174,6 +174,44 @@ try await ModelDownloadManager.shared.ensureModelsAvailable([
 
 **Full reference**: [API_REFERENCE.md](API_REFERENCE.md)
 
+### CLI Progress Bars in Consumer Tools
+
+Command-line utilities that drive SwiftAcervo downloads should surface a live progress bar via the callbacks every download entry point already exposes. SwiftAcervo itself has zero terminal dependencies — the callback gives consumers everything they need to render whatever bar they want.
+
+**Callback types** (both `Sendable`):
+
+- `AcervoDownloadProgress` — passed to `Acervo.download` / `Acervo.ensureAvailable` / `AcervoManager.download`. Fields: `fileName`, `bytesDownloaded`, `totalBytes`, `fileIndex`, `totalFiles`, `overallProgress` (`0.0...1.0`, byte-accurate).
+- `ModelDownloadProgress` — passed to `ModelDownloadManager.ensureModelsAvailable`. Fields: `model`, `fraction` (`0.0...1.0`, cumulative across the batch), `bytesDownloaded`, `bytesTotal`, `currentFileName`.
+
+**Minimal zero-dep pattern** (works in any Swift CLI):
+
+```swift
+import SwiftAcervo
+
+func renderBar(_ fraction: Double, label: String) {
+    let width = 30
+    let filled = Int((fraction * Double(width)).rounded())
+    let bar = String(repeating: "█", count: filled)
+               + String(repeating: "·", count: width - filled)
+    print("\r\(label) [\(bar)] \(Int(fraction * 100))%", terminator: "")
+    fflush(stdout)
+}
+
+try await Acervo.ensureAvailable(modelId, files: [...]) { p in
+    renderBar(p.overallProgress, label: p.fileName)
+}
+print()
+```
+
+**Conventions consumer CLIs should follow:**
+
+1. **TTY guard** — skip the bar when `isatty(fileno(stdout)) == 0`. ANSI escapes belong in terminals, not log files.
+2. **`--quiet` / `-q` flag** — suppress the bar; errors still go to stderr. Pass `nil` for the callback when quiet to avoid doing callback work you will discard.
+3. **Background execution** — the callback fires from the download task; keep it `Sendable`-safe (no UI state, no non-`Sendable` captures).
+4. **Line-based fallback** — when not a TTY, either emit per-file lines (`"downloaded config.json"`) or stay silent.
+
+**Reference implementation**: the `acervo` CLI in this repo uses [Progress.swift](https://github.com/jkandzi/Progress.swift) through a thin `ProgressReporter` wrapper that encodes all four conventions above. See `Sources/acervo/ProgressReporter.swift` and its use in `Sources/acervo/Commands/DownloadCommand.swift`. Consumers that want the richer renderer (elapsed time, ETA, throughput) can take the same dependency; consumers that want to stay dependency-free can use the minimal pattern above. **The SwiftAcervo library itself never pulls in Progress.swift** — that dependency lives in the CLI target only.
+
 ---
 
 ## Common Questions
