@@ -286,18 +286,21 @@ release-acervo: resolve
 | `ToolCheckTests` | Detect missing `aws` and `huggingface-cli`; verify error messages match expected `brew install` instructions |
 | `IntegrityStepTests` | Unit-test each pipeline checkpoint in isolation: CHECK 2 (zero-byte file), CHECK 3 (manifest corruption detection), CHECK 4 (staging mutation between steps) |
 
-### Test Target 2: `AcervoToolIntegrationTests` (network + credentials; gated)
+### Test Target 2: `CDNManifestFetchTests` (network, no credentials)
 
-Skipped automatically if `R2_ACCESS_KEY_ID` or `HF_TOKEN` environment variables are absent.
-Never runs on pull request CI. Runs on `workflow_dispatch` via a dedicated integration
-test workflow.
+Read-only smoke against the public R2 URL. Runs in PR CI. Lives inside the
+`AcervoToolTests` target (no separate integration target).
 
 | Suite | What it covers |
 |---|---|
-| `HuggingFaceDownloadTests` | Download `config.json` from a small public model; verify CHECK 1 passes; verify CHECK 1 fails correctly on a deliberately corrupted file |
-| `CDNRoundtripTests` | Upload a synthetic fixture (not a real model) to a `test/` prefix in the bucket; verify CHECK 5 + CHECK 6 pass; delete fixture after test |
-| `ManifestRoundtripTests` | Generate manifest locally, upload, download CDN manifest, assert manifests are byte-identical |
-| `ShipCommandTests` | Full `ship` pipeline against a small public model; verify final CDN state matches local state |
+| `CDNManifestFetchTests` | Fetch a known-published manifest from `pub-*.r2.dev`; assert `verifyChecksum()` passes; spot-check the smallest file's SHA-256 against bytes on the wire |
+
+### Upload / ship pipeline — not tested here
+
+The full `acervo ship` roundtrip (HuggingFace → manifest → R2 upload → verify)
+is exercised in each downstream repository's model-publish workflow using that
+repo's scoped credentials. SwiftAcervo itself never uploads, so a central
+integration suite for `ship` is not maintained in this repo.
 
 ### CI Test Coverage Requirements
 
@@ -310,7 +313,6 @@ test workflow.
 
 ```makefile
 test-acervo-unit         # AcervoToolTests (no credentials)
-test-acervo-integration  # AcervoToolIntegrationTests (requires R2_* + HF_TOKEN)
 test-acervo-cdn          # Fetch manifest for a known model, verify checksum (network, no credentials)
 ```
 
@@ -440,5 +442,4 @@ should be archived or deleted:
 9. `ShipCommand.swift` — pipeline orchestration with all six integrity checks
 10. `AcervoToolTests` — unit test suite
 11. `.github/workflows/mirror_model.yml` — reusable CI workflow
-12. `AcervoToolIntegrationTests` — integration test suite
-13. `Formula/acervo.rb` in `intrusive-memory/homebrew-tap` — on first release
+12. `Formula/acervo.rb` in `intrusive-memory/homebrew-tap` — on first release

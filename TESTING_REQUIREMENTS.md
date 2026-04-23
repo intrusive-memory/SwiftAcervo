@@ -1,255 +1,136 @@
-# Testing Requirements: SwiftAcervo
+# Testing Requirements: SwiftAcervo (v0.8.0)
 
-This document defines the testing standard for `SwiftAcervo`. It describes which behaviors must be covered, how tests are structured, what runs in CI vs locally, and where the current gaps are.
-
----
-
-## 1. Test Targets
-
-| Target | CI | Local | Requires |
-|---|---|---|---|
-| **SwiftAcervoTests** | Yes | Yes | Nothing (no network, no GPU) |
-| **Integration tests** (gated) | No | Yes | Network access to live CDN |
-
-Integration tests live in `SwiftAcervoTests` but are gated with:
-
-```swift
-guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-    // Not a skip — just an early return. Tests that silently pass are misleading.
-    Issue.record("Set INTEGRATION_TESTS=1 to run live network tests")
-    return
-}
-```
-
-Do not use `XCTSkip` or `#skip`. Gated tests that return early without `Issue.record` are invisible failures.
+This document is a prioritized punch list of known testing gaps in SwiftAcervo as of v0.8.0 (merge commit `4d01c3f`, PR #22, shipped 2026-04-22). The baseline is 443 passing tests across 44 suites. Each bullet below pins the gap to a specific file and line so a reader can jump straight to the code. For mission-process items (CI workflow migration, registry-state races, disk caching deferral, stash review, sortie-process feedback), see [FOLLOW_UP.md](FOLLOW_UP.md). For what shipped in v0.8.0, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## 2. CI Configuration
+## P0: Correctness gaps
 
-### Runners and Destinations
+### Hydration failure modes not exercised
 
-| Platform | Runner | Destination |
-|---|---|---|
-| macOS | `macos-26` (Apple Silicon, arm64) | `platform=macOS,arch=arm64` |
-| iOS Simulator | `macos-26` | `platform=iOS Simulator,name=iPhone 17,OS=26.1` |
+`Tests/SwiftAcervoTests/HydrationTests.swift` covers:
 
-### Required Status Checks (both must pass before merge to `main` or `development`)
+- 404 manifest (`manifest404OnHydration`)
+- `manifestModelIdMismatch` (`manifestIdMismatch`)
+- Drift replace semantics + stderr warning (`hydrationPicksUpManifestDrift`)
+- Concurrent coalesce (`concurrentHydration`)
+- Un-registered ID (`HydrateComponentTests.hydrateUnknownComponentThrows`)
 
-- `Test on macOS`
-- `Test on iOS Simulator`
+It does **not** cover these three `AcervoError` cases along the hydrate path:
 
-### xcodebuild Flags
+- **`AcervoError.manifestDecodingFailed`** — `Sources/SwiftAcervo/AcervoError.swift:55`, thrown from `AcervoDownloader.downloadManifest(for:session:)`. Add a test that stubs a 200 response with malformed JSON body and asserts this case.
+- **`AcervoError.manifestIntegrityFailed`** — `Sources/SwiftAcervo/AcervoError.swift:58`. Stub a 200 response with a manifest whose `manifestChecksum` does not match the checksum-of-checksums computed from `files[].sha256`. Assert `expected` and `actual` populate correctly.
+- **`AcervoError.manifestVersionUnsupported`** — `Sources/SwiftAcervo/AcervoError.swift:61`. Stub a manifest with `manifestVersion` = `CDNManifest.supportedVersion + 1` and assert rejection. Consider adding a companion case for version `0` for boundary coverage.
 
-```bash
-xcodebuild test \
-  -scheme SwiftAcervo \
-  -destination 'platform=macOS,arch=arm64' \
-  -skipPackagePluginValidation \
-  ARCHS=arm64 \
-  ONLY_ACTIVE_ARCH=YES \
-  COMPILER_INDEX_STORE_ENABLE=NO
-```
+Pattern to follow: the three tests above in `HydrationTests.swift` using `MockURLProtocol.responder`.
 
-### Timeout
+### `HydrationCoalescer` error-path slot clearing
 
-30 minutes maximum per CI job. Unit tests should complete in under 60 seconds total. Any test approaching 5 seconds on CI needs investigation.
+`Sources/SwiftAcervo/Acervo.swift:1354-1370`. The `defer { inflight[id] = nil }` block implies a first-call throw should not poison the slot for subsequent callers. No test exercises this. Scenario: responder returns 500 on first call, then 200 on second call. First `hydrateComponent` throws; second must succeed and produce a hydrated descriptor. Assert `MockURLProtocol.requestCount == 2`.
 
----
+### `HydrationCoalescer` re-fetch after completion
 
-## 3. Test Framework
+`Sources/SwiftAcervo/Acervo.swift:1381-1382` documents: "A later call (after completion) re-fetches so CDN manifest updates between app launches are picked up." No test asserts this. Scenario: call `hydrateComponent`, assert `requestCount == 1`; call again, assert `requestCount == 2`. Existing coalesce tests assert the opposite (single-flight under contention), not re-fetch after settle.
 
-All tests use **Swift Testing** (`import Testing`), not XCTest. Swift 6 strict concurrency is enforced throughout.
+### `downloadComponent` auto-hydration end-to-end
 
-```swift
-import Testing
-@testable import SwiftAcervo
+`Sources/SwiftAcervo/Acervo.swift:1490` — the branch `if initialDescriptor.needsHydration { try await hydrateComponent(...) }` is never exercised by a test that reaches a successful download. Existing tests either pre-hydrate (then call `ensureComponentReady` with files pre-staged on disk) or assert errors on unregistered IDs. Gap: no end-to-end "register bare descriptor -> `downloadComponent` -> hydrates from manifest -> streams files -> verifies integrity -> returns" test. Blocked today by the non-injectable download session (see P1 first item); implementing that unblocks this test.
 
-@Suite("AcervoDownloadProgress") struct AcervoDownloadProgressTests {
-    @Test func overallProgressIsWeightedByFileSize() { ... }
-}
-```
+### Registry-level SHA-256 cross-check
 
-Use `#expect()` and `#require()` — not `XCTAssert*`.
+`Sources/SwiftAcervo/Acervo.swift:1515-1527`. After `download(...)` completes, `downloadComponent` re-hashes every file and compares against `descriptor.files[].sha256`, throwing `integrityCheckFailed` and deleting the corrupt file on mismatch. No dedicated test covers this second verification pass (the streaming path at `AcervoDownloader.swift:401-408` covers the first pass). Scenario: stage a file on disk whose content hashes to `X`, install a hydrated descriptor whose `sha256` is `Y`, call `downloadComponent` with `force: false`. The download short-circuits because the file exists, but the registry-level check should still fail with `integrityCheckFailed(file:expected:actual:)` and delete the file.
 
 ---
 
-## 4. What Must Be Tested in CI (No Network Required)
+## P0: Public API behavior untested
 
-### 4a. Path Resolution
+### `Acervo.fetchManifest(for:)` has no behavior coverage
 
-- `Acervo.sharedModelsDirectory` returns a non-empty path inside the sandbox-appropriate container
-- `Acervo.modelDirectory(for:)` appends slugified model ID to shared root
-- `Acervo.slugify(_:)` replaces `/` with `_` and preserves all other characters including uppercase letters and spaces
-- `Acervo.slugify(_:)` rejects IDs that produce empty or root-collision slugs with `.invalidModelId`
+`Tests/SwiftAcervoTests/ManifestFetchTests.swift:66-72` (`fetchManifestIsCallable`) is a compile-time symbol existence check only — it never invokes the method. The underlying `downloadManifest(for:session:)` is covered (`downloadManifestWithMockSession`, line 16), but the public wrapper at `Sources/SwiftAcervo/Acervo.swift:1344-1346` is not, because it hard-codes `SecureDownloadSession.shared` and cannot be stubbed. Resolution: add a `session:` parameter to the public `fetchManifest` (mirroring `hydrateComponent`'s public/internal pair), then add behavior tests identical to `downloadManifestWithMockSession` but through the public API.
 
-### 4b. Model Discovery and Metadata
+### `Acervo.ensureAvailable(modelId, files: [])` empty-files path is uncovered
 
-- `Acervo.listModels()` returns empty array for an empty directory (not an error)
-- `Acervo.listModels()` returns models sorted newest-first
-- `Acervo.modelInfo(_:)` returns `nil` for an unknown ID without throwing
-- `AcervoModel` computed properties: `formattedSize`, `slug`, `baseName`, `familyName`
-- `AcervoModel` with zero `sizeBytes` formats as "0 bytes"
-
-### 4c. Search
-
-- `Acervo.findModels(matching:)` is case-insensitive substring match
-- `Acervo.findModels(fuzzyMatching:editDistance:)` respects edit distance threshold
-- `Acervo.closestModel(to:)` returns `nil` for empty model list
-- `levenshteinDistance("", "abc")` returns 3
-- `levenshteinDistance("abc", "abc")` returns 0
-
-### 4d. Component Registry
-
-- `Acervo.register(_:)` stores descriptor retrievable by `Acervo.component(_:)`
-- Registering the same component ID twice merges metadata (larger memory wins, larger size wins)
-- `Acervo.registeredComponents()` returns all registered descriptors
-- `ComponentHandle.url(for:)` resolves expected file paths
-- `ComponentHandle.urls(matching:)` returns all files matching glob pattern
-- `ComponentHandle.availableFiles()` returns only files that exist on disk
-
-### 4e. CDN Manifest
-
-- `CDNManifest` decodes from valid JSON (all fields present)
-- `CDNManifest` fails to decode JSON missing required `version` field
-- `CDNManifestFile` checksum field is preserved exactly (no lowercasing)
-- Unsupported manifest version returns `.manifestVersionUnsupported(n)`
-- Model ID mismatch between manifest and request returns `.manifestModelIdMismatch`
-
-### 4f. Integrity Verification
-
-- SHA-256 of a known byte sequence matches expected hex string
-- Modified file content produces a different hash (integrity fails)
-- File size mismatch returns `.downloadSizeMismatch` before checksum
-- Integrity check on missing file returns `.componentFileNotFound`
-
-### 4g. Download Progress
-
-- Single-file progress: overall fraction equals file fraction
-- Multi-file progress: overall fraction is weighted by file size (large files dominate)
-- Overall fraction never exceeds 1.0
-- `AcervoDownloadProgress` is `Sendable` (compile-time enforcement)
-
-### 4h. Concurrency
-
-- Two downloads for **the same model ID** run serially (second waits for first)
-- Two downloads for **different model IDs** run in parallel (measured by wall time)
-- `AcervoManager.getDownloadCount()` increments correctly under concurrent access
-- `AcervoManager.clearCache()` leaves the manager in a usable state for subsequent operations
-
-### 4i. Security
-
-- `SecureDownloadSession` rejects HTTP 302 redirects to non-CDN domains
-- `SecureDownloadSession` allows redirects within the same CDN domain
-- Manifest integrity check rejects manifests with incorrect checksums
-
-### 4j. Legacy Migration
-
-- `Acervo.migrateModels()` moves files from deprecated `~/Library/Caches/` path to current canonical path
-- Migration is idempotent: running twice does not error or duplicate files
-- Migration for an already-migrated model is a no-op
-
-### 4k. Errors
-
-All 18 `AcervoError` cases must have:
-- Non-nil `localizedDescription`
-- Description contains the relevant context string (filename, model ID, status code, etc.)
+`Sources/SwiftAcervo/AcervoDownloader.swift:685-688` — when `requestedFiles` is empty, the downloader fetches the entire manifest's file list. This is the primary manifest-driven knob at the *model* level (distinct from the component-level hydration added in v0.8.0). `ModelDownloadManager.ensureModelsAvailable` at `Sources/SwiftAcervo/ModelDownloadManager.swift:323` depends on this path. Zero tests exercise "empty files array means all files." Gap depth is worse because the file-download session itself is not injectable — see P1 below.
 
 ---
 
-## 5. What Must Be Tested with Network Access (Integration Tests)
+## P1: Architectural testability gaps
 
-These tests run locally when `INTEGRATION_TESTS=1` is set. They are never required for CI.
+### Download session is not injectable on the file-download paths
 
-### 5a. Precondition Check
+`Sources/SwiftAcervo/AcervoDownloader.swift:302` (`streamDownloadFile`) and `Sources/SwiftAcervo/AcervoDownloader.swift:465` (`fallbackDownloadFile`) both pin `SecureDownloadSession.shared` directly. Only `downloadManifest(for:session:)` takes a session parameter (made public in v0.8.0 per CHANGELOG.md). Consequence: every file-body download is unreachable from `MockURLProtocol`. This blocks:
 
-```swift
-guard ProcessInfo.processInfo.environment["INTEGRATION_TESTS"] != nil else {
-    Issue.record("Set INTEGRATION_TESTS=1 to run live CDN integration tests")
-    return
-}
-```
+- End-to-end `downloadComponent` auto-hydration (P0)
+- `ensureAvailable` empty-files coverage (P0)
+- Registry-level SHA-256 cross-check failures (P0)
+- Any cancellation, retry, or resumption test that does not require a live network
 
-### 5b. Live CDN Behaviors
+Resolution: thread a `session: URLSession = SecureDownloadSession.shared` parameter from `downloadFiles(...)` at `AcervoDownloader.swift:674` down through `downloadFile(...)` (both overloads) and into both private helpers. Keep the default so no call site needs to change. This is the single highest-leverage testability change available. Estimated footprint: ~15 lines across one file.
 
-- Downloading a known small model file from CDN succeeds (HTTP 200, correct Content-Length)
-- Manifest fetch for a known model ID returns valid JSON that decodes to `CDNManifest`
-- SHA-256 of downloaded file matches manifest checksum
-- `Acervo.ensureAvailable(_:)` creates model directory, writes all declared files
-- `Acervo.ensureAvailable(_:)` for an already-downloaded model is a no-op (no network request)
-- Download with `force: true` re-downloads even if files exist on disk
+### Test isolation for global state
 
-### 5c. Error Recovery
-
-- Interrupted download (simulated via test server) retries cleanly
-- Truncated file fails integrity check and triggers re-download on next call
-- Invalid CDN URL in manifest produces `.downloadFailed(statusCode:)` with correct code
-
-### 5d. Timeout Values
-
-| Test | Timeout |
-|---|---|
-| Manifest fetch | 30 seconds |
-| Small file download (< 1 MB) | 60 seconds |
-| Full model download | 600 seconds |
+Already tracked in [FOLLOW_UP.md](FOLLOW_UP.md) "Pre-existing Test Flake" and "Test-Isolation Primitive." Relevant here because it forces current tests to work around global state with UUID-suffixed IDs (`HydrateComponentTests.uniqueIds`, `HydrationTests.uniqueIds`, `AutoHydrateTests.uniqueIds`) and `defer { unregister }` blocks. `Acervo.customBaseDirectory` is an even thornier case: `AcervoPathTests` and `AcervoFilesystemEdgeCaseTests` race on it when run in parallel. A per-suite isolation primitive on `ComponentRegistry.shared` and `Acervo.customBaseDirectory` would make new-test authoring safer and eliminate a recurring flake.
 
 ---
 
-## 6. Test Helpers
+## P1: CLI command coverage
 
-### Temporary Storage Isolation
+Component coverage exists at `Tests/AcervoToolTests/` for:
 
-Every test that reads or writes to the model directory must use a temporary root:
+- `ManifestGeneratorTests.swift`
+- `CDNUploaderTests.swift`
+- `HuggingFaceClientTests.swift`
+- `IntegrityStepTests.swift`
+- `ToolCheckTests.swift`
 
-```swift
-let tempRoot = FileManager.default.temporaryDirectory
-    .appendingPathComponent("acervo-test-\(UUID())")
-try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-defer { try? FileManager.default.removeItem(at: tempRoot) }
+The command layer under `Sources/acervo/` has **no unit tests**. Missing coverage by file:
 
-// Configure Acervo to use this root
-Acervo.customBaseDirectory = tempRoot
-defer { Acervo.customBaseDirectory = nil }
-```
+- `Sources/acervo/ShipCommand.swift` — argument parsing, flag handling (`--force`, `--skip-upload`, etc.), step sequencing, exit codes, error surfacing from each pipeline step.
+- `Sources/acervo/DownloadCommand.swift` — argument parsing, HuggingFace-only path, exit codes.
+- `Sources/acervo/UploadCommand.swift` — argument parsing, R2 credential validation, upload-only path.
+- `Sources/acervo/VerifyCommand.swift` — argument parsing, all-integrity-checks path, exit codes.
+- `Sources/acervo/ManifestCommand.swift` — argument parsing, manifest generation from local files path.
 
-Tests that do not set `customBaseDirectory` must not write any files.
+Each command deserves at least: a "happy-path arguments parse correctly" test, a "missing required argument exits non-zero" test, and a "each component error maps to the right exit code" test.
 
-### Fake Model Fixtures
+### Upload / ship pipeline testing — not this repo
 
-Tests that need a model to be "available" without a real download:
+The `acervo ship` pipeline (HuggingFace → manifest → R2 upload → verify) is
+**not** tested in SwiftAcervo's CI. Each downstream repository that publishes
+a model is responsible for exercising `ship` against its own credentials in
+that repo's model-publish workflow. SwiftAcervo itself never uploads, so
+maintaining a shared R2 integration suite here was dead weight.
 
-```swift
-func makeFakeModel(id: String, in root: URL) throws -> URL {
-    let modelDir = root.appendingPathComponent(Acervo.slugify(id))
-    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-    // config.json presence is the validity marker
-    try "{}".write(to: modelDir.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-    return modelDir
-}
-```
+What remains in this repo:
 
----
-
-## 7. Coverage Gaps (Priority Order)
-
-| Priority | Gap | Resolution |
-|---|---|---|
-| 1 | No test verifies live CDN download integrity end-to-end | Add integration tests (gated) |
-| 2 | No test for disk-full condition during download | Add unit test with mock filesystem |
-| 3 | No test for file permission denial on model directory | Add unit test with restricted temp dir |
-| 4 | Manifest version mismatch only tested with one unsupported version | Add boundary test (version 0, version 99) |
-| 5 | No stress test: 10+ concurrent downloads of different models | Add local-only concurrency stress test |
-| 6 | `withModelAccess` / `withComponentAccess` not tested for exception safety | Add unit test with throwing `perform` closure |
-| 7 | `AcervoManager` statistics: `getAccessCount()` not verified under concurrent access | Add concurrency test |
-| 8 | Symlinks in model directory not tested (discovery, deletion) | Add edge-case unit tests |
-| 9 | Component handle scope: accessing URLs after `withComponentAccess` exits not enforced | Document limitation or add assertion |
-| 10 | iOS device behavior (App Group container path) not tested — Simulator only | Note in CI config; mark as manual |
+- **Unit coverage** for the CLI command layer (`AcervoToolTests/`): argument
+  parsing, manifest generation, integrity step logic, `CDNUploader` `aws` argv
+  construction — no live network, no credentials.
+- **Read-only CDN smoke** (`AcervoToolTests/CDNManifestFetchTests.swift`):
+  fetches a known-published manifest from the public R2 URL, verifies the
+  checksum-of-checksums, spot-checks one file's SHA-256. Runs in PR CI. No
+  credentials required.
 
 ---
 
-## 8. What is Out of Scope
+## P2: Additional coverage
 
-- Testing HuggingFace download behavior — SwiftAcervo only downloads from its own CDN
-- Testing model weight correctness — that belongs in `SwiftVinetas` GPU integration tests
-- Testing UI — SwiftAcervo has no UI layer
-- Platform-specific behavior on physical iOS devices — not part of automated testing
+Keep this list short; not worth scheduling until P0/P1 are addressed.
+
+- `ComponentDescriptor` Hashable / Equatable behavior under concurrent Set insertion from multiple tasks.
+- Progress-report callback invocation count and ordering when a download is cancelled mid-stream (`AcervoDownloader.swift:726` task-group cancellation path).
+- `levenshteinDistance` edge cases: empty string vs. long string, strings with non-ASCII scalars, and strings at the current edit-distance threshold boundary.
+- `AcervoMigration` partial-failure recovery: migration halfway through a multi-file move when the second move fails (no test verifies the directory is left in a consistent state).
+- `componentNotHydrated` error reached from paths other than `verifyComponent` (if any are added later — currently only one throw site at `Acervo.swift:1497`).
+
+---
+
+## Testing infrastructure needed
+
+Two options to unblock the P1 gaps:
+
+1. **Local HTTP fixture server.** Stand up an in-process HTTP server in `Tests/SwiftAcervoTests/Support/` that serves manifests and file bodies. Would cover the full download pipeline without credentials or CDN access. Larger implementation footprint; introduces a test-only dependency and a port-allocation concern.
+
+2. **Make the file-download session injectable** (P1 first item) and use `MockURLProtocol` as every hydration test already does. `Tests/SwiftAcervoTests/Support/MockURLProtocol.swift` is already in place, already used by 20+ tests, and already handles the process-wide static-storage concern via the `MockURLProtocolSuite` `.serialized` trait.
+
+Option 2 is smaller, faster to implement, and consistent with how the v0.8.0 hydration tests work. Recommend Option 2 unless a future test scenario specifically requires wire-level behavior that `URLProtocol` interception cannot model.

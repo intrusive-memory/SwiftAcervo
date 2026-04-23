@@ -320,22 +320,23 @@ xcodebuild test -scheme AcervoToolTests -destination 'platform=macOS'
 - Error handling
 - File staging operations
 
-### Integration Tests (Full Pipeline)
+### CDN Read-Only Smoke
 
-These tests actually download from HuggingFace and upload to R2:
+`CDNManifestFetchTests` (inside `AcervoToolTests`) is a live-network smoke
+against the public R2 URL. It fetches a known-published manifest, verifies its
+checksum-of-checksums, and spot-checks one file's SHA-256. No credentials
+required; runs in PR CI and catches download-side regressions early.
 
 ```bash
-xcodebuild test -scheme AcervoToolIntegrationTests \
-    -destination 'platform=macOS' \
-    -skipPackagePluginValidation
+make test-acervo-cdn
 ```
 
-**Requires**:
-- `HF_TOKEN` environment variable
-- `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`
-- Network access to HuggingFace and R2
+### Full ship pipeline
 
-**These are slow and expensive** — only run when testing the full pipeline.
+Not tested in this repository's CI. The `acervo ship` roundtrip
+(HuggingFace → manifest → R2 upload → verify) is exercised in each downstream
+repository's model-publish workflow, where that repo's own R2 and HF
+credentials are scoped appropriately. SwiftAcervo itself never uploads.
 
 ---
 

@@ -201,18 +201,25 @@ extension AcervoDownloader {
   /// 4. Validates the model ID matches the request
   /// 5. Verifies the manifest's checksum-of-checksums
   ///
-  /// - Parameter modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Parameters:
+  ///   - modelId: The model identifier (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  ///   - session: The URLSession used to fetch the manifest. Defaults to
+  ///     `SecureDownloadSession.shared`, which rejects redirects to non-CDN
+  ///     domains. Tests may inject a mock session.
   /// - Returns: The validated manifest.
   /// - Throws: `AcervoError` for download, decoding, or validation failures.
-  static func downloadManifest(for modelId: String) async throws -> CDNManifest {
+  public static func downloadManifest(
+    for modelId: String,
+    session: URLSession = SecureDownloadSession.shared
+  ) async throws -> CDNManifest {
     let url = buildManifestURL(modelId: modelId)
     let request = buildRequest(from: url)
 
-    // Download manifest using secure session
+    // Download manifest using the provided session
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await SecureDownloadSession.shared.data(for: request)
+      (data, response) = try await session.data(for: request)
     } catch {
       throw AcervoError.networkError(error)
     }
@@ -279,6 +286,9 @@ extension AcervoDownloader {
   ///   - totalFiles: The total number of files in the download operation.
   ///   - progress: An optional callback invoked with download progress at
   ///     intervals during streaming.
+  ///   - session: The `URLSession` used to perform the streaming request.
+  ///     Defaults to `SecureDownloadSession.shared`, which rejects redirects
+  ///     to non-CDN domains. Tests may inject a mock session.
   /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
   ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
   ///   if post-stream verification fails. Re-throws network errors.
@@ -289,10 +299,11 @@ extension AcervoDownloader {
     fileName: String,
     fileIndex: Int,
     totalFiles: Int,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
+    session: URLSession = SecureDownloadSession.shared
   ) async throws {
     // Stream the HTTP response using bytes(for:)
-    let (asyncBytes, response) = try await SecureDownloadSession.shared.bytes(for: request)
+    let (asyncBytes, response) = try await session.bytes(for: request)
 
     // Validate HTTP 200 status before processing bytes
     if let httpResponse = response as? HTTPURLResponse,
@@ -441,6 +452,9 @@ extension AcervoDownloader {
   ///   - fileIndex: The zero-based index of this file in a multi-file download.
   ///   - totalFiles: The total number of files in the download operation.
   ///   - progress: An optional callback invoked with download progress.
+  ///   - session: The `URLSession` used to perform the download request.
+  ///     Defaults to `SecureDownloadSession.shared`, which rejects redirects
+  ///     to non-CDN domains. Tests may inject a mock session.
   /// - Throws: Download, verification, or directory creation errors.
   private static func fallbackDownloadFile(
     request: URLRequest,
@@ -449,13 +463,14 @@ extension AcervoDownloader {
     fileName: String,
     fileIndex: Int,
     totalFiles: Int,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
+    session: URLSession = SecureDownloadSession.shared
   ) async throws {
-    // Download the file to a temp location using secure session
+    // Download the file to a temp location using the provided session
     let tempFileURL: URL
     let response: URLResponse
     do {
-      (tempFileURL, response) = try await SecureDownloadSession.shared.download(for: request)
+      (tempFileURL, response) = try await session.download(for: request)
     } catch {
       throw AcervoError.networkError(error)
     }
@@ -533,6 +548,9 @@ extension AcervoDownloader {
   ///   - url: The remote CDN URL to download from.
   ///   - destination: The local file URL where the downloaded file should be placed.
   ///   - manifestFile: The manifest entry for this file, used for integrity verification.
+  ///   - session: The `URLSession` used to perform the download request.
+  ///     Defaults to `SecureDownloadSession.shared`, which rejects redirects
+  ///     to non-CDN domains. Tests may inject a mock session.
   /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
   ///   `AcervoError.networkError` for connection failures,
   ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
@@ -540,7 +558,8 @@ extension AcervoDownloader {
   static func downloadFile(
     from url: URL,
     to destination: URL,
-    manifestFile: CDNManifestFile
+    manifestFile: CDNManifestFile,
+    session: URLSession = SecureDownloadSession.shared
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -552,7 +571,8 @@ extension AcervoDownloader {
         fileName: manifestFile.path,
         fileIndex: 0,
         totalFiles: 1,
-        progress: nil
+        progress: nil,
+        session: session
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
@@ -573,7 +593,8 @@ extension AcervoDownloader {
         fileName: manifestFile.path,
         fileIndex: 0,
         totalFiles: 1,
-        progress: nil
+        progress: nil,
+        session: session
       )
     }
   }
@@ -592,6 +613,9 @@ extension AcervoDownloader {
   ///   - fileIndex: The zero-based index of this file in a multi-file download.
   ///   - totalFiles: The total number of files in the download operation.
   ///   - progress: An optional callback invoked with download progress.
+  ///   - session: The `URLSession` used to perform the download request.
+  ///     Defaults to `SecureDownloadSession.shared`, which rejects redirects
+  ///     to non-CDN domains. Tests may inject a mock session.
   /// - Throws: Download, verification, or directory creation errors.
   static func downloadFile(
     from url: URL,
@@ -600,7 +624,8 @@ extension AcervoDownloader {
     fileName: String,
     fileIndex: Int,
     totalFiles: Int,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
+    session: URLSession = SecureDownloadSession.shared
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -612,7 +637,8 @@ extension AcervoDownloader {
         fileName: fileName,
         fileIndex: fileIndex,
         totalFiles: totalFiles,
-        progress: progress
+        progress: progress,
+        session: session
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
@@ -632,7 +658,8 @@ extension AcervoDownloader {
         fileName: fileName,
         fileIndex: fileIndex,
         totalFiles: totalFiles,
-        progress: progress
+        progress: progress,
+        session: session
       )
     }
   }
@@ -663,16 +690,20 @@ extension AcervoDownloader {
   ///   - destination: The local directory URL where files should be placed.
   ///   - force: When `true`, re-downloads files even if they already exist. Defaults to `false`.
   ///   - progress: An optional callback invoked with download progress.
+  ///   - session: The `URLSession` used to perform both the manifest and
+  ///     file downloads. Defaults to `SecureDownloadSession.shared`, which
+  ///     rejects redirects to non-CDN domains. Tests may inject a mock session.
   /// - Throws: Manifest, download, or verification errors.
   static func downloadFiles(
     modelId: String,
     requestedFiles: [String],
     destination: URL,
     force: Bool = false,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    session: URLSession = SecureDownloadSession.shared
   ) async throws {
     // Step 1: Fetch and validate the manifest
-    let manifest = try await downloadManifest(for: modelId)
+    let manifest = try await downloadManifest(for: modelId, session: session)
 
     // Step 2: Determine which files to download
     let filesToDownload: [CDNManifestFile]
@@ -779,6 +810,8 @@ extension AcervoDownloader {
           }
         }
 
+        let capturedSession = session
+
         group.addTask {
           // Cooperative cancellation inside the child task.
           try Task.checkCancellation()
@@ -790,7 +823,8 @@ extension AcervoDownloader {
             fileName: capturedManifestFile.path,
             fileIndex: capturedIndex,
             totalFiles: totalFiles,
-            progress: wrappedProgress
+            progress: wrappedProgress,
+            session: capturedSession
           )
         }
 

@@ -1,592 +1,466 @@
-# SwiftAcervo Execution Plan: ModelDownloadManager
+---
+feature_name: OPERATION TRIPWIRE GAUNTLET
+starting_point_commit: 68f5456d351e87746b571fa11177fd3519bfe28a
+mission_branch: mission/tripwire-gauntlet/02
+iteration: 2
+---
+
+# EXECUTION_PLAN.md — SwiftAcervo Testing Hardening (v0.8.0 pre-release)
+
+Source: `TESTING_REQUIREMENTS.md` (v0.8.0, merge commit `4d01c3f`)
+Cross-referenced: `FOLLOW_UP.md` § "Pre-existing Test Flake" and § "Test-Isolation Primitive"
+
+Goal: close every P0 and P1 testing gap identified in `TESTING_REQUIREMENTS.md` before cutting the v0.8.0 release tag. P2 items are deferred and not scheduled. Done means CI green on iOS + macOS, zero skipped tests, and `TESTING_REQUIREMENTS.md` reduced to the P2 residual plus a "fixed in <sortie>" log.
 
 ## Terminology
 
-**Mission** — The definable scope of work: Create ModelDownloadManager actor with comprehensive tests and documentation. 
+> **Mission** — A definable, testable scope of work. Defines scope, acceptance criteria, and dependency structure.
 
-**Sortie** — Atomic agent tasks within the mission (one clear objective per dispatch):
-1. Implement ModelDownloadManager.swift
-2. Add comprehensive tests
-3. Update AGENTS.md with API docs
-4. Add example documentation
+> **Sortie** — An atomic, testable unit of work executed by a single autonomous AI agent in one dispatch. One aircraft, one mission, one return.
 
-**Work Unit** — The grouping of all sorties for this mission (ModelDownloadManager).
+> **Work Unit** — A grouping of sorties (package, component, phase).
 
----
+## Work Units
 
-**Objective**: Create a canonical, reusable `ModelDownloadManager` actor in SwiftAcervo that provides standardized model download orchestration with progress reporting and error handling. This becomes shared infrastructure for all consuming libraries (SwiftBruja, SwiftTuberia, etc.).
+| Work Unit | Directory | Sorties | Layer | Dependencies |
+|-----------|-----------|---------|-------|-------------|
+| Testing Hardening | `/Users/stovak/Projects/SwiftAcervo` | 15 | 1–5 | none |
 
-**Timeline**: ~3-3.5 hours (after blockers resolved)
+All sorties execute within a single work unit (the SwiftAcervo repo). The five layers gate dependency order: a sortie in Layer N may not start until every sortie in Layers < N that it lists as a prerequisite is `COMPLETED`. Priority scores below are computed from dependency depth × 3 + foundation × 2 + risk × 1 + complexity × 0.5 and are used to break ties when multiple sorties in a wave are ready at once.
 
-**Outcome**: 
-- ✅ `ModelDownloadManager.swift` with public actor API
-- ✅ Updated AGENTS.md with usage examples and best practices
-- ✅ Comprehensive tests for manager
-- ✅ Example: how consuming libraries call `ensureModelsAvailable()`
+## Parallelism Structure
 
----
+**Critical Path** (length: 4 sorties): any Layer 1 sortie → any Layer 2 or Layer 3 sortie → any Layer 4 sortie → Sortie 15.
 
-## ✅ REFINEMENT VERDICT: READY FOR EXECUTION
+Example: Sortie 1 → Sortie 7 → Sortie 10 → Sortie 15.
 
-**Status**: All 4 refinement passes complete. Plan is ready to execute immediately.
+**Parallel Execution Waves** (at most 4 sortie agents dispatched concurrently):
 
-**Refinement Results**:
-- ✅ **Pass 1 (Atomicity)**: All 4 sorties are atomic and testable. No splits/merges needed.
-- ✅ **Pass 2 (Priority)**: Sorties optimally ordered. Sortie 1 is critical path.
-- ✅ **Pass 3 (Parallelism)**: Sorties 2, 3, 4 can parallelize after Sortie 1 (no file conflicts, no build deps). ~30min speedup possible.
-- ✅ **Pass 4 (Questions)**: 0 blocking issues, 0 critical unknowns, 0 vague criteria. All decisions finalized.
+- **Wave 1** (Layer 1, no prerequisites): Sorties 1, 2, 3 — dispatch all three in parallel.
+- **Wave 2A** (Layer 2, depends on Sortie 3): Sorties 4, 5, 6 — dispatch as soon as Sortie 3 clears, up to 3 in parallel.
+- **Wave 2B** (Layer 3, depends on Sorties 1 and 2): Sorties 7, 8, 9 — dispatch as soon as both Sortie 1 and Sortie 2 clear, up to 3 in parallel. Waves 2A and 2B may overlap; the 4-agent cap governs actual concurrency.
+- **Wave 3** (Layer 4, depends on all of Layers 1–3): Sorties 10, 11, 12, 13, 14 — dispatch in batches of 4 then 1.
+- **Wave 4** (Layer 5, depends on Sorties 10–14): Sortie 15 alone.
 
-**Key Decisions Locked**:
-1. ✅ **Mocking strategy**: Integration tests with temporary model directories (Option A)
-   - No MockAcervo; use temp base directory during tests
-   - Simpler, more realistic, no architecture changes
-   
-2. ✅ **Acervo.ensureAvailable() semantics**: Assumption accepted
-   - `files: []` downloads all files in manifest (verified as acceptable)
-   
-3. ✅ **Error handling**: Re-throw AcervoError unchanged
-   - Manager catches, logs context, re-throws as-is
-   - Consuming libraries wrap to app-specific errors
+**Agent allocation**:
+- 1 supervising agent (this instance) orchestrates dispatch and aggregates results.
+- Up to 4 sortie sub-agents run concurrently. Each sortie sub-agent performs its own edits, runs `make test`, and reports pass/fail against its exit criteria.
+- **No further decomposition**: individual sortie agents MUST NOT spawn their own sub-agents for parallel work. Each sortie is atomic — a single agent end-to-end.
 
-4. ✅ **Progress aggregation**: CDNManifest.sizeBytes approach
-   - Sum manifests for totalBytes; track Acervo progress for bytesDownloaded
+**Build constraints**: Every sortie's exit criteria include a `make test` run. `make test` is the authoritative build/test gate for this repo (per user's global rule: prefer Makefile targets over raw `xcodebuild`). Running `make test` concurrently across multiple sortie agents is acceptable; SwiftPM and Xcode serialize internally.
 
-5. ✅ **Disk space validation**: Manifest fetch approach acceptable
-   - O(N) CDN requests for N models (~100-500ms per model)
-   - Reasonable for pre-flight UI checks
+**Missed parallelism opportunities**: None. The layer structure already exposes maximum parallelism given the dependency graph. Sortie 15 is unavoidably serial (it audits CI state after Layer 4 completes).
 
 ---
 
-## Phase 1: Implement ModelDownloadManager
+### Sortie 1: Thread `session:` through the file-download path
 
-**File**: `Sources/SwiftAcervo/ModelDownloadManager.swift`
+**Layer**: 1
 
-**Requirements**:
-- Public actor (Sendable) for thread-safe orchestration
-- Singleton via `static let shared`
-- Two main public methods:
-  1. `ensureModelsAvailable(_:progress:)` — orchestrate multiple model downloads
-  2. `validateCanDownload(_:)` — disk space validation before attempting downloads
-- Aggregate progress across all models with clear reporting
-- Typed errors that consuming libraries can catch and wrap
+**Priority**: 14.0 — blocks Sorties 7, 8, 9; foundational for all end-to-end tests that rely on `MockURLProtocol`; moderate risk (refactor across core download path).
 
-**Public API Signature**:
-```swift
-public actor ModelDownloadManager: Sendable {
-    public static let shared: ModelDownloadManager
-    
-    /// Ensure all specified models are downloaded and available
-    public func ensureModelsAvailable(
-        _ modelIds: [String],
-        progress: @Sendable (ModelDownloadProgress) -> Void
-    ) async throws
-    
-    /// Validate sufficient disk space before downloading
-    public func validateCanDownload(
-        _ modelIds: [String]
-    ) async throws -> Int64  // Returns total bytes needed
-}
+**Entry criteria**:
+- [ ] First sortie — no prerequisites.
+- [ ] `Sources/SwiftAcervo/AcervoDownloader.swift` exists and compiles.
+- [ ] `Tests/SwiftAcervoTests/Support/MockURLProtocol.swift` exists.
 
-public struct ModelDownloadProgress: Sendable {
-    public let model: String           // modelId being downloaded
-    public let fraction: Double        // 0.0 to 1.0
-    public let bytesDownloaded: Int64
-    public let bytesTotal: Int64
-    public let currentFileName: String // which file in the model
-}
-```
+**Tasks**:
+1. In `Sources/SwiftAcervo/AcervoDownloader.swift` (definition at line ~292, verify with `grep -n "private static func streamDownloadFile"`), change `streamDownloadFile(...)` to accept `session: URLSession = SecureDownloadSession.shared` and use that session for every `URLSession.shared`/`SecureDownloadSession.shared` reference inside the body.
+2. In `Sources/SwiftAcervo/AcervoDownloader.swift` (definition at line ~452, verify with `grep -n "private static func fallbackDownloadFile"`), apply the same change to `fallbackDownloadFile(...)`.
+3. In `Sources/SwiftAcervo/AcervoDownloader.swift` (line ~674, `downloadFiles(...)`) and in every `downloadFile(...)` overload it calls (see `grep -n "static func downloadFile"`), thread the `session` parameter through. Default must remain `SecureDownloadSession.shared` so no existing call site changes.
+4. Run `make lint` and confirm no formatting diffs remain.
+5. Add a single smoke test in a new `Tests/SwiftAcervoTests/DownloadSessionInjectionTests.swift` that: (a) installs a `MockURLProtocol` responder serving a known body, (b) calls the lowest public entry point that ultimately invokes `streamDownloadFile`, (c) asserts `MockURLProtocol.requestCount >= 1` and the file content matches. Nest the new suite under `MockURLProtocolSuite` so it inherits `.serialized`.
 
-**Implementation Details**:
-- For each model ID: call `Acervo.ensureAvailable(modelId, files: [])`
-  - Empty files array means download all files in manifest
-- Aggregate progress: track cumulative bytes across all models
-- Error handling: catch `AcervoError` cases and throw with context
-- Per-model locking: serialize sequential downloads (already handled by Acervo's per-model locking)
-- Disk space check: sum manifest file sizes before downloading
-
-**Acceptance Criteria**:
-- [ ] Actor compiles with Swift 6 strict concurrency
-- [ ] `shared` singleton is properly initialized
-- [ ] `ensureModelsAvailable()` downloads each model in sequence
-- [ ] Progress callback fires for each file chunk (via Acervo's progress)
-- [ ] `validateCanDownload()` returns accurate byte count (sum of manifest sizes)
-- [ ] Errors are caught, contextualized, and thrown
-- [ ] Actor is Sendable and thread-safe
+**Exit criteria**:
+- [ ] `make test` passes.
+- [ ] `grep -En "^[^/]*\b(SecureDownloadSession|URLSession)\.shared\b" Sources/SwiftAcervo/AcervoDownloader.swift` returns only default-parameter declarations (lines containing `= SecureDownloadSession.shared`) — no bare call-site usages.
+- [ ] The new smoke test runs, asserts the body roundtrip, and passes 3 consecutive `make test` invocations.
 
 ---
 
-## Phase 2: Add Comprehensive Tests
+### Sortie 2: Test-isolation primitive for `customBaseDirectory` and `ComponentRegistry.shared`
 
-**File**: `Tests/SwiftAcervoTests/ModelDownloadManagerTests.swift`
+**Layer**: 1
 
-**Test Cases**:
+**Priority**: 14.25 — blocks Sorties 7, 8, 9; foundational infrastructure reused across every filesystem- or registry-sensitive test; moderate risk (test infrastructure refactor affecting 4+ files).
 
-1. **`testEnsureModelsAvailableWhenAlreadyLocal()`**
-   - Mock: Models already available locally
-   - Assert: No download calls made, completes immediately
-   - Assert: Progress callback fired with 100%
+**Entry criteria**:
+- [ ] First-layer sortie — no prerequisites.
+- [ ] `FOLLOW_UP.md § "Test-Isolation Primitive"` and `§ "Pre-existing Test Flake"` have been read and their scope confirmed.
 
-2. **`testEnsureModelsAvailableDownloadsWhenMissing()`**
-   - Mock: `Acervo.ensureAvailable()` called successfully
-   - Assert: ModelDownloadProgress callbacks fired in sequence
-   - Assert: All models marked available after completion
+**Tasks**:
+1. Decide the isolation approach and record the decision in the sortie log: either (a) a shared `@Suite(.serialized) struct CustomBaseDirectorySuite {}` parent (mirrors `MockURLProtocolSuite` in `Tests/SwiftAcervoTests/MockURLProtocolTests.swift`) or (b) a per-suite `withIsolatedAcervoState { ... }` helper that snapshots and restores both globals. Preference: (a) plus (b), applied together.
+2. Create `Tests/SwiftAcervoTests/Support/CustomBaseDirectorySuite.swift` exporting `@Suite("Custom Base Directory", .serialized) struct CustomBaseDirectorySuite {}`. If a prior uncommitted copy of this file exists (it does — see `git status`), overwrite it to match this task.
+3. Convert every suite that currently assigns `Acervo.customBaseDirectory` to be nested under `CustomBaseDirectorySuite` via `extension CustomBaseDirectorySuite { @Suite(...) struct X { ... } }`. Audit target: `Tests/SwiftAcervoTests/AcervoPathTests.swift`, `Tests/SwiftAcervoTests/AcervoFilesystemEdgeCaseTests.swift` (two nested suites), and `Tests/SwiftAcervoTests/ModelDownloadManagerTests.swift`.
+4. Add a `Tests/SwiftAcervoTests/Support/ComponentRegistryIsolation.swift` helper that snapshots the current registry contents, yields to a closure, and restores them on exit. Apply it to one representative test that currently relies on `defer { unregisterComponent(...) }` + UUID suffix (e.g., `HydrateComponentTests.uniqueIds`) as a proof-of-use; do not convert every call site in this sortie.
+5. Run `make test` five consecutive times. Zero flakes is the bar.
 
-3. **`testProgressAggregatesAcrossMultipleModels()`**
-   - Mock: Two models, each 100MB
-   - Assert: Progress callback shows cumulative 0-200MB (not 0-100% twice)
-   - Assert: Current model and file name included in progress
-
-4. **`testValidateCanDownloadReturnsTotalBytes()`**
-   - Mock: Two models in manifest
-   - Assert: Returns sum of all file sizes (bytes, not MB)
-
-5. **`testErrorHandlingCatchesAcervoErrors()`**
-   - Mock: `Acervo.ensureAvailable()` throws `.modelNotFound`
-   - Assert: Caught and rethrown as SwiftAcervo error
-   - Assert: Original error context preserved
-
-6. **`testCancellationStopsDownloadSequence()`**
-   - Mock: Slow download (use Task cancellation)
-   - Assert: Partial downloads not cleaned up (resume capability)
-   - Assert: Graceful error on next attempt
-
-**Mocking Strategy**:
-- Create `MockAcervo` struct with configurable download behavior
-- Inject into manager via internal initializer for testing
-- Default to real Acervo for integration tests
+**Exit criteria**:
+- [ ] `CustomBaseDirectorySuite` exists and every suite that writes `Acervo.customBaseDirectory` is nested under it.
+- [ ] `make test` passes 5 consecutive times with zero failures in `AcervoPathTests.sharedModelsDirectoryPath`, `AcervoPathTests.sharedModelsDirectoryIsAbsolute`, and the Filesystem Edge Cases suites.
+- [ ] The proof-of-use test for the registry-isolation helper passes and is referenced by file+line in the sortie log.
+- [ ] `FOLLOW_UP.md § "Pre-existing Test Flake"` is updated to note the fix and link to this sortie.
 
 ---
 
-## Phase 3: Update AGENTS.md
+### Sortie 3: Add `session:` parameter to public `Acervo.fetchManifest(for:)`
 
-**Sections to add/modify**:
+**Layer**: 1
 
-### New Section: "ModelDownloadManager"
-Location: After "Component Registry Methods" in API Overview
+**Priority**: 12.5 — blocks Sorties 4, 5, 6; foundational for all Layer 2 manifest tests; low risk (additive public API).
 
-```markdown
-## ModelDownloadManager
+**Entry criteria**:
+- [ ] First-layer sortie — no prerequisites.
+- [ ] `Sources/SwiftAcervo/Acervo.swift:1358-1394` (the `fetchManifest` / `fetchManifest(forComponent:)` block introduced on `development`) compiles. **Current shape** (confirmed): the public overloads are `fetchManifest(for:)` and `fetchManifest(forComponent:)`, and each already has an **internal** session-accepting overload (`fetchManifest(for:session:)` and `fetchManifest(forComponent:session:)`). This sortie promotes the `session:`-accepting overloads to `public` (or adds public passthroughs) so tests outside `@testable import` can inject sessions.
 
-ModelDownloadManager provides standardized multi-model download orchestration for consuming libraries. It handles concurrent progress tracking, disk space validation, and error context.
+**Tasks**:
+1. Promote the two `session:`-accepting overloads at `Sources/SwiftAcervo/Acervo.swift:1364-1369` and `Sources/SwiftAcervo/Acervo.swift:1387-1395` from internal (default) visibility to `public`. Preserve their existing forwarding behavior.
+2. Ensure the `forComponent:` variant exposes the same public/internal parity so registry-aware lookups are testable from non-`@testable` contexts.
+3. Update any `@testable import` call site in `Tests/SwiftAcervoTests/ManifestFetchTests.swift` that currently reaches the internal overload to prefer the new public overload where possible.
+4. Run `make lint`.
+5. Keep the changes additive — no existing signature may be removed.
 
-### Usage Example: Consuming Library Startup
-
-```swift
-import SwiftAcervo
-
-// In your library's initialization phase
-func loadModels() async throws {
-    // Validate disk space first
-    let totalBytes = try await ModelDownloadManager.shared.validateCanDownload([
-        "mlx-community/Qwen2.5-7B-Instruct-4bit",
-        "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
-    ])
-    
-    print("Will download \(totalBytes / (1024*1024)) MB total")
-    
-    // Download with progress reporting
-    try await ModelDownloadManager.shared.ensureModelsAvailable([
-        "mlx-community/Qwen2.5-7B-Instruct-4bit",
-        "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
-    ]) { progress in
-        let percent = Int(progress.fraction * 100)
-        let mb = progress.bytesDownloaded / (1024 * 1024)
-        let total = progress.bytesTotal / (1024 * 1024)
-        print("\r[\(progress.model)] \(progress.currentFileName): \(percent)% (\(mb)/\(total) MB)", terminator: "")
-        fflush(stdout)
-    }
-    
-    // All models now available
-    print("\nModels ready!")
-}
-```
-
-### Public API
-
-| Method | Description |
-|--------|-------------|
-| `ensureModelsAvailable(_:progress:)` | Download all specified models if not already available |
-| `validateCanDownload(_:)` | Check disk space and return total bytes needed |
-
-### Return Types
-
-```swift
-public struct ModelDownloadProgress: Sendable {
-    public let model: String           // e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit"
-    public let fraction: Double        // 0.0 to 1.0 cumulative progress
-    public let bytesDownloaded: Int64  // Total bytes downloaded across all models
-    public let bytesTotal: Int64       // Total bytes to download across all models
-    public let currentFileName: String // e.g., "model.safetensors"
-}
-```
-
-### Error Handling
-
-`ModelDownloadManager.ensureModelsAvailable()` throws `AcervoError`:
-
-- `modelNotFound(modelId: String)` — Model doesn't exist on CDN
-- `manifestChecksumMismatch(modelId: String)` — Manifest integrity check failed
-- `downloadFailed(reason: String)` — Network error (transient)
-- `checksumMismatch(fileName: String)` — File corrupted during download
-
-Catch these at the consuming library level and convert to app-specific error types.
-
-### Best Practices
-
-1. **Always validate disk space first**: Call `validateCanDownload()` before user-initiated downloads
-2. **Show aggregate progress**: Display cumulative MB downloaded, not per-model percentages
-3. **Serialize model downloads**: Manager handles this (sequential, not parallel)
-4. **Handle cancellation gracefully**: If user cancels, partial files remain (resume on next attempt)
-5. **Distinguish model types in messages**: Include model name in progress callback output
-```
-
-### Modify Existing Section: "Best Practices for Consuming Libraries"
-
-Replace the section with a link to ModelDownloadManager:
-
-```markdown
-### Best Practices for Consuming Libraries
-
-Use **ModelDownloadManager** for standardized multi-model download orchestration:
-
-```swift
-try await ModelDownloadManager.shared.ensureModelsAvailable(modelIds) { progress in
-    // Handle progress callback
-}
-```
-
-For advanced patterns (custom progress UI, library-specific error mapping), see [ModelDownloadManager](#modeldownloadmanager) section above.
-
-Single-model validation can still use `Acervo.modelInfo()` directly for fast CDN checks.
-```
+**Exit criteria**:
+- [ ] `Acervo.fetchManifest(for:session:)` and `Acervo.fetchManifest(forComponent:session:)` are `public`.
+- [ ] `make build` and `make test` both pass.
+- [ ] `grep -n "public static func fetchManifest" Sources/SwiftAcervo/Acervo.swift` shows four results: both no-session and both session-accepting overloads.
 
 ---
 
-## Phase 4: Add Example Documentation
+### Sortie 4: Behavior tests for `Acervo.fetchManifest(for:)` via the public API
 
-**File**: `Docs/ModelDownloadManager-Examples.md` (new)
+**Layer**: 2
 
-**Content**:
-- Simple use case (single model download)
-- Advanced use case (multiple models with custom progress UI)
-- Error handling patterns (catch + convert to library-specific errors)
-- Disk space validation workflow
-- Cancellation and resume behavior
+**Priority**: 1.75 — leaf sortie (blocks nothing); low risk test-only work.
 
----
+**Entry criteria**:
+- [ ] Sortie 3 `COMPLETED`.
+- [ ] `Tests/SwiftAcervoTests/ManifestFetchTests.swift` exists.
 
-## Phase 5: Integration with Existing Code
+**Tasks**:
+1. In `Tests/SwiftAcervoTests/ManifestFetchTests.swift`, replace the symbol-existence check `fetchManifestIsCallable` (currently a compile-only stub) with a real behavior test that calls the public `fetchManifest(for:session:)` overload with a `MockURLProtocol`-backed session.
+2. Add an equivalent test for `fetchManifest(forComponent:session:)` that registers a bare descriptor, stubs the manifest response, and asserts the returned `CDNManifest` fields.
+3. Add a negative test asserting `AcervoError.componentNotRegistered` when the component ID is unknown.
+4. Nest the new tests under `MockURLProtocolSuite` so they inherit `.serialized`.
+5. Delete any now-redundant `downloadManifestWithMockSession` coverage that the public-API tests supersede (redundancy = same manifest shape and same response stubs).
 
-**Verify no breaking changes**:
-- [ ] `Acervo` static methods unchanged
-- [ ] `AcervoManager` behavior unchanged
-- [ ] `ComponentRegistry` behavior unchanged
-- [ ] Existing tests still pass
-
-**Compile check**:
-```bash
-make clean
-make resolve
-make build
-make test
-```
+**Exit criteria**:
+- [ ] `ManifestFetchTests` contains at least three new `@Test` cases exercising the public API and one negative case.
+- [ ] `make test` passes.
+- [ ] No test in `ManifestFetchTests` is a compile-only "symbol exists" stub (`grep -n "fetchManifestIsCallable\|#expect(type(of:" Tests/SwiftAcervoTests/ManifestFetchTests.swift` returns no matches).
 
 ---
 
-## Checklist
+### Sortie 5: Manifest error-mode tests — decoding, integrity, and version
 
-- [ ] Phase 1: Create `ModelDownloadManager.swift`
-  - [ ] Actor definition with `shared` singleton
-  - [ ] `ensureModelsAvailable()` implementation
-  - [ ] `validateCanDownload()` implementation
-  - [ ] `ModelDownloadProgress` struct
-  - [ ] Error handling (catch + contextualize)
-  - [ ] Disk space calculation logic
-  
-- [ ] Phase 2: Add tests
-  - [ ] 6 test cases pass
-  - [ ] Mocking strategy in place
-  - [ ] Coverage for happy path + error cases
-  
-- [ ] Phase 3: Update AGENTS.md
-  - [ ] New "ModelDownloadManager" section added
-  - [ ] Usage examples included
-  - [ ] API reference complete
-  - [ ] Best practices section updated
-  
-- [ ] Phase 4: Add example documentation
-  - [ ] Examples file written
-  - [ ] Multiple use cases documented
-  
-- [ ] Phase 5: Integration
-  - [ ] Full test suite passes
-  - [ ] No regressions in existing code
-  - [ ] Compile with `make build` succeeds
+**Layer**: 2
+
+**Priority**: 2.0 — leaf sortie; low risk.
+
+**Entry criteria**:
+- [ ] Sortie 3 `COMPLETED` (so tests can call through the public `session:`-injected overload).
+
+**Tasks**:
+1. Add a test in `Tests/SwiftAcervoTests/HydrationTests.swift` (or a new `ManifestErrorModeTests.swift` nested under `MockURLProtocolSuite`) that stubs a 200 response with malformed JSON and asserts `AcervoError.manifestDecodingFailed`.
+2. Add a test that stubs a 200 response with a valid JSON manifest whose `manifestChecksum` does not match the checksum-of-checksums of `files[].sha256`; assert `AcervoError.manifestIntegrityFailed(expected:actual:)` and verify both fields populate.
+3. Add a test that stubs a manifest with `manifestVersion = CDNManifest.supportedVersion + 1` and asserts `AcervoError.manifestVersionUnsupported`.
+4. Add a companion boundary test with `manifestVersion = 0` and assert rejection.
+5. Run `make test` 3 consecutive times.
+
+**Exit criteria**:
+- [ ] Four new `@Test` cases exist, one per scenario above.
+- [ ] `make test` passes 3 consecutive times.
+- [ ] Each test references the exact `AcervoError` case by name in its assertion.
 
 ---
 
-## Notes
+### Sortie 6: HydrationCoalescer error-path and re-fetch tests
 
-- `ModelDownloadManager` is a **shared utility** — all consuming libraries should use it
-- **Singleton pattern**: `ModelDownloadManager.shared` is initialized once, reused globally
-- **Error mapping**: Consuming libraries catch `AcervoError` and throw app-specific errors (e.g., `BrujaError.modelNotDownloaded`)
-- **Disk space validation**: Optional but recommended for large models
-- **Progress aggregation**: Cumulative across all models, not per-model (shows true user experience)
+**Layer**: 2
 
----
+**Priority**: 1.75 — leaf sortie; low risk.
 
-## Success Criteria
+**Entry criteria**:
+- [ ] Sortie 3 `COMPLETED`.
+- [ ] `Sources/SwiftAcervo/Acervo.swift:1403-1424` (HydrationCoalescer actor and its shared instance) compiles.
 
-When complete, consuming libraries can adopt `ModelDownloadManager` and reduce their model download code to:
+**Tasks**:
+1. Add a test in `Tests/SwiftAcervoTests/HydrationTests.swift` (nested under `MockURLProtocolSuite`) that registers a bare descriptor, configures the responder to return 500 on call 1 and 200 on call 2, invokes `hydrateComponent` twice, asserts the first throws, the second succeeds, and `MockURLProtocol.requestCount == 2`.
+2. Add a second test that configures a 200 responder, invokes `hydrateComponent` twice sequentially (awaiting the first before the second), and asserts `MockURLProtocol.requestCount == 2` — proving re-fetch after completion (distinct from the existing single-flight coalesce test).
+3. Nest both new tests under `MockURLProtocolSuite`.
+4. Confirm the existing `concurrentHydration` single-flight test still passes (no regression).
+5. Run `make test` 3 consecutive times.
 
-```swift
-// Before (complex per-library orchestration)
-func downloadModels() async throws { ... }  // 50+ lines per library
-
-// After (standardized via manager)
-try await ModelDownloadManager.shared.ensureModelsAvailable(requiredModels) { progress in
-    updateUI(with: progress)
-}
-```
+**Exit criteria**:
+- [ ] Two new `@Test` cases exist, each with an explicit `MockURLProtocol.requestCount` assertion.
+- [ ] `make test` passes 3 consecutive times.
+- [ ] The existing `concurrentHydration` test still passes unchanged.
 
 ---
 
----
+### Sortie 7: End-to-end `downloadComponent` auto-hydration test
 
-## Refinement Results (All 4 Passes)
+**Layer**: 3
 
-### Pass 1: Atomicity & Testability ✅ PASS
+**Priority**: 3.5 — leaf sortie but highest complexity in Layer 3 (E2E integration across hydration, streaming, and verification).
 
-**Summary**: All 4 sorties are atomically focused and have machine-verifiable acceptance criteria, with one exception noted.
+**Entry criteria**:
+- [ ] Sortie 1 `COMPLETED` (session injection available on the file-download path).
+- [ ] Sortie 2 `COMPLETED` (`CustomBaseDirectorySuite` + registry isolation available for clean setup/teardown).
 
-| Sortie | Atomicity | Testability | Context Fitness | Verdict |
-|--------|-----------|------------|-----------------|---------|
-| 1. ModelDownloadManager | ✅ | ✅ | ✅ Right-sized (12 turns) | Ready |
-| 2. Tests | ✅ | ✅ | ✅ Right-sized (15 turns) | Ready |
-| 3. AGENTS.md | ✅ | ⚠️ Vague ACs | ✅ Right-sized (6 turns) | Enhanced |
-| 4. Examples | ✅ | ⚠️ Vague ACs | ✅ Right-sized (4 turns) | Enhanced |
+**Tasks**:
+1. In a new `Tests/SwiftAcervoTests/DownloadComponentAutoHydrationTests.swift`, register a bare descriptor (via `ComponentDescriptor.init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)`) with `needsHydration == true`.
+2. Stub the manifest response and every file-body response via `MockURLProtocol`.
+3. Call `Acervo.downloadComponent(...)` and assert: (a) hydration ran (descriptor.files is populated post-call), (b) files landed on disk in the expected slug directory, (c) integrity verification passed, (d) the call returns without throwing.
+4. Add an assertion that `MockURLProtocol.requestCount` equals `1 + files.count` (one manifest + one per file).
+5. Nest under `MockURLProtocolSuite`. Use the `customBaseDirectory` isolation from Sortie 2.
+6. Add a source comment at the top of the new test file: `// Mutation check: exercises the auto-hydration branch in Acervo.swift (currently lines 1539-1541, `if initialDescriptor.needsHydration { try await hydrateComponent(...) }`). If this branch is deleted, this test must fail.` The exact line range may drift — update the comment to match whatever line `grep -n "if initialDescriptor.needsHydration" Sources/SwiftAcervo/Acervo.swift | head -1` returns at commit time.
 
-**Auto-fixes applied**:
-- **Sortie 3**: Enhanced acceptance criteria
-  - [ ] `## ModelDownloadManager` section exists after "Component Registry Methods"
-  - [ ] Usage example block complete
-  - [ ] API reference table documents both methods
-  - [ ] Error handling section lists ≥4 AcervoError cases
-  - [ ] Best practices section has ≥5 numbered items
-
-- **Sortie 4**: Enhanced acceptance criteria
-  - [ ] File `Docs/ModelDownloadManager-Examples.md` exists
-  - [ ] Contains ≥3 distinct examples (single, multiple, error handling)
-  - [ ] Disk space validation workflow example included
-  - [ ] Cancellation and resume behavior example included
-
-**Sorties after refinement**: 4 (no splits/merges needed)
+**Exit criteria**:
+- [ ] New `@Test` exercising the full hydration → streaming → verify path exists and passes.
+- [ ] `make test` passes 3 consecutive times.
+- [ ] `grep -n "Mutation check: exercises the auto-hydration branch" Tests/SwiftAcervoTests/DownloadComponentAutoHydrationTests.swift` returns exactly one hit, and the line range cited in that comment matches the current output of `grep -n "if initialDescriptor.needsHydration" Sources/SwiftAcervo/Acervo.swift` (first match).
 
 ---
 
-### Pass 2: Prioritization ✅ PASS
+### Sortie 8: Registry-level SHA-256 cross-check failure test
 
-| Sortie | Priority Score | Reasoning | Order |
-|--------|-----------|-----------|-------|
-| 1. ModelDownloadManager | 15 | Foundation (high risk, 3 dependents) | Execute 1st |
-| 2. Tests | 2 | Depends on #1, test code (lower risk) | Execute 2nd or parallel |
-| 3. AGENTS.md | 1.5 | Depends on #1, documentation | Can parallel after #1 |
-| 4. Examples | 1.5 | Depends on #1, documentation | Can parallel after #1 |
+**Layer**: 3
 
-**Current order is already optimal** — No reordering needed.
+**Priority**: 3.0 — leaf sortie; moderate risk (tests an under-covered integrity gate).
 
----
+**Entry criteria**:
+- [ ] Sortie 1 `COMPLETED`.
+- [ ] Sortie 2 `COMPLETED`.
 
-### Pass 3: Parallelism ✅ PASS
+**Tasks**:
+1. In `Tests/SwiftAcervoTests/ComponentIntegrationTests.swift` (or a new companion file), construct a scenario per `TESTING_REQUIREMENTS.md` P0 §"Registry-level SHA-256 cross-check": stage a file on disk whose content hashes to `X`, register a hydrated descriptor whose `sha256` is `Y`, call `downloadComponent` with `force: false`.
+2. Assert `AcervoError.integrityCheckFailed(file:expected:actual:)` is thrown with the correct three fields.
+3. Assert the corrupt file was deleted (file does not exist post-throw).
+4. The registry-level second pass is implemented at `Sources/SwiftAcervo/Acervo.swift:1560-1576` (the loop over `descriptor.files` following the manifest-driven download), distinct from the streaming pass at `AcervoDownloader.swift:401-408` (inside `streamDownloadFile`). Add a source comment at the top of the test that cites both line ranges so future readers know which gate this test targets. Update the ranges to whatever `grep -n "Additional registry-level checksum verification" Sources/SwiftAcervo/Acervo.swift` and `grep -n "throw AcervoError.integrityCheckFailed(" Sources/SwiftAcervo/AcervoDownloader.swift` return at commit time.
+5. Nest under `MockURLProtocolSuite`.
 
-**Dependency graph**:
-```
-Phase 1 (sequential):
-  → Sortie 1: Implement ModelDownloadManager (supervising agent, has build)
-
-Phase 2 (parallel):
-  → Sortie 2: Tests (sub-agent 2, no build)
-  → Sortie 3: AGENTS.md (sub-agent 3, no build)
-  → Sortie 4: Examples (sub-agent 4, no build)
-```
-
-**Parallelism opportunity**: After Sortie 1 completes, Sorties 2, 3, 4 can run simultaneously with 3 sub-agents.
-
-**Critical path**: Sortie 1 → max(Sortie 2, 3, 4) → Done
-- Length: 2 phases
-- Bottleneck: Sortie 2 (tests, ~1 hour)
-- Speedup: ~14% time savings (~30 minutes)
-
-**File conflicts**: None (each sortie writes to different files)
-**Build constraints**: Only Sortie 1 requires `make build`; Sorties 2-4 have no build operations
+**Exit criteria**:
+- [ ] New `@Test` exists and asserts all three fields of `integrityCheckFailed`.
+- [ ] Post-throw file deletion is asserted via `FileManager.default.fileExists(...)`.
+- [ ] `make test` passes 3 consecutive times.
+- [ ] `grep -n "Registry-level second pass:" <new-or-modified-test-file>` returns at least one hit, and the cited line ranges for `Acervo.swift` and `AcervoDownloader.swift` match the current grep output (first match for each).
 
 ---
 
-### Pass 4: Open Questions & Vague Criteria ✅ PASS (All resolved)
+### Sortie 9: `Acervo.ensureAvailable(modelId, files: [])` empty-files behavior tests
 
-**Issues found**: 14 total, **all resolved**
-- Blocking issues: 2 → **0** (both decisions made)
-- Critical unknowns: 3 → **0** (all clarified)
-- Non-blocking issues: 9 (can address during execution)
+**Layer**: 3
 
----
+**Priority**: 1.75 — leaf sortie; low risk.
 
-## Refinement Issues (Detailed Analysis)
+**Entry criteria**:
+- [ ] Sortie 1 `COMPLETED`.
+- [ ] Sortie 2 `COMPLETED`.
 
-### ✅ BLOCKING ISSUE 1 — RESOLVED: Mocking Strategy
+**Tasks**:
+1. Add tests in a new `Tests/SwiftAcervoTests/EnsureAvailableEmptyFilesTests.swift` (nested under `MockURLProtocolSuite`).
+2. Stub a manifest response with three file entries. Call `Acervo.ensureAvailable(modelId: ..., files: [])`. Assert all three files land on disk.
+3. Add a regression test: `files: ["config.json"]` must download only the named file.
+4. Add a test that asserts `AcervoError.fileNotInManifest` fires for a non-empty `files:` array containing a name the manifest does not list.
+5. Confirm `ModelDownloadManager.ensureModelsAvailable` (which funnels to the same path) still passes.
+6. Add a source comment: `// Exercises the requestedFiles.isEmpty branch in AcervoDownloader.swift (currently line ~686, "if requestedFiles.isEmpty { filesToDownload = manifest.files }").` Update the line number to match `grep -n "if requestedFiles.isEmpty" Sources/SwiftAcervo/AcervoDownloader.swift` at commit time.
 
-**Sorties affected**: 2 (Tests)
-
-**Decision**: Integration tests with temporary model directories (Option A)
-
-**Implementation approach**:
-- Test setup creates temporary directory for model downloads during test
-- Each test configures Acervo to use temp base directory
-- Tests call `ModelDownloadManager.shared.ensureModelsAvailable()` with real Acervo API
-- Acervo downloads to temp directory (real downloads, fully isolated)
-- Test teardown cleans up temp directory
-
-**Benefits**:
-- No architectural changes to ModelDownloadManager or Acervo
-- `shared` singleton remains clean and simple
-- Tests are realistic (exercises real download + validation logic)
-- Simpler test code than dependency injection
-- Easy to implement with XCTestDynamicOverlay or FileManager temp directory
-
-**Test cases** (6 functions using temp directories):
-1. `testEnsureModelsAvailableWhenAlreadyLocal()` — seed temp dir with pre-downloaded files
-2. `testEnsureModelsAvailableDownloadsWhenMissing()` — download to empty temp dir
-3. `testProgressAggregatesAcrossMultipleModels()` — two models to temp dir, verify cumulative progress
-4. `testValidateCanDownloadReturnsTotalBytes()` — fetch manifests, verify byte count
-5. `testErrorHandlingCatchesAcervoErrors()` — simulate CDN errors with inaccessible temp dir
-6. `testCancellationStopsDownloadSequence()` — cancel mid-download, verify partial state
+**Exit criteria**:
+- [ ] Three new `@Test` cases exist covering empty, named subset, and not-in-manifest.
+- [ ] `make test` passes 3 consecutive times.
+- [ ] `grep -n "requestedFiles.isEmpty branch" Tests/SwiftAcervoTests/EnsureAvailableEmptyFilesTests.swift` returns at least one hit, and the cited line number matches the current output of `grep -n "if requestedFiles.isEmpty" Sources/SwiftAcervo/AcervoDownloader.swift`.
 
 ---
 
-### ✅ BLOCKING ISSUE 2 — RESOLVED: Acervo.ensureAvailable() Semantics
+### Sortie 10: `ShipCommand.swift` unit tests
 
-**Sorties affected**: 1 (Implementation)
+**Layer**: 4
 
-**Decision**: Assumption accepted as-is
+**Priority**: 5.0 — blocks Sortie 15; moderate complexity (argument parsing + pipeline stubbing).
 
-**Statement**: `Acervo.ensureAvailable(modelId, files: [])` with empty `files` array downloads all files in the manifest.
+**Entry criteria**:
+- [ ] Every Layer 1–3 sortie (Sorties 1–9) `COMPLETED`.
+- [ ] `Sources/acervo/ShipCommand.swift` compiles.
 
-**Rationale**: 
-- Verified acceptable by codebase maintainer
-- Implementation detail is internal to Acervo; manager abstracts it
-- Plan assumes empty array = "download all"; this is the intended behavior
+**Tasks**:
+1. Create `Tests/AcervoToolTests/ShipCommandTests.swift`.
+2. Happy-path: parse a valid argv, assert each flag (`--force`, `--skip-upload`, `--model-id`) is captured with the expected value.
+3. Missing required argument: assert the command exits non-zero with the canonical "missing --model-id" error.
+4. Error surfacing: stub one pipeline step (manifest, upload, verify) to throw; assert the corresponding exit code.
+5. Step sequencing: assert steps run in the documented order when every step is stubbed to succeed.
 
----
-
-### ✅ CRITICAL UNKNOWN 1: Progress Aggregation Scope — RESOLVED
-
-**Sorties affected**: 1, 2, 3
-
-**Resolution**: CDNManifest already contains `sizeBytes: Int64` for each file (see CDNManifest.swift line 69).
-
-**How it works**:
-1. When `ensureModelsAvailable()` is called, fetch manifest for each model (unavoidable—needed for downloads anyway)
-2. Sum `manifest.files[].sizeBytes` across all models → `totalBytes`
-3. As files download, Acervo's progress callbacks provide cumulative `bytesDownloaded`
-4. Report `(bytesDownloaded / totalBytes)` as cumulative progress
-
-**Details**:
-- `bytesTotal` in ModelDownloadProgress: cumulative across all requested models
-- `bytesDownloaded`: cumulative bytes downloaded so far
-- Manifest fetch is unavoidable, but it's a one-time cost per model (same cost as downloading first file)
-- No pre-computation needed—we get exact sizes as manifests are fetched
-
-**Acceptance criteria** (clarified):
-- [ ] Progress callback fires for each file chunk (from Acervo's download progress)
-- [ ] `bytesDownloaded` is cumulative sum across all models
-- [ ] `bytesTotal` is sum of all manifest file sizes across all models
-- [ ] `fraction = bytesDownloaded / bytesTotal` (0.0 to 1.0)
+**Exit criteria**:
+- [ ] At least five `@Test` cases exist (happy-path, one per error stub, plus one sequencing assertion).
+- [ ] `make test` passes.
+- [ ] No test relies on live R2 or HF credentials (`grep -En "R2_(ACCESS|SECRET)|HF_TOKEN" Tests/AcervoToolTests/ShipCommandTests.swift` returns no real reads from `ProcessInfo.processInfo.environment`).
 
 ---
 
-### ✅ CRITICAL UNKNOWN 2: Disk Space Validation Cost and Purpose — RESOLVED
+### Sortie 11: `DownloadCommand.swift` unit tests
 
-**Sorties affected**: 1, 3
+**Layer**: 4
 
-**Resolution**: Manifest fetch is unavoidable and reasonable—it's the same cost as downloading the first file.
+**Priority**: 4.75 — blocks Sortie 15; moderate complexity.
 
-**Implementation**:
-- `validateCanDownload()` fetches each model's manifest from CDN
-- Sums `manifest.files[].sizeBytes` to return accurate total bytes needed
-- Cost: O(N) CDN requests, where N = number of models
-- Latency: ~100-500ms per model (network bound, not CPU)
-- Caching: Optional optimization (not required for correctness)
+**Entry criteria**:
+- [ ] Every Layer 1–3 sortie `COMPLETED`.
+- [ ] `Sources/acervo/DownloadCommand.swift` compiles.
 
-**Why this is acceptable**:
-- Intended use case: UI pre-flight check ("This will download X GB")
-- User initiates download → we fetch manifests while user reads a confirmation dialog
-- Same manifests are fetched again during download setup (unavoidable)
-- Caching would only help if user validates twice in quick succession (nice-to-have, not required)
+**Tasks**:
+1. Create `Tests/AcervoToolTests/DownloadCommandTests.swift`.
+2. Happy-path argument parsing test.
+3. HuggingFace-only path smoke test (HF client stubbed).
+4. Missing required argument test.
+5. Exit-code mapping for at least one failure mode.
 
-**Acceptance criteria** (clarified):
-- [ ] `validateCanDownload()` fetches manifests and sums `sizeBytes` across all models
-- [ ] Returns total bytes (Int64) as cumulative sum
-- [ ] Throws AcervoError if any model's manifest fetch fails (modelNotFound, checksumMismatch, etc.)
-- [ ] No caching required (manifests are re-fetched during ensureModelsAvailable anyway)
+**Exit criteria**:
+- [ ] At least three `@Test` cases exist.
+- [ ] `make test` passes.
+- [ ] No live HF calls (the HF client is invoked only through a stubbed protocol or injected test double).
 
 ---
 
-### ✅ CRITICAL UNKNOWN 3 — RESOLVED: Error Handling Semantics
+### Sortie 12: `UploadCommand.swift` unit tests
 
-**Sorties affected**: 1, 2, 3
+**Layer**: 4
 
-**Decision**: Re-throw AcervoError unchanged (no wrapping)
+**Priority**: 5.0 — blocks Sortie 15; moderate complexity.
 
-**Implementation approach**:
-- Manager catches AcervoError internally for logging/context
-- Manager re-throws the same AcervoError unchanged to caller
-- No new error type (ModelDownloadManagerError) created
-- Consuming libraries catch AcervoError and wrap to app-specific errors (per AGENTS.md pattern)
+**Entry criteria**:
+- [ ] Every Layer 1–3 sortie `COMPLETED`.
+- [ ] `Sources/acervo/UploadCommand.swift` compiles.
 
-**Rationale**:
-- Simpler API contract (one error type, not two)
-- Matches AGENTS.md documentation expectation
-- Aligns with existing Acervo error handling pattern in other libraries
-- Leaves error mapping to consuming libraries (they know their domain)
+**Tasks**:
+1. Create `Tests/AcervoToolTests/UploadCommandTests.swift`.
+2. Happy-path argument parsing.
+3. Missing R2 credentials test: assert the command exits non-zero with a clear error message.
+4. Upload-only path with stubbed R2 client: assert correct bucket/key arguments.
+5. Missing required argument test.
 
-**Update to Phase 1 implementation details**:
-- Line 97: Change "Error handling: catch `AcervoError` cases and throw with context" to "catch `AcervoError`, log context, re-throw unchanged"
-- Line 107: Change "Errors are caught, contextualized, and thrown" to "Errors are caught, logged, and re-thrown unchanged"
-
-**Update to Sortie 2 test case**:
-- `testErrorHandlingCatchesAcervoErrors()` verifies manager re-throws AcervoError (not a new wrapped type)
+**Exit criteria**:
+- [ ] At least three `@Test` cases exist.
+- [ ] `make test` passes.
+- [ ] Credential validation path is exercised without actual credentials (tests set a sentinel or unset env var and assert the CLI's error, not a real upload).
 
 ---
 
-### Additional non-blocking issues
+### Sortie 13: `VerifyCommand.swift` unit tests
 
-| Issue | Sortie | Severity | Description |
-|-------|--------|----------|-------------|
-| Missing test AC clarity | 2 | LOW | Test cases reference "No download calls made" but without MockAcervo, this cannot be asserted. Defer until mocking strategy chosen. |
-| AGENTS.md example lacks error handling | 3 | LOW | Usage example should show error cases. Can be added during implementation. |
-| Example documentation not specified | 4 | LOW | No detail on what use cases to demonstrate. Defer until Phase 1-2 complete. |
+**Layer**: 4
 
----
+**Priority**: 5.0 — blocks Sortie 15; moderate complexity.
 
-## ✅ All Blockers Resolved — Ready for Execution
+**Entry criteria**:
+- [ ] Every Layer 1–3 sortie `COMPLETED`.
+- [ ] `Sources/acervo/VerifyCommand.swift` compiles.
 
-**All 5 decisions made**:
-1. ✅ Mocking: Integration tests with temp directories
-2. ✅ Acervo semantics: Empty array downloads all files (accepted)
-3. ✅ Progress aggregation: Cumulative bytes via CDNManifest.sizeBytes
-4. ✅ Disk validation: Manifest fetches acceptable for pre-flight checks
-5. ✅ Error handling: Re-throw AcervoError unchanged
+**Tasks**:
+1. Create `Tests/AcervoToolTests/VerifyCommandTests.swift`.
+2. Happy-path: all integrity checks pass → exit 0.
+3. Corrupted manifest: at least one check fails → non-zero exit code.
+4. Missing required argument test.
+5. Exit-code mapping for each distinct failure class (manifest missing, file missing, checksum mismatch).
 
-**Execution estimate**: ~3-3.5 hours (Sortie 1: ~2h, then parallel Sorties 2-4: ~1-1.5h)
-
-**Ready to execute**: Yes ✅
-
-**Next step**: `/mission-supervisor start /Users/stovak/Projects/SwiftAcervo/EXECUTION_PLAN.md`
+**Exit criteria**:
+- [ ] At least four `@Test` cases exist.
+- [ ] `make test` passes.
 
 ---
 
-## Archive: Original Plan Phases (Refined)
+### Sortie 14: `ManifestCommand.swift` unit tests
 
-### Sortie 1: Implement ModelDownloadManager
+**Layer**: 4
 
-**File**: `Sources/SwiftAcervo/ModelDownloadManager.swift`
+**Priority**: 5.0 — blocks Sortie 15; includes a determinism test that is a foundational guarantee for downstream CDN roundtrip tests.
+
+**Entry criteria**:
+- [ ] Every Layer 1–3 sortie `COMPLETED`.
+- [ ] `Sources/acervo/ManifestCommand.swift` compiles.
+
+**Tasks**:
+1. Create `Tests/AcervoToolTests/ManifestCommandTests.swift`.
+2. Happy-path: generate a manifest from a fixture directory; assert expected JSON shape and checksum-of-checksums.
+3. Missing required argument test.
+4. Empty directory test: assert meaningful error (no files to manifest).
+5. File-ordering determinism test: regenerating a manifest from the same directory produces byte-identical output (compare via `Data` equality or SHA-256 of each output).
+
+**Exit criteria**:
+- [ ] At least four `@Test` cases exist.
+- [ ] `make test` passes.
+- [ ] Manifest output is byte-identical across two generations of the same input (determinism test asserts `Data` equality).
+
+---
+
+### Sortie 15: Audit and document CI gating for `AcervoToolIntegrationTests`
+
+**Layer**: 5
+
+**Priority**: 0.5 — docs-only leaf, no downstream dependents.
+
+**Entry criteria**:
+- [ ] Sorties 10–14 `COMPLETED` (so any gaps surfaced there feed into this audit).
+
+**Tasks**:
+1. Read every file under `.github/workflows/` (currently: `mirror_model.yml`, `release.yml`, `tests.yml`) and enumerate which jobs run `Tests/AcervoToolIntegrationTests/` (`CDNRoundtripTests.swift`, `HuggingFaceDownloadTests.swift`, `ManifestRoundtripTests.swift`, `ShipCommandTests.swift`).
+2. For each integration test, determine whether `R2_*` and `HF_TOKEN` secrets are provided by the job environment (look for `env:` blocks and `secrets.*` references).
+3. Write a new subsection under `TESTING_REQUIREMENTS.md` § "CLI command coverage" titled **"CI integration test gating"**, listing each integration test as a row with four columns: workflow file, job name, required secrets, behavior when secrets are absent (skip vs. fail).
+4. If any integration test is currently unreachable in CI (no job runs it, or secrets are never provided), file it as a new P1 gap in `TESTING_REQUIREMENTS.md` with `[ ]` checkbox and explicit action item.
+5. No code changes — documentation only.
+
+**Exit criteria**:
+- [ ] `TESTING_REQUIREMENTS.md` contains a new subsection titled exactly `CI integration test gating` under `CLI command coverage` (verify with `grep -n "^#### CI integration test gating\|^### CI integration test gating" TESTING_REQUIREMENTS.md`).
+- [ ] The new subsection contains one row per integration test file listed in Task 1.
+- [ ] Any currently-unreachable integration test is surfaced as a new P1 gap in the same document.
+- [ ] `make test` still passes (no regression).
+
+---
+
+## Open Questions & Missing Documentation
+
+Pass 4 scan of the refined plan surfaced no blocking open questions. All referenced files, workflows, and sections exist in the repo. Two residual items are worth flagging as soft-yellows; neither blocks execution:
+
+| Sortie | Issue Type | Description | Disposition |
+|--------|-----------|-------------|-------------|
+| Sortie 2 | Ambiguity | Task 1 offers options (a) and (b) but states the preference is both applied together. | Accepted as-is — preference is explicit; sortie log records the choice. |
+| Sortie 4 | Soft criterion | Task 5: "Delete any now-redundant `downloadManifestWithMockSession` coverage" relies on the agent's judgment of redundancy. | Tightened during Pass 4: redundancy is defined as "same manifest shape AND same response stubs" as one of the new public-API tests. |
+
+No other open questions, missing documents, or external dependencies remain.
+
+---
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Work units | 1 |
+| Total sorties | 15 |
+| Dependency structure | 5 layers; within a layer sorties are independent and can run in parallel |
+| Layer 1 (foundations) | Sorties 1, 2, 3 |
+| Layer 2 (hydration + manifest tests, depends on Sortie 3) | Sorties 4, 5, 6 |
+| Layer 3 (end-to-end tests, depends on Sorties 1 and 2) | Sorties 7, 8, 9 |
+| Layer 4 (CLI unit tests, depends on all of Layers 1–3) | Sorties 10, 11, 12, 13, 14 |
+| Layer 5 (CI audit) | Sortie 15 |
+| Critical path length | 4 sorties (e.g., 1 → 7 → 10 → 15) |
+| Max concurrent agents per wave | 4 |
+| Average sortie estimated size | ~18 turns (budget: 50 turns/sortie) |
+
+Blocking dependencies across all sorties:
+- 4 blocked by 3
+- 5 blocked by 3
+- 6 blocked by 3
+- 7 blocked by 1, 2
+- 8 blocked by 1, 2
+- 9 blocked by 1, 2
+- 10, 11, 12, 13, 14 each blocked by the entire union of 1–9
+- 15 blocked by 10, 11, 12, 13, 14
+
+Priority ordering within each layer (higher score = dispatched first when slot contention arises):
+
+- Layer 1: Sortie 2 (14.25) > Sortie 1 (14.0) > Sortie 3 (12.5)
+- Layer 2: Sortie 5 (2.0) > Sortie 4 (1.75) = Sortie 6 (1.75)
+- Layer 3: Sortie 7 (3.5) > Sortie 8 (3.0) > Sortie 9 (1.75)
+- Layer 4: Sorties 10, 12, 13, 14 (5.0) > Sortie 11 (4.75)
+- Layer 5: Sortie 15 (0.5)
+
+Priority differences within each layer are within noise; no physical renumbering was applied. The priority score is an advisory signal for the supervisor when choosing which of N ready sorties to dispatch first into a free slot.

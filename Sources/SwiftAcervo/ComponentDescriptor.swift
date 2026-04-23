@@ -64,6 +64,9 @@ public struct ComponentFile: Sendable, Equatable {
 /// Two descriptors are considered equal if and only if they share the same `id`.
 /// This supports deduplication semantics: registering the same component ID twice
 /// updates the existing entry rather than creating a duplicate.
+// Internal file storage is `[ComponentFile]?`: `nil` = awaiting manifest hydration,
+// non-nil (including `[]`) = declared or hydrated. The public `files` property
+// returns `[]` for un-hydrated descriptors; callers should check `isHydrated`.
 public struct ComponentDescriptor: Sendable, Identifiable {
   /// Unique identifier for this component (e.g., "t5-xxl-encoder-int4").
   public let id: String
@@ -78,11 +81,18 @@ public struct ComponentDescriptor: Sendable, Identifiable {
   /// (e.g., "intrusive-memory/t5-xxl-int4-mlx").
   public let repoId: String
 
-  /// The files that comprise this component, with optional size and checksum metadata.
-  public let files: [ComponentFile]
+  /// Backing storage: `nil` means the descriptor awaits CDN-manifest hydration.
+  private let _files: [ComponentFile]?
 
-  /// Total expected download size in bytes.
-  public let estimatedSizeBytes: Int64
+  /// The files that comprise this component. Returns `[]` for un-hydrated
+  /// descriptors; check `isHydrated` to distinguish from a genuinely empty list.
+  public var files: [ComponentFile] { _files ?? [] }
+
+  /// Backing storage for the estimated size (nil when awaiting hydration).
+  private let _estimatedSizeBytes: Int64?
+
+  /// Total expected download size in bytes. Returns `0` for un-hydrated descriptors.
+  public var estimatedSizeBytes: Int64 { _estimatedSizeBytes ?? 0 }
 
   /// Minimum RAM needed to load this component into memory.
   public let minimumMemoryBytes: Int64
@@ -91,7 +101,14 @@ public struct ComponentDescriptor: Sendable, Identifiable {
   /// "quantization", and "architecture". Unknown keys are preserved as-is.
   public let metadata: [String: String]
 
-  /// Creates a new component descriptor.
+  /// `true` when the descriptor has a populated file list (declared up front
+  /// or fetched from the CDN manifest).
+  public var isHydrated: Bool { _files != nil }
+
+  /// Inverse of `isHydrated`. Used by the internal auto-hydrate path.
+  public var needsHydration: Bool { _files == nil }
+
+  /// Creates a new component descriptor with a declared file list.
   ///
   /// - Parameters:
   ///   - id: Unique identifier for this component.
@@ -116,8 +133,29 @@ public struct ComponentDescriptor: Sendable, Identifiable {
     self.type = type
     self.displayName = displayName
     self.repoId = repoId
-    self.files = files
-    self.estimatedSizeBytes = estimatedSizeBytes
+    self._files = files
+    self._estimatedSizeBytes = estimatedSizeBytes
+    self.minimumMemoryBytes = minimumMemoryBytes
+    self.metadata = metadata
+  }
+
+  /// Creates an un-hydrated component descriptor.
+  ///
+  /// The file list and estimated size are fetched from the CDN manifest on first use.
+  public init(
+    id: String,
+    type: ComponentType,
+    displayName: String,
+    repoId: String,
+    minimumMemoryBytes: Int64,
+    metadata: [String: String] = [:]
+  ) {
+    self.id = id
+    self.type = type
+    self.displayName = displayName
+    self.repoId = repoId
+    self._files = nil
+    self._estimatedSizeBytes = nil
     self.minimumMemoryBytes = minimumMemoryBytes
     self.metadata = metadata
   }

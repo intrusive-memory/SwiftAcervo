@@ -1,199 +1,98 @@
----
-operation_name: Operation Swift Ascendant
-mission_slug: model-download-manager
-mission_number: 01
-starting_commit: af8389fa180dfba08d32af1b3892fbf38a8b1afe
-starting_branch: development
-mission_branch: mission/model-download-manager/01
-execution_plan: EXECUTION_PLAN.md
-created_at: 2026-04-17T00:00:00Z
----
+# SUPERVISOR_STATE.md — OPERATION TRIPWIRE GAUNTLET
 
-# SUPERVISOR_STATE: Operation Swift Ascendant
+## Mission Metadata
+
+| Field | Value |
+|-------|-------|
+| Operation | OPERATION TRIPWIRE GAUNTLET |
+| Iteration | 02 |
+| Starting point commit | `68f5456d351e87746b571fa11177fd3519bfe28a` |
+| Mission branch | `mission/tripwire-gauntlet/02` |
+| Base branch | `development` |
+| Commenced | 2026-04-23 |
+| Supervisor | claude-opus-4-7 (1M context) |
 
 ## Terminology
 
-**Mission** — The definable scope of work: Create ModelDownloadManager actor with comprehensive tests and documentation.
+> **Mission** — Definable, testable scope of work. Decomposes into sorties.
+> **Sortie** — Atomic, testable unit executed by a single autonomous agent in one dispatch.
+> **Work Unit** — A grouping of sorties (package, component, phase).
 
-**Sortie** — Atomic agent tasks within the mission (one clear objective per dispatch):
-1. Implement ModelDownloadManager.swift
-2. Add comprehensive tests
-3. Update AGENTS.md with API docs
-4. Add example documentation
+## Plan Summary
 
-**Work Unit** — The grouping of all sorties for this mission (ModelDownloadManager).
+- Work units: 1
+- Total sorties: 15
+- Dependency structure: 5 layers (1→2→3→4→5, with parallel within each layer)
+- Dispatch mode: dynamic (no explicit template in plan)
+- Max concurrent agents: 4
+- max_retries: 3
 
----
+## Work Units
 
-## Mission Overview
+| Name | Directory | Sorties | Dependencies |
+|------|-----------|---------|--------------|
+| Testing Hardening | `/Users/stovak/Projects/SwiftAcervo` | 15 | none |
 
-**Operation**: Swift Ascendant  
-**Project**: SwiftAcervo  
-**Scope**: ModelDownloadManager actor with tests and documentation  
-**Status**: RUNNING
+## Sortie Graph (Dependencies)
 
----
+- Layer 1: **1, 2, 3** — no prerequisites.
+- Layer 2: **4, 5, 6** — each blocked by 3.
+- Layer 3: **7, 8, 9** — each blocked by 1 AND 2.
+- Layer 4: **10, 11, 12, 13, 14** — each blocked by all of 1–9.
+- Layer 5: **15** — blocked by 10, 11, 12, 13, 14.
 
-## Work Unit: ModelDownloadManager
+## Work Unit State
 
-| State | COMPLETED |
-|-------|-----------|
-| Total Sorties | 4 |
-| Completed | 4 |
-| In Progress | 0 |
-| Pending | 0 |
+### Testing Hardening
+- Work unit state: RUNNING
+- Current wave: **Wave 1** (Layer 1 — Sorties 1, 2, 3)
+- Dispatched sorties this wave: 3
+- Last verified: mission init — frontmatter + branch committed
+- Notes: Entry criteria for Wave 1 pre-verified (grep of `AcervoDownloader.swift` and `Acervo.swift` confirmed target line numbers; `MockURLProtocol.swift` and prior `CustomBaseDirectorySuite.swift` stub present).
 
-### Sortie Queue
+## Sortie States
 
-#### Sortie 1/4: Implement ModelDownloadManager.swift
-- **Status**: COMPLETED ✅
-- **Assigned to**: Agent (Opus 4.7)
-- **Model**: Opus 4.7 (critical path, complex actor implementation)
-- **Objective**: Create `ModelDownloadManager` actor with `ensureModelsAvailable()` and `validateCanDownload()` methods
-- **Entry Criteria**:
-  - SwiftAcervo sources available at `Sources/SwiftAcervo/`
-  - `Acervo` API documented in AGENTS.md
-  - `AcervoError` types understood
-- **Exit Criteria**:
-  - [ ] File `Sources/SwiftAcervo/ModelDownloadManager.swift` created
-  - [ ] Actor compiles with Swift 6 strict concurrency
-  - [ ] `shared` singleton properly initialized
-  - [ ] `ensureModelsAvailable(modelIds:progress:)` implementation downloads each model via Acervo
-  - [ ] `validateCanDownload(modelIds:)` implementation fetches manifests and returns total bytes
-  - [ ] `ModelDownloadProgress` struct defined with all fields (model, fraction, bytesDownloaded, bytesTotal, currentFileName)
-  - [ ] Error handling: catches AcervoError, logs context, re-throws unchanged
-  - [ ] `make build` succeeds
-  - [ ] No warnings or type mismatches
-- **Context Files**:
-  - `EXECUTION_PLAN.md` (Phase 1 section)
-  - `AGENTS.md` (Acervo API reference)
-  - `Sources/SwiftAcervo/AcervoError.swift` (error types)
-  - `Sources/SwiftAcervo/Acervo.swift` (public API)
+| # | Name | Layer | State | Attempt | Model | Score | Depends on | Complete? |
+|---|------|-------|-------|---------|-------|-------|------------|-----------|
+| 1 | Thread `session:` through file-download path | 1 | DISPATCHED | 1/3 | opus | 14 | — | ☐ |
+| 2 | Test-isolation primitive (customBaseDirectory + registry) | 1 | DISPATCHED | 1/3 | opus | 14 | — | ☐ |
+| 3 | Promote `fetchManifest(…, session:)` overloads to public | 1 | DISPATCHED | 1/3 | sonnet | 11 | — | ☐ |
+| 4 | Behavior tests for `fetchManifest(for:)` via public API | 2 | PENDING | 0/3 | — | — | 3 | ☐ |
+| 5 | Manifest error-mode tests (decode / integrity / version) | 2 | PENDING | 0/3 | — | — | 3 | ☐ |
+| 6 | HydrationCoalescer error-path + re-fetch tests | 2 | PENDING | 0/3 | — | — | 3 | ☐ |
+| 7 | E2E `downloadComponent` auto-hydration test | 3 | PENDING | 0/3 | — | — | 1, 2 | ☐ |
+| 8 | Registry-level SHA-256 cross-check failure test | 3 | PENDING | 0/3 | — | — | 1, 2 | ☐ |
+| 9 | `ensureAvailable(files: [])` empty-files tests | 3 | PENDING | 0/3 | — | — | 1, 2 | ☐ |
+| 10 | `ShipCommand.swift` unit tests | 4 | PENDING | 0/3 | — | — | 1–9 | ☐ |
+| 11 | `DownloadCommand.swift` unit tests | 4 | PENDING | 0/3 | — | — | 1–9 | ☐ |
+| 12 | `UploadCommand.swift` unit tests | 4 | PENDING | 0/3 | — | — | 1–9 | ☐ |
+| 13 | `VerifyCommand.swift` unit tests | 4 | PENDING | 0/3 | — | — | 1–9 | ☐ |
+| 14 | `ManifestCommand.swift` unit tests | 4 | PENDING | 0/3 | — | — | 1–9 | ☐ |
+| 15 | Audit + document CI gating for integration tests | 5 | PENDING | 0/3 | — | — | 10–14 | ☐ |
 
----
+## Active Agents
 
-#### Sortie 2/4: Add Comprehensive Tests
-- **Status**: PENDING
-- **Assigned to**: (awaiting dispatch after Sortie 1)
-- **Model**: Sonnet 4.6 (test writing, moderate complexity)
-- **Objective**: Write 6 test cases for ModelDownloadManager covering happy path, errors, and edge cases
-- **Entry Criteria**:
-  - Sortie 1 complete and verified (`ModelDownloadManager.swift` exists and compiles)
-  - Understanding of test mocking with temporary directories
-- **Exit Criteria**:
-  - [ ] File `Tests/SwiftAcervoTests/ModelDownloadManagerTests.swift` created
-  - [ ] 6 test functions implemented:
-    - `testEnsureModelsAvailableWhenAlreadyLocal()`
-    - `testEnsureModelsAvailableDownloadsWhenMissing()`
-    - `testProgressAggregatesAcrossMultipleModels()`
-    - `testValidateCanDownloadReturnsTotalBytes()`
-    - `testErrorHandlingCatchesAcervoErrors()`
-    - `testCancellationStopsDownloadSequence()`
-  - [ ] All tests use temporary model directory for isolation
-  - [ ] All 6 tests pass: `make test` succeeds
-  - [ ] No test warnings or flaky assertions
-- **Context Files**:
-  - `EXECUTION_PLAN.md` (Phase 2 section with test cases)
-  - `Sources/SwiftAcervo/ModelDownloadManager.swift` (implementation to test)
-  - `Tests/SwiftAcervoTests/` (existing test patterns)
-
----
-
-#### Sortie 3/4: Update AGENTS.md
-- **Status**: PENDING
-- **Assigned to**: (awaiting dispatch after Sortie 1, can parallel with Sorties 2-4)
-- **Model**: Haiku 4.5 (documentation writing, straightforward)
-- **Objective**: Add ModelDownloadManager section to AGENTS.md with usage examples, API reference, and best practices
-- **Entry Criteria**:
-  - Sortie 1 complete (ModelDownloadManager.swift exists)
-  - AGENTS.md structure understood
-- **Exit Criteria**:
-  - [ ] New `## ModelDownloadManager` section added after "Component Registry Methods" section
-  - [ ] Usage example block complete with consuming library pattern
-  - [ ] API reference table documents both public methods (`ensureModelsAvailable`, `validateCanDownload`)
-  - [ ] `ModelDownloadProgress` struct documentation with all fields
-  - [ ] Error handling section lists all AcervoError cases (modelNotFound, manifestChecksumMismatch, downloadFailed, checksumMismatch)
-  - [ ] Best practices section has ≥5 numbered items
-  - [ ] "Best Practices for Consuming Libraries" section updated to reference ModelDownloadManager
-  - [ ] No markdown syntax errors
-- **Context Files**:
-  - `EXECUTION_PLAN.md` (Phase 3 section)
-  - `AGENTS.md` (existing structure and format)
-  - `Sources/SwiftAcervo/ModelDownloadManager.swift` (API to document)
-
----
-
-#### Sortie 4/4: Add Example Documentation
-- **Status**: PENDING
-- **Assigned to**: (awaiting dispatch after Sortie 1, can parallel with Sorties 2-3)
-- **Model**: Haiku 4.5 (documentation writing, straightforward)
-- **Objective**: Create `Docs/ModelDownloadManager-Examples.md` with usage examples
-- **Entry Criteria**:
-  - Sortie 1 complete (ModelDownloadManager.swift exists)
-  - Docs directory structure understood
-- **Exit Criteria**:
-  - [ ] File `Docs/ModelDownloadManager-Examples.md` created
-  - [ ] Contains ≥3 distinct examples:
-    - Single model download example
-    - Multiple models with custom progress UI example
-    - Error handling patterns example
-  - [ ] Disk space validation workflow example included
-  - [ ] Cancellation and resume behavior example included
-  - [ ] All code examples are valid Swift and match actual API
-  - [ ] No markdown syntax errors
-- **Context Files**:
-  - `EXECUTION_PLAN.md` (Phase 4 section)
-  - `Sources/SwiftAcervo/ModelDownloadManager.swift` (API to document)
-  - `Docs/` (existing documentation patterns)
-
----
-
-## Dispatch Log
-
-### Dispatch 1: Sortie 1/4 (Implement ModelDownloadManager)
-- **Dispatched at**: [PENDING]
-- **Status**: PENDING
-- **Task ID**: [awaiting dispatch]
-- **Attempt**: 0/3
-
----
+| Work Unit | Sortie | State | Attempt | Model | Score | Task ID | Dispatched At |
+|-----------|--------|-------|---------|-------|-------|---------|---------------|
+| Testing Hardening | 1 | DISPATCHED | 1/3 | opus | 14 | (pending) | 2026-04-23 |
+| Testing Hardening | 2 | DISPATCHED | 1/3 | opus | 14 | (pending) | 2026-04-23 |
+| Testing Hardening | 3 | DISPATCHED | 1/3 | sonnet | 11 | (pending) | 2026-04-23 |
 
 ## Decisions Log
 
-**Decision 1: Mocking Strategy** (LOCKED)
-- Integration tests use temporary model directories, not mocks
-- Rationale: Simpler, more realistic, no architecture changes
-- Status: Accepted by maintainer
+| Timestamp | Work Unit | Sortie | Decision | Rationale |
+|-----------|-----------|--------|----------|-----------|
+| 2026-04-23 | — | — | Operation named TRIPWIRE GAUNTLET | Testing hardening = tripwires laid across every code path (gauntlet) before release ship sails. |
+| 2026-04-23 | — | — | Mission branch `mission/tripwire-gauntlet/02` cut from `development@68f5456` | Iteration 02: prior `OPERATION_SWIFT_ASCENDANT_01_BRIEF.md` exists. |
+| 2026-04-23 | Testing Hardening | 1 | Model: opus | Score 14: 25-turn refactor across core download path + foundation for 3 downstream sorties + file I/O risk. |
+| 2026-04-23 | Testing Hardening | 2 | Model: opus | Score 14: 4-file test-infra refactor + foundation for 3 downstream sorties + historical flake risk. |
+| 2026-04-23 | Testing Hardening | 3 | Model: sonnet | Score 11: additive public API, specific line numbers, foundation for 3 downstream sorties but low implementation risk. |
+| 2026-04-23 | — | — | Wave 1 dispatched: Sorties 1, 2, 3 in parallel | Layer 1 has no prerequisites; 3 concurrent agents fits within 4-agent cap. |
 
-**Decision 2: Acervo.ensureAvailable() Semantics** (LOCKED)
-- Empty `files: []` array downloads all files in manifest
-- Rationale: Intended behavior, verified acceptable
-- Status: Confirmed
+## Operational Rules In Force
 
-**Decision 3: Error Handling** (LOCKED)
-- Re-throw `AcervoError` unchanged (no wrapping)
-- Manager logs context internally, consumer libraries wrap to app-specific errors
-- Rationale: Simpler API contract, matches existing patterns
-- Status: Finalized
-
-**Decision 4: Progress Aggregation** (LOCKED)
-- Cumulative bytes across all models via `CDNManifest.sizeBytes`
-- Rationale: Accurate, reflects real user download experience
-- Status: Confirmed via code audit
-
-**Decision 5: Disk Space Validation** (LOCKED)
-- Manifest fetch approach acceptable (~100-500ms per model)
-- Intended for pre-flight UI checks
-- Rationale: Cost is unavoidable anyway; manifests re-fetched during download
-- Status: Accepted
-
----
-
-## Notes
-
-- All sorties ready for execution
-- Sortie 1 is on critical path; must complete before others can fully begin
-- Sorties 2-4 can parallelize after Sortie 1 completes
-- Estimated total time: ~3-3.5 hours
-- Build verification: `make build` after each sortie completion
-- Test verification: `make test` after Sortie 2
+- One sortie per agent. Each agent is atomic end-to-end; no sub-agent spawning.
+- `make test` is the authoritative build/test gate (not raw `xcodebuild`).
+- State writes precede dispatch (crash-safety).
+- Exit criteria must be machine-verifiable before any sortie is marked COMPLETED.
+- Layer gating is strict: Layer N+1 waits on every cited dependency in Layer ≤ N.
