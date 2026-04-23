@@ -26,13 +26,14 @@
 
   @testable import acervo
 
-  /// Unit tests for `ShipCommand` argument parsing and early-pipeline error
-  /// surfacing. No live R2 uploads or HuggingFace downloads are performed.
-  ///
-  /// All tests that mutate process-wide state (PATH, R2_BUCKET, R2_ENDPOINT) are
-  /// nested here under `.serialized` to prevent concurrent races.
-  @Suite("ShipCommand Tests", .serialized)
-  final class ShipCommandTests {
+  extension ProcessEnvironmentSuite {
+    /// Unit tests for `ShipCommand` argument parsing and early-pipeline error
+    /// surfacing. No live R2 uploads or HuggingFace downloads are performed.
+    ///
+    /// The `.serialized` trait is provided by the parent `ProcessEnvironmentSuite`,
+    /// which serializes all tests that mutate process-wide state (PATH, R2_BUCKET, R2_ENDPOINT).
+    @Suite("ShipCommand Tests")
+    final class ShipCommandTests {
 
     private let fm = FileManager.default
     private var tempBinDir: URL!
@@ -311,6 +312,7 @@
       }
       #expect(cmd.modelId == "org/repo")
       #expect(cmd.files == ["config.json", "tokenizer.json"])
+    }
     }
   }
 #endif
