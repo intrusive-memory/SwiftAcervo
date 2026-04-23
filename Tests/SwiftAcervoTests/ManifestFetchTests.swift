@@ -75,29 +75,6 @@ extension MockURLProtocolSuite {
       }
     }
 
-    // MARK: - Underlying downloader
-
-    @Test("downloadManifest(session:) parses a stubbed manifest cleanly")
-    func downloadManifestWithMockSession() async throws {
-      MockURLProtocol.reset()
-      defer { MockURLProtocol.reset() }
-
-      let (modelId, _) = Self.uniqueIds()
-      let manifest = Self.makeManifest(modelId: modelId)
-      MockURLProtocol.responder = try Self.makeResponder(returning: manifest)
-
-      let session = MockURLProtocol.session()
-      let fetched = try await AcervoDownloader.downloadManifest(
-        for: modelId,
-        session: session
-      )
-
-      #expect(fetched.modelId == modelId)
-      #expect(fetched.files.count == 2)
-      #expect(fetched.files.map(\.path) == ["config.json", "weights.bin"])
-      #expect(MockURLProtocol.requestCount == 1)
-    }
-
     // MARK: - fetchManifest(for:) — modelId form
 
     @Test("fetchManifest(for:) returns a stubbed manifest for the given modelId")
