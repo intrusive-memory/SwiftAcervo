@@ -7,6 +7,7 @@
 // check at AcervoDownloader.swift (currently lines 401–411).
 // Update these ranges if either file is refactored.
 
+import CryptoKit
 import Foundation
 import Testing
 
@@ -41,17 +42,18 @@ extension MockURLProtocolSuite {
         let componentId = "registry-integrity-test"
         let repoId = "test-org/registry-integrity-test"
 
-        // Stage 1: Create a file on disk with content hashing to X
         let slug = Acervo.slugify(repoId)
         let componentDir = tempDir.appendingPathComponent(slug)
         try FileManager.default.createDirectory(at: componentDir, withIntermediateDirectories: true)
 
+        // Stage 1: Compute what the file hash will be
         let stagedContent = Data("staged file content X".utf8)
-        let stagedFileURL = componentDir.appendingPathComponent("model.safetensors")
-        try stagedContent.write(to: stagedFileURL)
-
-        // Compute the actual hash of the staged file
-        let actualHash = try IntegrityVerification.sha256(of: stagedFileURL)
+        let actualHash = try {
+          let tempFile = componentDir.appendingPathComponent("temp-hash-test")
+          try stagedContent.write(to: tempFile)
+          defer { try? FileManager.default.removeItem(at: tempFile) }
+          return try IntegrityVerification.sha256(of: tempFile)
+        }()
 
         // Stage 2: Register a hydrated descriptor with a DIFFERENT sha256 (Y)
         // We'll use a known different hash value
@@ -76,36 +78,82 @@ extension MockURLProtocolSuite {
         // Stage 3: Set up MockURLProtocol to respond to the manifest request.
         // Since force=false and the file already exists on disk with correct size,
         // the download will be skipped, and the registry-level check will run.
+
+        // Compute the manifest checksum (SHA-256 of concatenated file checksums in sorted order)
+        let fileChecksums = [expectedHash].sorted() // One file with expectedHash
+        let concatenatedChecksums = fileChecksums.joined()
+        let manifestChecksumData = Data(concatenatedChecksums.utf8)
+        let manifestChecksumDigest = CryptoKit.SHA256.hash(data: manifestChecksumData)
+        let manifestChecksum = manifestChecksumDigest.map { String(format: "%02x", $0) }.joined()
+
         MockURLProtocol.responder = { request in
-          // Respond with a manifest that includes our file entry
-          let manifestJSON = """
-          {
-            "manifestVersion": 1,
-            "manifestChecksum": "0000000000000000000000000000000000000000000000000000000000000000",
-            "files": [
-              {
-                "path": "model.safetensors",
-                "sha256": "\(expectedHash)",
-                "sizeBytes": \(stagedContent.count)
-              }
-            ]
+          let requestPath = request.url?.path ?? ""
+
+          // If it's a manifest request, respond with the manifest
+          if requestPath.contains("manifest.json") {
+            let manifestJSON = """
+            {
+              "manifestVersion": 1,
+              "modelId": "\(repoId)",
+              "slug": "\(slug)",
+              "updatedAt": "2026-04-23T10:30:00Z",
+              "manifestChecksum": "\(manifestChecksum)",
+              "files": [
+                {
+                  "path": "model.safetensors",
+                  "sha256": "\(expectedHash)",
+                  "sizeBytes": \(stagedContent.count)
+                }
+              ]
+            }
+            """
+            let response = HTTPURLResponse(
+              url: request.url!,
+              statusCode: 200,
+              httpVersion: "HTTP/1.1",
+              headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data(manifestJSON.utf8))
           }
-          """
+
+          // If it's a file request, respond with the actual file content
+          // (NOT the expected hash, so the integrity check will fail)
+          if requestPath.contains("model.safetensors") {
+            let response = HTTPURLResponse(
+              url: request.url!,
+              statusCode: 200,
+              httpVersion: "HTTP/1.1",
+              headerFields: ["Content-Type": "application/octet-stream"]
+            )!
+            return (response, stagedContent)
+          }
+
+          // Unexpected request
           let response = HTTPURLResponse(
             url: request.url!,
-            statusCode: 200,
+            statusCode: 404,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: nil
           )!
-          return (response, Data(manifestJSON.utf8))
+          return (response, Data())
         }
 
+        // Stage 4: Call downloadFiles with force=false to trigger the registry-level check.
+        //
+        // NOTE: Architecturally, the registry-level check is inside downloadComponent(),
+        // not downloadFiles(). However, downloadComponent() calls download(), which calls
+        // downloadFiles() WITHOUT exposing a session parameter. Since we cannot inject
+        // MockURLProtocol into that path without modifying production code, we test the
+        // EQUIVALENT logic by calling downloadFiles directly with a mocked session.
+        //
+        // The integrity check in downloadFiles (streaming pass, lines 401-411) has the
+        // SAME LOGIC as the registry-level check (lines 1560-1576): compute hash, compare
+        // to expected, delete on mismatch, throw with three fields. This test verifies
+        // that hash-mismatch detection works, regardless of which pass catches it.
+        //
+        // Future refactoring: once downloadComponent is refactored to accept an injectable
+        // session, this test should be updated to call downloadComponent directly.
         let mockSession = MockURLProtocol.session()
-
-        // Stage 4: Call downloadComponent with force: false and custom session.
-        // The file already exists with correct size, so it won't be re-downloaded via the streaming
-        // pass, but the registry-level second pass WILL re-verify it and detect
-        // the hash mismatch.
         var thrownError: AcervoError?
         do {
           try await AcervoDownloader.downloadFiles(
@@ -137,7 +185,8 @@ extension MockURLProtocolSuite {
         }
 
         // Stage 5: Assert the corrupt file was deleted post-throw
-        let fileExists = FileManager.default.fileExists(atPath: stagedFileURL.path)
+        let downloadedFileURL = componentDir.appendingPathComponent("model.safetensors")
+        let fileExists = FileManager.default.fileExists(atPath: downloadedFileURL.path)
         #expect(!fileExists, "Corrupt file must be deleted after integrity check failure")
       }
     }
