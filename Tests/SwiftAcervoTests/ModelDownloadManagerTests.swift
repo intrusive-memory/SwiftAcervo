@@ -59,8 +59,15 @@ private actor ProgressCollector {
 
 // MARK: - Tests
 
-@Suite("ModelDownloadManager Integration Tests")
-struct ModelDownloadManagerTests {
+extension CustomBaseDirectorySuite {
+
+  /// Integration tests for `ModelDownloadManager`.
+  ///
+  /// Nested under `CustomBaseDirectorySuite` (`.serialized`) so the
+  /// `Acervo.customBaseDirectory` writes performed by these tests do not
+  /// race with other suites that read or write the same global.
+  @Suite("ModelDownloadManager Integration Tests")
+  struct ModelDownloadManagerTests {
 
   // MARK: Test 1: Already-Local Model
 
@@ -434,3 +441,5 @@ struct ModelDownloadManagerTests {
     }
   }
 }
+
+}  // extension CustomBaseDirectorySuite

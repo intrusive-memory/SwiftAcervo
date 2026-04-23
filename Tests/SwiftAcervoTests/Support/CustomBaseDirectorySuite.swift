@@ -1,3 +1,7 @@
+// OPERATION TRIPWIRE GAUNTLET Sortie 2 decision: apply BOTH options — (a) `.serialized`
+// parent suite (this file) AND (b) `withIsolatedAcervoState` snapshot/restore helper
+// (see ComponentRegistryIsolation.swift).
+
 import Testing
 
 /// Shared parent suite for every test that reads or writes
