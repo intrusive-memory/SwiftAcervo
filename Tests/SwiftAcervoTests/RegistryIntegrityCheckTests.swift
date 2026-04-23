@@ -114,7 +114,7 @@ extension MockURLProtocolSuite {
             path: "model.safetensors",
             sha256: expectedHash,
             sizeBytes: Int64(servedContent.count)
-          ),
+          )
         ]
         let manifest = CDNManifest(
           manifestVersion: CDNManifest.supportedVersion,
@@ -164,7 +164,7 @@ extension MockURLProtocolSuite {
           return
         }
 
-        if case let .integrityCheckFailed(file: f, expected: e, actual: a) = err {
+        if case .integrityCheckFailed(file: let f, expected: let e, actual: let a) = err {
           #expect(f == "model.safetensors", "file field must match")
           #expect(e == expectedHash, "expected field must match manifest sha256")
           #expect(a == actualHash, "actual field must match the served content's hash")
@@ -240,7 +240,7 @@ extension MockURLProtocolSuite {
           displayName: "Registry Integrity Test",
           repoId: repoId,
           files: [
-            ComponentFile(relativePath: "model.safetensors", sha256: expectedHash),
+            ComponentFile(relativePath: "model.safetensors", sha256: expectedHash)
           ],
           estimatedSizeBytes: Int64(stagedContent.count),
           minimumMemoryBytes: 200
@@ -299,7 +299,7 @@ extension MockURLProtocolSuite {
           return
         }
 
-        if case let .integrityCheckFailed(file: f, expected: e, actual: a) = err {
+        if case .integrityCheckFailed(file: let f, expected: let e, actual: let a) = err {
           #expect(f == "model.safetensors", "file field must match relativePath")
           #expect(e == expectedHash, "expected field must match descriptor sha256")
           #expect(a == actualHash, "actual field must match on-disk file hash")

@@ -69,7 +69,8 @@ extension MockURLProtocolSuite {
 
       try await withIsolatedAcervoState {
         let modelId = "ensure-test/empty-files-\(UUID().uuidString.prefix(8))"
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+          UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -126,8 +127,12 @@ extension MockURLProtocolSuite {
         let tokenizerPath = modelDir.appendingPathComponent("tokenizer.model")
 
         #expect(FileManager.default.fileExists(atPath: configPath.path), "config.json should exist")
-        #expect(FileManager.default.fileExists(atPath: weightsPath.path), "weights.safetensors should exist")
-        #expect(FileManager.default.fileExists(atPath: tokenizerPath.path), "tokenizer.model should exist")
+        #expect(
+          FileManager.default.fileExists(atPath: weightsPath.path),
+          "weights.safetensors should exist")
+        #expect(
+          FileManager.default.fileExists(atPath: tokenizerPath.path), "tokenizer.model should exist"
+        )
 
         // Verify request count: 1 manifest + 3 files = 4
         #expect(MockURLProtocol.requestCount == 4, "Should have made 1 manifest + 3 file requests")
@@ -143,7 +148,8 @@ extension MockURLProtocolSuite {
 
       try await withIsolatedAcervoState {
         let modelId = "ensure-test/named-subset-\(UUID().uuidString.prefix(8))"
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+          UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -195,8 +201,12 @@ extension MockURLProtocolSuite {
         let tokenizerPath = modelDir.appendingPathComponent("tokenizer.model")
 
         #expect(FileManager.default.fileExists(atPath: configPath.path), "config.json should exist")
-        #expect(!FileManager.default.fileExists(atPath: weightsPath.path), "weights.safetensors should NOT exist")
-        #expect(!FileManager.default.fileExists(atPath: tokenizerPath.path), "tokenizer.model should NOT exist")
+        #expect(
+          !FileManager.default.fileExists(atPath: weightsPath.path),
+          "weights.safetensors should NOT exist")
+        #expect(
+          !FileManager.default.fileExists(atPath: tokenizerPath.path),
+          "tokenizer.model should NOT exist")
 
         // Verify request count: 1 manifest + 1 file = 2
         #expect(MockURLProtocol.requestCount == 2, "Should have made 1 manifest + 1 file request")
@@ -212,7 +222,8 @@ extension MockURLProtocolSuite {
 
       try await withIsolatedAcervoState {
         let modelId = "ensure-test/not-in-manifest-\(UUID().uuidString.prefix(8))"
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+          UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 

@@ -139,12 +139,13 @@
 
       @Test("HF smoke test: stub hf binary + --no-verify produces no-throw outcome")
       func huggingFaceSmokeTestNoVerify() async throws {
-        var cmd = try AcervoCLI.parseAsRoot([
-          "download",
-          "org/smoke-test",
-          "--no-verify",
-          "--output", tempStagingDir.path,
-        ]) as! DownloadCommand
+        var cmd =
+          try AcervoCLI.parseAsRoot([
+            "download",
+            "org/smoke-test",
+            "--no-verify",
+            "--output", tempStagingDir.path,
+          ]) as! DownloadCommand
 
         // run() must complete without throwing.
         // The stub `hf` exits 0, the staging dir exists, and --no-verify skips
@@ -175,11 +176,12 @@
 
       @Test("Unsupported --source value surfaces ValidationError before any download")
       func unsupportedSourceSurfacesError() async throws {
-        var cmd = try AcervoCLI.parseAsRoot([
-          "download",
-          "org/repo",
-          "--source", "s3",
-        ]) as! DownloadCommand
+        var cmd =
+          try AcervoCLI.parseAsRoot([
+            "download",
+            "org/repo",
+            "--source", "s3",
+          ]) as! DownloadCommand
 
         var thrown: Error?
         do {
@@ -203,7 +205,8 @@
       // walks a local directory. This test exercises it directly without spawning any
       // subprocess or calling HuggingFaceClient.
 
-      @Test("enumerateDownloadedFiles returns sorted regular files, skipping hidden and excluded names")
+      @Test(
+        "enumerateDownloadedFiles returns sorted regular files, skipping hidden and excluded names")
       func enumerateDownloadedFilesHelper() throws {
         let baseURL = tempStagingDir.appendingPathComponent("enum-test-\(UUID().uuidString)")
         try fm.createDirectory(at: baseURL, withIntermediateDirectories: true)

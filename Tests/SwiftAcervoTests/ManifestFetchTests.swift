@@ -153,7 +153,9 @@ extension MockURLProtocolSuite {
       #expect(MockURLProtocol.requestCount == 1)
     }
 
-    @Test("fetchManifest(forComponent:) throws componentNotRegistered for an unknown id without hitting the network")
+    @Test(
+      "fetchManifest(forComponent:) throws componentNotRegistered for an unknown id without hitting the network"
+    )
     func fetchManifestForComponentUnknownThrows() async throws {
       MockURLProtocol.reset()
       defer { MockURLProtocol.reset() }

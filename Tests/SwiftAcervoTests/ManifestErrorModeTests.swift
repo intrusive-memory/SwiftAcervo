@@ -168,7 +168,7 @@ extension MockURLProtocolSuite {
           path: "config.json",
           sha256: "0000000000000000000000000000000000000000000000000000000000000001",
           sizeBytes: 16
-        ),
+        )
       ]
       let slug = modelId.replacingOccurrences(of: "/", with: "_")
 
@@ -223,7 +223,7 @@ extension MockURLProtocolSuite {
           path: "config.json",
           sha256: "0000000000000000000000000000000000000000000000000000000000000001",
           sizeBytes: 16
-        ),
+        )
       ]
       let slug = modelId.replacingOccurrences(of: "/", with: "_")
 

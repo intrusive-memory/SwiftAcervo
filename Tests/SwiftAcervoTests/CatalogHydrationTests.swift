@@ -15,7 +15,9 @@ extension MockURLProtocolSuite {
 
     private let uid = UUID().uuidString.prefix(8)
 
-    @Test("pendingComponents excludes un-hydrated descriptors; totalCatalogSize and unhydratedComponents are correct")
+    @Test(
+      "pendingComponents excludes un-hydrated descriptors; totalCatalogSize and unhydratedComponents are correct"
+    )
     func hydrationAwarenessInCatalog() throws {
       let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("CatalogHydrationTests-\(UUID().uuidString)")
