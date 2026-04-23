@@ -15,7 +15,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - `AcervoManager` actor for thread-safe operations with per-model locking
 - CDN-only downloads with per-file SHA-256 manifest verification
 - `SecureDownloadSession` that rejects redirects to non-CDN domains
-- Component registry for declarative model component management
+- Component registry for declarative model component management, with v0.8.0 bare `ComponentDescriptor.init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)` for un-hydrated registration
+- `Acervo.hydrateComponent(_:)` / `Acervo.ensureComponentReady(_:)` for manifest-driven descriptor population (auto-hydrate on first use)
+- `Acervo.fetchManifest(for: modelId)` and `Acervo.fetchManifest(forComponent: componentId)` for raw manifest access without downloads
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
 - `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download
@@ -26,6 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - All downloads go through the private R2 CDN
 - `config.json` presence is the universal model validity marker
 - Canonical path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
+- Manifest-first file selection: consumers do not know what files exist until the CDN manifest returns; the manifest is the sole authoritative source, and names not in it throw `AcervoError.fileNotInManifest`.
 
 ---
 

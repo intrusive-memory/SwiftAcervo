@@ -47,10 +47,11 @@ LLM, TTS, audio, and vision models are all peers in the same flat directory. The
 **For app and library developers integrating SwiftAcervo**, start here:
 
 - **[USAGE.md](USAGE.md)** — Complete integration guide
+  - The manifest-first principle (you don't name files; the manifest does)
+  - Three ways to avoid naming files (batch, single-model, registered component)
   - How to add SwiftAcervo to your project
-  - Common patterns and best practices
-  - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta)
-  - Error handling and FAQ
+  - Common patterns, error handling, FAQ
+  - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta, Produciesta)
 
 **For complete API reference**, see [API_REFERENCE.md](API_REFERENCE.md).
 
@@ -126,18 +127,31 @@ if Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit") {
 }
 ```
 
-### Download a model
+### Download a model (manifest-first)
+
+Consumers don't name files. The CDN manifest is the authoritative source for what's in a model; pass `files: []` to download everything the manifest lists.
 
 ```swift
 try await Acervo.ensureAvailable(
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"]
+    files: []     // empty = "download everything in the manifest"
 ) { progress in
     print("\(progress.fileName): \(Int(progress.overallProgress * 100))%")
 }
 ```
 
-`ensureAvailable` skips the download if the model is already present. Use `download` with `force: true` to re-download regardless.
+For multi-model startup, prefer the batch form:
+
+```swift
+try await ModelDownloadManager.shared.ensureModelsAvailable([
+    "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
+]) { progress in
+    print("[\(progress.model)] \(Int(progress.fraction * 100))%")
+}
+```
+
+`ensureAvailable` skips the download if the model is already present. Use `Acervo.download(_:files:force:progress:)` with `force: true` to re-download regardless. Pinning a specific file subset (e.g., `files: ["config.json", "model.safetensors"]`) is supported as an escape hatch; see [USAGE.md](USAGE.md#pinning-a-specific-subset-escape-hatch) for when to reach for it.
 
 ### CLI progress bars
 
@@ -159,10 +173,10 @@ func renderBar(_ fraction: Double, label: String) {
     fflush(stdout)
 }
 
-// Single-model download
+// Single-model download — manifest drives the file list.
 try await Acervo.ensureAvailable(
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "model.safetensors"]
+    files: []
 ) { progress in
     renderBar(progress.overallProgress, label: progress.fileName)
 }
@@ -224,10 +238,10 @@ try Acervo.deleteModel("mlx-community/Qwen2.5-7B-Instruct-4bit")
 For concurrent environments, use `AcervoManager`. It serializes downloads of the same model while allowing different models to download in parallel:
 
 ```swift
-// Download with per-model locking
+// Download with per-model locking. `files: []` = whatever the manifest says.
 try await AcervoManager.shared.download(
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "model.safetensors"]
+    files: []
 )
 
 // Exclusive access to a model directory
@@ -373,23 +387,28 @@ SwiftAcervo is the model management layer for the [intrusive-memory](https://git
 
 ```swift
 import SwiftAcervo
-import SwiftBruja
+import MLXLLM
+import MLXLMCommon
+import MLXLMTokenizers
 
 let modelId = "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
-// Ensure the model is downloaded
-try await Acervo.ensureAvailable(modelId, files: [
-    "config.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "model.safetensors"
-])
+// Manifest-first download: no file list, no guesswork.
+try await Acervo.ensureAvailable(modelId, files: []) { progress in
+    print("\(progress.fileName): \(Int(progress.overallProgress * 100))%")
+}
 
-// Get the local directory and load with MLX
+// Guard on the local validity marker, then load with MLX.
+guard Acervo.isModelAvailable(modelId) else {
+    throw MyError.modelNotReady(modelId)
+}
 let modelDir = try Acervo.modelDirectory(for: modelId)
-let engine = try BrujaEngine(modelPath: modelDir)
-let response = try await engine.generate(prompt: "Explain quantum computing")
+let container: ModelContainer = try await LLMModelFactory.shared.loadContainer(
+    from: modelDir
+)
 ```
+
+This mirrors SwiftBruja's own `BrujaDownloadManager` and `BrujaModelManager`; see [USAGE.md](USAGE.md#reference-implementation-swiftbruja-mlx--tokenizers) for the full walkthrough.
 
 ### mlx-audio-swift (Text-to-Speech)
 
@@ -398,23 +417,16 @@ let response = try await engine.generate(prompt: "Explain quantum computing")
 ```swift
 import SwiftAcervo
 
-let ttsModelId = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
-let codecModelId = "mlx-community/snac_24khz"
+// Batch the TTS stack. The manifest for each model decides the file list.
+try await ModelDownloadManager.shared.ensureModelsAvailable([
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+    "mlx-community/snac_24khz"
+]) { progress in
+    print("[\(progress.model)] \(Int(progress.fraction * 100))%")
+}
 
-// Ensure both TTS and codec models are available
-try await Acervo.ensureAvailable(ttsModelId, files: [
-    "config.json",
-    "model.safetensors",
-    "speech_tokenizer/config.json"
-])
-try await Acervo.ensureAvailable(codecModelId, files: [
-    "config.json",
-    "model.safetensors"
-])
-
-// Both model directories are now ready for mlx-audio-swift to load
-let ttsDir = try Acervo.modelDirectory(for: ttsModelId)
-let codecDir = try Acervo.modelDirectory(for: codecModelId)
+let ttsDir = try Acervo.modelDirectory(for: "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16")
+let codecDir = try Acervo.modelDirectory(for: "mlx-community/snac_24khz")
 ```
 
 ### SwiftVoxAlta (Voice Processing)
@@ -426,12 +438,8 @@ import SwiftAcervo
 
 let voiceModelId = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16"
 
-// Thread-safe download with progress tracking
-try await AcervoManager.shared.download(voiceModelId, files: [
-    "config.json",
-    "model.safetensors",
-    "speech_tokenizer/config.json"
-]) { progress in
+// Thread-safe, manifest-driven download.
+try await AcervoManager.shared.download(voiceModelId, files: []) { progress in
     print("Voice model: \(Int(progress.overallProgress * 100))%")
 }
 
@@ -542,14 +550,15 @@ SwiftAcervo provides two levels of concurrency support:
 `AcervoManager` maintains a lock per model ID. Two concurrent downloads of the **same** model are serialized -- the second caller waits until the first completes. Downloads of **different** models proceed in parallel without blocking each other.
 
 ```swift
-// These two downloads run concurrently (different models)
+// These two downloads run concurrently (different models).
+// `files: []` = "download whatever the manifest says."
 async let llm: Void = AcervoManager.shared.download(
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "model.safetensors"]
+    files: []
 )
 async let tts: Void = AcervoManager.shared.download(
     "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
-    files: ["config.json", "model.safetensors"]
+    files: []
 )
 
 // Wait for both to finish

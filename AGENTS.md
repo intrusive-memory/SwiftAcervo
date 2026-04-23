@@ -27,6 +27,18 @@ SwiftAcervo does **NOT** load models — that's the consumer's job (MLX, Core ML
 
 ---
 
+## Manifest-Driven File Selection (v0.8.0)
+
+A consuming library does not know what files exist inside a model until the CDN manifest comes back. The manifest is the only authoritative source; consumer-supplied file names are validated against it, and files not present throw `AcervoError.fileNotInManifest`. Three consumption levels — all manifest-driven — cover the common cases:
+
+1. **`ModelDownloadManager.ensureModelsAvailable(_:progress:)`** — batch, highest level. Give it model IDs; it fetches manifests and downloads everything.
+2. **`Acervo.ensureAvailable(_, files: [], progress:)`** — single model with empty `files:` array, which means "download whatever the manifest lists."
+3. **`Acervo.ensureComponentReady(_, progress:)`** on a bare `ComponentDescriptor`** — registered components auto-hydrate from the manifest on first call.
+
+Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre-release models, explicit subset downloads) but should not be the default. See [USAGE.md](USAGE.md) for details and runnable examples.
+
+---
+
 ## Documentation Map
 
 ### 🎯 For Consuming Libraries (**Start Here**)
@@ -133,11 +145,19 @@ import SwiftAcervo
 // Availability
 Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit")
 
-// Download
+// Manifest-first download (empty files: = download whole manifest)
 try await Acervo.ensureAvailable(
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    files: ["config.json", "model.safetensors"]
+    files: []
 )
+
+// Registered components (auto-hydrated from manifest on first use)
+try await Acervo.ensureComponentReady("qwen2.5-3b-instruct-4bit")
+try await Acervo.hydrateComponent("qwen2.5-3b-instruct-4bit")  // manifest only, no download
+
+// Raw manifest access
+let byId = try await Acervo.fetchManifest(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+let byComponent = try await Acervo.fetchManifest(forComponent: "qwen2.5-3b-instruct-4bit")
 
 // Discovery
 let models = try Acervo.listModels()
