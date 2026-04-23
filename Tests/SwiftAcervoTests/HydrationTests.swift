@@ -492,6 +492,144 @@ extension MockURLProtocolSuite {
       #expect(MockURLProtocol.requestCount == 0)
       #expect(Acervo.isComponentReady(componentId, in: tempDir) == true)
     }
+
+    // MARK: - Sortie 6: HydrationCoalescer error-path and re-fetch tests
+
+    // MARK: - Test 8: Error-then-success re-fetch after failed hydration
+
+    /// Registers a bare descriptor. Configures the responder to return HTTP 500
+    /// on the first call and HTTP 200 (with a valid manifest) on the second call.
+    /// Invokes `hydrateComponent` twice sequentially (awaiting the first before
+    /// starting the second). Asserts:
+    ///   - First call throws an error (from the 500 status).
+    ///   - Second call succeeds (200 response yields a hydrated descriptor).
+    ///   - `MockURLProtocol.requestCount == 2` (two separate network calls, not coalesced).
+    ///
+    /// This proves the coalescer does not poison its state on error; a failed
+    /// hydration does not prevent a subsequent hydration from proceeding.
+    @Test("Error-then-success re-fetch proves coalescer resets after error")
+    func errorThenSuccessReFetch() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      let (modelId, componentId) = Self.uniqueIds()
+      let bare = Self.makeBareDescriptor(id: componentId, repoId: modelId)
+      Acervo.register(bare)
+      defer { Acervo.unregister(componentId) }
+
+      let manifest = Self.makeTwoFileManifest(modelId: modelId)
+      let encoded = try JSONEncoder().encode(manifest)
+
+      // Thread-safe counter: first call returns 500, second returns 200 with manifest.
+      let callCounter = CallCounter()
+
+      // Counter-based responder: first call returns 500, second returns 200 with manifest.
+      MockURLProtocol.responder = { request in
+        let count = callCounter.increment()
+        if count == 1 {
+          let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 500,
+            httpVersion: "HTTP/1.1",
+            headerFields: nil
+          )!
+          return (response, Data())
+        } else {
+          let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+          )!
+          return (response, encoded)
+        }
+      }
+
+      let session = MockURLProtocol.session()
+
+      // First call: expect it to throw.
+      var firstThrew = false
+      do {
+        try await Acervo.hydrateComponent(componentId, session: session)
+      } catch let error as AcervoError {
+        switch error {
+        case .manifestDownloadFailed(let statusCode):
+          #expect(statusCode == 500)
+          firstThrew = true
+        default:
+          Issue.record("Expected manifestDownloadFailed(statusCode: 500), got \(error)")
+        }
+      }
+      #expect(firstThrew, "First hydration should have thrown manifestDownloadFailed")
+
+      // Descriptor must still be unhydrated after the failed attempt.
+      #expect(ComponentRegistry.shared.component(componentId)?.isHydrated == false)
+
+      // Second call: should succeed (the responder now returns 200).
+      try await Acervo.hydrateComponent(componentId, session: session)
+
+      // Descriptor must now be hydrated.
+      let hydrated = try #require(ComponentRegistry.shared.component(componentId))
+      #expect(hydrated.isHydrated == true)
+      #expect(hydrated.files.count == 2)
+
+      // Critical assertion: two separate network calls (not coalesced after error).
+      #expect(MockURLProtocol.requestCount == 2)
+    }
+
+    // MARK: - Test 9: Sequential re-fetch after completion
+
+    /// Registers a bare descriptor. Configures the responder to return HTTP 200
+    /// (with a valid manifest) on all calls. Invokes `hydrateComponent` twice
+    /// sequentially (awaiting the first before starting the second). Asserts:
+    ///   - Both calls succeed.
+    ///   - `MockURLProtocol.requestCount == 2` (two separate network calls).
+    ///
+    /// This proves that after a completed hydration, the coalescer does NOT cache
+    /// the result. A subsequent hydration for the same ID actually goes to the wire
+    /// again. This is distinct from the existing single-flight coalesce test (which
+    /// proves concurrent calls share one inflight task). Here we prove that once
+    /// inflight is cleared (after completion), the next call for the same ID will
+    /// create a fresh task.
+    @Test("Sequential post-completion re-fetch goes to the wire again")
+    func sequentialReFetchAfterCompletion() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      let (modelId, componentId) = Self.uniqueIds()
+      let bare = Self.makeBareDescriptor(id: componentId, repoId: modelId)
+      Acervo.register(bare)
+      defer { Acervo.unregister(componentId) }
+
+      let manifest = Self.makeTwoFileManifest(modelId: modelId)
+      let encoded = try JSONEncoder().encode(manifest)
+
+      // Simple responder: always returns 200 with the same manifest.
+      MockURLProtocol.responder = { request in
+        let response = HTTPURLResponse(
+          url: request.url!,
+          statusCode: 200,
+          httpVersion: "HTTP/1.1",
+          headerFields: ["Content-Type": "application/json"]
+        )!
+        return (response, encoded)
+      }
+
+      let session = MockURLProtocol.session()
+
+      // First hydration: should succeed.
+      try await Acervo.hydrateComponent(componentId, session: session)
+      let first = try #require(ComponentRegistry.shared.component(componentId))
+      #expect(first.isHydrated == true)
+
+      // Second hydration: also succeeds (same ID, but inflight was cleared after the first).
+      try await Acervo.hydrateComponent(componentId, session: session)
+      let second = try #require(ComponentRegistry.shared.component(componentId))
+      #expect(second.isHydrated == true)
+
+      // Critical assertion: two separate network calls (not coalesced after completion).
+      #expect(MockURLProtocol.requestCount == 2)
+    }
   }
 }
 
@@ -511,5 +649,19 @@ private final class StderrCollector: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return String(data: buffer, encoding: .utf8) ?? ""
+  }
+}
+
+/// Thread-safe counter for tracking responder calls. Used in Sortie 6 tests
+/// to implement multi-response behavior (e.g., 500 then 200).
+private final class CallCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count: Int = 0
+
+  func increment() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    count += 1
+    return count
   }
 }

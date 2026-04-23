@@ -4,13 +4,14 @@
 
   @testable import acervo
 
-  /// Unit tests for `ToolCheck.validate()`.
-  ///
-  /// These tests mutate the process-wide `PATH` environment variable so they
-  /// MUST run serially. `.serialized` also ensures we don't clobber `PATH`
-  /// while another test in this suite is still executing `/usr/bin/which`.
-  @Suite("ToolCheck Tests", .serialized)
-  final class ToolCheckTests {
+  extension ProcessEnvironmentSuite {
+    /// Unit tests for `ToolCheck.validate()`.
+    ///
+    /// These tests mutate the process-wide `PATH` environment variable so they
+    /// MUST run serially. The `.serialized` trait is provided by the parent
+    /// `ProcessEnvironmentSuite`.
+    @Suite("ToolCheck Tests")
+    final class ToolCheckTests {
 
     private let fm = FileManager.default
     private var tempDir: URL!
@@ -119,6 +120,7 @@
       let text = String(data: data, encoding: .utf8) ?? ""
 
       #expect(text.contains("brew install awscli"))
+    }
     }
   }
 #endif

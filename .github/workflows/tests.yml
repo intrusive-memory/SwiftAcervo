@@ -60,6 +60,24 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
 
+      # Read-only smoke against the live public CDN. No credentials needed;
+      # only validates that the download + verify pipeline still works against
+      # a published manifest. If the live CDN is down this will fail the PR —
+      # that's the intended signal. Override the target slug by setting the
+      # `ACERVO_CI_CDN_MODEL_SLUG` repo variable if the default is rotated off.
+      - name: CDN read-only smoke
+        env:
+          ACERVO_CI_CDN_MODEL_SLUG: ${{ vars.ACERVO_CI_CDN_MODEL_SLUG }}
+        run: |
+          xcodebuild test \
+            -scheme SwiftAcervo-Package \
+            -destination 'platform=macOS,arch=arm64' \
+            -only-testing:AcervoToolTests/CDNManifestFetchTests \
+            -skipPackagePluginValidation \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
   test-ios:
     name: Test on iOS Simulator
     runs-on: macos-26

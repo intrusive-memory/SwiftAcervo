@@ -93,7 +93,23 @@ The command layer under `Sources/acervo/` has **no unit tests**. Missing coverag
 
 Each command deserves at least: a "happy-path arguments parse correctly" test, a "missing required argument exits non-zero" test, and a "each component error maps to the right exit code" test.
 
-Integration tests at `Tests/AcervoToolIntegrationTests/` (`CDNRoundtripTests.swift`, `HuggingFaceDownloadTests.swift`, `ManifestRoundtripTests.swift`, `ShipCommandTests.swift`) exist but require `R2_*` and `HF_TOKEN` credentials. Action item: confirm CI runs these where credentials exist and document which jobs gate on them. If CI skips them everywhere, that should be surfaced as a separate gap.
+### Upload / ship pipeline testing — not this repo
+
+The `acervo ship` pipeline (HuggingFace → manifest → R2 upload → verify) is
+**not** tested in SwiftAcervo's CI. Each downstream repository that publishes
+a model is responsible for exercising `ship` against its own credentials in
+that repo's model-publish workflow. SwiftAcervo itself never uploads, so
+maintaining a shared R2 integration suite here was dead weight.
+
+What remains in this repo:
+
+- **Unit coverage** for the CLI command layer (`AcervoToolTests/`): argument
+  parsing, manifest generation, integrity step logic, `CDNUploader` `aws` argv
+  construction — no live network, no credentials.
+- **Read-only CDN smoke** (`AcervoToolTests/CDNManifestFetchTests.swift`):
+  fetches a known-published manifest from the public R2 URL, verifies the
+  checksum-of-checksums, spot-checks one file's SHA-256. Runs in PR CI. No
+  credentials required.
 
 ---
 

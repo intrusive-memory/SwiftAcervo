@@ -1359,9 +1359,9 @@ extension Acervo {
     try await fetchManifest(for: modelId, session: SecureDownloadSession.shared)
   }
 
-  /// Internal overload that accepts an injected `URLSession` so tests can
+  /// Public overload that accepts an injected `URLSession` so tests can
   /// stub the CDN via `MockURLProtocol`.
-  static func fetchManifest(
+  public static func fetchManifest(
     for modelId: String,
     session: URLSession
   ) async throws -> CDNManifest {
@@ -1382,9 +1382,9 @@ extension Acervo {
     try await fetchManifest(forComponent: componentId, session: SecureDownloadSession.shared)
   }
 
-  /// Internal overload that accepts an injected `URLSession` so tests can
+  /// Public overload that accepts an injected `URLSession` so tests can
   /// stub the CDN via `MockURLProtocol`.
-  static func fetchManifest(
+  public static func fetchManifest(
     forComponent componentId: String,
     session: URLSession
   ) async throws -> CDNManifest {

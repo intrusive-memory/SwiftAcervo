@@ -25,6 +25,8 @@ Observed during Sortie 2 and Sortie 6 validation rounds. Not caused by this miss
 
 Suggested fix: wrap `customBaseDirectory` access in an actor, or provide a test-only isolation primitive (see next item).
 
+**Status (2026-04-23): Addressed by Sortie 2 of OPERATION TRIPWIRE GAUNTLET (mission branch `mission/tripwire-gauntlet/02`).** A shared `@Suite("Custom Base Directory", .serialized) struct CustomBaseDirectorySuite {}` parent now hosts every suite that writes `Acervo.customBaseDirectory` (`AcervoPathTests`, `AcervoFilesystemEdgeCaseTests`, `AcervoSymlinkEdgeCaseTests`, `ModelDownloadManagerTests`). A complementary `withIsolatedAcervoState { ... }` helper (and a narrower `withIsolatedComponentRegistry { ... }`) in `Tests/SwiftAcervoTests/Support/ComponentRegistryIsolation.swift` snapshots/restores both the `customBaseDirectory` and `ComponentRegistry.shared` contents on every entry/exit — even on throw. `HydrateComponentTests.hydrateComponentPopulatesRegistry` was migrated as proof-of-use of `withIsolatedComponentRegistry`. The sortie's exit criterion required `make test` to pass 5 consecutive times with zero flakes in the previously-racy tests.
+
 ---
 
 ## Test-Isolation Primitive

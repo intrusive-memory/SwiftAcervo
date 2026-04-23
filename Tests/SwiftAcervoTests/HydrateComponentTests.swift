@@ -65,45 +65,53 @@ extension MockURLProtocolSuite {
 
     // MARK: - Test A: Basic hydration round trip
 
+    // OPERATION TRIPWIRE GAUNTLET Sortie 2 — proof-of-use for
+    // `withIsolatedComponentRegistry` in Tests/SwiftAcervoTests/Support/ComponentRegistryIsolation.swift.
+    // The explicit `defer { Acervo.unregister(componentId) }` pattern used by
+    // the other tests in this suite is here replaced by the snapshot/restore
+    // helper, which survives early throws and leaves the registry in exactly
+    // the state it found it in. Using `Self.uniqueIds()` satisfies the
+    // "HydrateComponentTests.uniqueIds" migration requirement.
     @Test("hydrateComponent populates the registry from a stubbed manifest")
     func hydrateComponentPopulatesRegistry() async throws {
       MockURLProtocol.reset()
       defer { MockURLProtocol.reset() }
 
-      let (modelId, componentId) = Self.uniqueIds()
-      let descriptor = Self.makeBareDescriptor(id: componentId, repoId: modelId)
-      Acervo.register(descriptor)
-      defer { Acervo.unregister(componentId) }
+      try await withIsolatedComponentRegistry {
+        let (modelId, componentId) = Self.uniqueIds()
+        let descriptor = Self.makeBareDescriptor(id: componentId, repoId: modelId)
+        Acervo.register(descriptor)
 
-      // Sanity: bare descriptor reports needing hydration.
-      #expect(Acervo.component(componentId)?.isHydrated == false)
+        // Sanity: bare descriptor reports needing hydration.
+        #expect(Acervo.component(componentId)?.isHydrated == false)
 
-      let manifest = Self.makeThreeFileManifest(modelId: modelId)
-      let encoded = try JSONEncoder().encode(manifest)
+        let manifest = Self.makeThreeFileManifest(modelId: modelId)
+        let encoded = try JSONEncoder().encode(manifest)
 
-      MockURLProtocol.responder = { request in
-        let response = HTTPURLResponse(
-          url: request.url!,
-          statusCode: 200,
-          httpVersion: "HTTP/1.1",
-          headerFields: ["Content-Type": "application/json"]
-        )!
-        return (response, encoded)
+        MockURLProtocol.responder = { request in
+          let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+          )!
+          return (response, encoded)
+        }
+
+        try await Acervo.hydrateComponent(componentId, session: MockURLProtocol.session())
+
+        let hydrated = try #require(ComponentRegistry.shared.component(componentId))
+        #expect(hydrated.isHydrated == true)
+        #expect(hydrated.files.count == 3)
+        #expect(
+          hydrated.files.map(\.relativePath) == [
+            "config.json",
+            "tokenizer.json",
+            "model.safetensors",
+          ])
+        #expect(hydrated.estimatedSizeBytes == 16 + 1024 + 4096)
+        #expect(MockURLProtocol.requestCount == 1)
       }
-
-      try await Acervo.hydrateComponent(componentId, session: MockURLProtocol.session())
-
-      let hydrated = try #require(ComponentRegistry.shared.component(componentId))
-      #expect(hydrated.isHydrated == true)
-      #expect(hydrated.files.count == 3)
-      #expect(
-        hydrated.files.map(\.relativePath) == [
-          "config.json",
-          "tokenizer.json",
-          "model.safetensors",
-        ])
-      #expect(hydrated.estimatedSizeBytes == 16 + 1024 + 4096)
-      #expect(MockURLProtocol.requestCount == 1)
     }
 
     // MARK: - Test B: Concurrent single-flight
