@@ -93,28 +93,23 @@ The command layer under `Sources/acervo/` has **no unit tests**. Missing coverag
 
 Each command deserves at least: a "happy-path arguments parse correctly" test, a "missing required argument exits non-zero" test, and a "each component error maps to the right exit code" test.
 
-Integration tests at `Tests/AcervoToolIntegrationTests/` (`CDNRoundtripTests.swift`, `HuggingFaceDownloadTests.swift`, `ManifestRoundtripTests.swift`, `ShipCommandTests.swift`) exist but require `R2_*` and `HF_TOKEN` credentials. Action item: confirm CI runs these where credentials exist and document which jobs gate on them. If CI skips them everywhere, that should be surfaced as a separate gap.
+### Upload / ship pipeline testing — not this repo
 
-### CI integration test gating
+The `acervo ship` pipeline (HuggingFace → manifest → R2 upload → verify) is
+**not** tested in SwiftAcervo's CI. Each downstream repository that publishes
+a model is responsible for exercising `ship` against its own credentials in
+that repo's model-publish workflow. SwiftAcervo itself never uploads, so
+maintaining a shared R2 integration suite here was dead weight.
 
-| Integration test file | Workflow file(s) | Job name(s) | Required secrets | Behavior when secrets absent |
-|----------------------|------------------|------------|-----------------|------------------------------|
-| CDNRoundtripTests.swift | None | Not run in CI | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`, `HF_TOKEN` | Skips via `XCTSkip` |
-| HuggingFaceDownloadTests.swift | None | Not run in CI | `HF_TOKEN` | Skips via `XCTSkip` |
-| ManifestRoundtripTests.swift | None | Not run in CI | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`, `HF_TOKEN` | Skips via `XCTSkip` |
-| ShipCommandTests.swift | None | Not run in CI | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`, `HF_TOKEN` | Skips via `XCTSkip` |
+What remains in this repo:
 
-**Status**: All integration tests are currently **unreachable in CI**. The `tests.yml` workflow (`make test`) runs only the library tests (SwiftAcervo-Package scheme). The `mirror_model.yml` workflow provides R2 and HF credentials but does not invoke `make test-acervo-integration` or the AcervoToolIntegrationTests suite. The integration tests are only runnable locally via `make test-acervo-integration` or `xcodebuild test -only-testing:AcervoToolIntegrationTests`.
-
----
-
-## P1: AcervoToolIntegrationTests unreachable in CI
-
-- [ ] **Create a new CI job that runs `AcervoToolIntegrationTests` with `R2_*` and `HF_TOKEN` secrets.**
-  - Problem: `CDNRoundtripTests`, `HuggingFaceDownloadTests`, `ManifestRoundtripTests`, and `ShipCommandTests` are designed to skip when credentials are absent, but CI never runs them at all. No workflow job invokes `make test-acervo-integration`.
-  - Solution: Add a dedicated job to `tests.yml` or `mirror_model.yml` (or a new `.github/workflows/integration-tests.yml`) that runs `xcodebuild test -scheme acervo -only-testing:AcervoToolIntegrationTests` with `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`, and `HF_TOKEN` secrets inherited from the org.
-  - Impact: Closes the gap identified in TESTING_REQUIREMENTS.md § "CLI command coverage" and ensures the four integration test files are no longer orphaned.
-  - Linked sortie: OPERATION TRIPWIRE GAUNTLET sortie-15 audit.
+- **Unit coverage** for the CLI command layer (`AcervoToolTests/`): argument
+  parsing, manifest generation, integrity step logic, `CDNUploader` `aws` argv
+  construction — no live network, no credentials.
+- **Read-only CDN smoke** (`AcervoToolTests/CDNManifestFetchTests.swift`):
+  fetches a known-published manifest from the public R2 URL, verifies the
+  checksum-of-checksums, spot-checks one file's SHA-256. Runs in PR CI. No
+  credentials required.
 
 ---
 

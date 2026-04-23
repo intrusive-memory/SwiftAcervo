@@ -35,7 +35,42 @@ let package = Package(
 
 Or add via Xcode: **File > Add Package Dependencies** → enter repository URL.
 
-### 2. Ensure models are available — no file list required
+### 2. Enable the App Group entitlement (REQUIRED for cross-app sharing)
+
+SwiftAcervo stores models in the App Group container `group.intrusive-memory.models`. Without this entitlement, your app silently falls back to `~/Library/Application Support/SwiftAcervo/SharedModels/`, which is **not shared** — every app re-downloads every model, defeating the whole point of the library.
+
+**Xcode setup** (do this for every target that calls into SwiftAcervo, including extensions):
+
+1. Select the target → **Signing & Capabilities**.
+2. Click **+ Capability** → **App Groups**.
+3. Check (or add) `group.intrusive-memory.models`.
+4. Rebuild.
+
+**Manual `.entitlements` file** (for non-Xcode builds):
+
+```xml
+<!-- MyApp.entitlements -->
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.intrusive-memory.models</string>
+    </array>
+</dict>
+</plist>
+```
+
+**Provisioning profile**: the profile must include the App Group. When Xcode manages signing automatically, this is handled for you; for manual profiles, regenerate after adding the group in the Apple Developer portal.
+
+**How to verify it's wired up**: at startup, print `Acervo.sharedModelsDirectory`. A correctly entitled app shows a path under `~/Library/Group Containers/group.intrusive-memory.models/...` on macOS or inside the app sandbox's `Group Containers` on iOS. A path ending in `Application Support/SwiftAcervo/SharedModels` means the fallback kicked in — go back and add the capability.
+
+> **Unsigned macOS CLI tools** (like the `acervo` binary itself) can't join App Groups. They use the fallback path by design. For consumer apps that need cross-app sharing, the entitlement is mandatory.
+
+See **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** for the full directory layout and troubleshooting.
+
+### 3. Ensure models are available — no file list required
 
 The preferred startup path is `ModelDownloadManager.ensureModelsAvailable`. It fetches each model's manifest and downloads whatever the manifest says is in the model. You don't need to know in advance what files are there:
 
@@ -52,7 +87,7 @@ try await ModelDownloadManager.shared.ensureModelsAvailable([
 }
 ```
 
-### 3. Load models from disk
+### 4. Load models from disk
 
 ```swift
 let modelDir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
@@ -64,6 +99,7 @@ let modelDir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct
 ## Integration Checklist
 
 - [ ] Add SwiftAcervo dependency to `Package.swift`.
+- [ ] **Enable the `group.intrusive-memory.models` App Group entitlement on every target that calls into SwiftAcervo** (see step 2 above). Verify at runtime by printing `Acervo.sharedModelsDirectory` — if the path contains `Application Support/SwiftAcervo`, the capability is missing.
 - [ ] Decide your consumption level (see "Three Ways to Avoid Naming Files" below).
 - [ ] Call `ModelDownloadManager.shared.ensureModelsAvailable()` (or a lower-level equivalent) at app startup, typically behind an `await`.
 - [ ] Provide progress feedback via the callback.

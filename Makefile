@@ -9,7 +9,7 @@ DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 
 .PHONY: build test clean resolve lint help release \
         build-acervo install-acervo release-acervo \
-        test-acervo-unit test-acervo-integration test-acervo-cdn
+        test-acervo-unit test-acervo-cdn
 
 build:
 	xcodebuild build -scheme $(SCHEME) -destination $(DESTINATION)
@@ -61,10 +61,6 @@ test-acervo-unit: resolve
 	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests
 
-test-acervo-integration: resolve
-	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
-	  -only-testing:AcervoToolIntegrationTests
-
 test-acervo-cdn: resolve
 	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests/CDNManifestFetchTests
@@ -81,6 +77,5 @@ help:
 	@echo "  release                  - Alias for release-acervo (used by CI)"
 	@echo "  release-acervo           - Build acervo and install to $(BIN_DIR)/ (Release)"
 	@echo "  test-acervo-unit         - Run acervo unit tests (no credentials)"
-	@echo "  test-acervo-integration  - Run acervo integration tests (requires R2_* + HF_TOKEN)"
 	@echo "  test-acervo-cdn          - Fetch and verify a known CDN manifest (network, no creds)"
 	@echo "  help                     - Show this help message"

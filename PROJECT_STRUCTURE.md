@@ -43,12 +43,11 @@ SwiftAcervo/
 │   │   ├── AcervoManagerTests.swift
 │   │   ├── ComponentRegistryTests.swift
 │   │   └── ...
-│   ├── AcervoToolTests/          # CLI unit tests
-│   │   ├── ArgumentBuildersTests.swift
-│   │   ├── ManifestGeneratorTests.swift
-│   │   ├── IntegrityCheckTests.swift
-│   │   └── ...
-│   └── AcervoToolIntegrationTests/  # Full pipeline tests
+│   └── AcervoToolTests/          # CLI unit tests + read-only CDN smoke
+│       ├── ArgumentBuildersTests.swift
+│       ├── ManifestGeneratorTests.swift
+│       ├── IntegrityCheckTests.swift
+│       ├── CDNManifestFetchTests.swift  # live-CDN read-only smoke (no creds)
 │       └── ...
 ├── Tools/                        # Legacy shell scripts
 │   ├── generate-manifest.sh
@@ -341,15 +340,21 @@ Unit tests for argument parsing and logic:
 
 Run with: `make test-acervo-unit`
 
-### CLI Integration Tests (`AcervoToolIntegrationTests/`)
+### CDN Smoke (read-only, network, no credentials)
 
-Full pipeline tests (slow, require credentials):
+`CDNManifestFetchTests` (inside `AcervoToolTests`) fetches a known-published
+manifest from the public R2 URL, verifies its checksum-of-checksums, and
+spot-checks the smallest file's SHA-256 against the bytes on the wire. Runs in
+PR CI to detect download-side regressions against live infrastructure.
 
-- Downloads from actual HuggingFace
-- Uploads to actual R2
-- Verifies round-trip integrity
+Run with: `make test-acervo-cdn`
 
-Run with: `xcodebuild test -scheme AcervoToolIntegrationTests`
+### Upload / ship pipeline testing
+
+Historically tested by `AcervoToolIntegrationTests/`. **Removed** in favor of
+per-repo upload CI: each downstream repository that publishes a model is
+responsible for exercising `acervo ship` against its own credentials during
+that repo's model-publish workflow. SwiftAcervo itself never uploads.
 
 ---
 
@@ -386,8 +391,7 @@ let package = Package(
             ]
         ),
         .testTarget(name: "SwiftAcervoTests", dependencies: ["SwiftAcervo"]),
-        .testTarget(name: "AcervoToolTests", dependencies: ["acervo"]),
-        .testTarget(name: "AcervoToolIntegrationTests", dependencies: ["acervo"])
+        .testTarget(name: "AcervoToolTests", dependencies: ["acervo"])
     ]
 )
 ```
