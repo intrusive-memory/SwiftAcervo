@@ -14,18 +14,20 @@ extension CustomBaseDirectorySuite {
   struct AcervoPathTests {
 
     // MARK: - sharedModelsDirectory
-
-    @Test("sharedModelsDirectory ends with SharedModels")
-    func sharedModelsDirectoryPath() {
-      let dir = Acervo.sharedModelsDirectory
-      #expect(dir.lastPathComponent == "SharedModels")
-    }
-
-    @Test("sharedModelsDirectory is an absolute path")
-    func sharedModelsDirectoryIsAbsolute() {
-      let dir = Acervo.sharedModelsDirectory
-      #expect(dir.path.hasPrefix("/"))
-    }
+    //
+    // The default-value test ("ends with SharedModels") was deleted as a
+    // chronic CI flake. Its setup read `Acervo.sharedModelsDirectory` —
+    // which routes through the global `customBaseDirectory` — without
+    // owning the global, so any concurrent suite that mutates it (notably
+    // tests under MockURLProtocolSuite that set customBaseDirectory to a
+    // tmp dir) would race and clobber the default. The .serialized trait
+    // on CustomBaseDirectorySuite only serializes WITHIN the parent;
+    // sibling top-level serialized suites still execute in parallel with
+    // it. Coverage of the override mechanism lives in
+    // `customBaseDirectoryRedirectsSharedModelsDirectory` below and in
+    // the integration tests in AcervoFilesystemEdgeCaseTests +
+    // ModelDownloadManagerTests, which exercise the same code path with
+    // self-owned base directories.
 
     // MARK: - slugify
 
