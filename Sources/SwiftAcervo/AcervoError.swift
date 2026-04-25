@@ -76,6 +76,13 @@ public enum AcervoError: LocalizedError, Sendable {
   /// called (or use an auto-hydrating entry point) before this operation.
   case componentNotHydrated(id: String)
 
+  /// Offline mode is active (`ACERVO_OFFLINE=1` environment variable is set);
+  /// every outbound HTTP fetch is refused. The library continues to serve
+  /// resources that are already present in the local SharedModels directory,
+  /// but any code path that would otherwise hit the CDN throws this error
+  /// instead.
+  case offlineModeActive
+
   public var errorDescription: String? {
     switch self {
     case .directoryCreationFailed(let path):
@@ -139,6 +146,10 @@ public enum AcervoError: LocalizedError, Sendable {
     case .componentNotHydrated(let id):
       return
         "Component '\(id)' has no file list yet. Call Acervo.hydrateComponent(_:) to populate it from the CDN manifest, or use an auto-hydrating API such as ensureComponentReady(_:)."
+
+    case .offlineModeActive:
+      return
+        "Offline mode is active (ACERVO_OFFLINE=1); the requested resource was not found in the local SharedModels directory."
     }
   }
 }

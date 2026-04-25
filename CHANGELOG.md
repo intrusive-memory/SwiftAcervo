@@ -7,6 +7,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.8.1] - 2026-04-25
+
+### Added
+
+- `ACERVO_OFFLINE` environment variable — when set to `"1"` in the process environment, every SwiftAcervo code path that would otherwise contact the CDN refuses the fetch and throws `AcervoError.offlineModeActive` instead. Read paths that touch only the local filesystem (`Acervo.modelDirectory(for:)`, `Acervo.isModelAvailable(_:)`, `LocalHandle`, hydrate-from-cache) are unaffected and continue to serve resources already present in the local SharedModels directory. The gate is checked unconditionally before any `URLSession` call in `AcervoDownloader.downloadManifest`, `streamDownloadFile`, and `fallbackDownloadFile`, covering every public entry point (`Acervo.fetchManifest`, `Acervo.hydrateComponent`, `Acervo.download`, etc.).
+- `AcervoError.offlineModeActive` — new error case thrown by every gated entry point when `ACERVO_OFFLINE=1` is set. Carries no associated values; the localized description points consumers at the env-var contract.
+- `Acervo.isOfflineModeActive` (internal) — single source of truth for the gate. Reads `ProcessInfo.processInfo.environment["ACERVO_OFFLINE"]` on every access so tests can flip the variable with `setenv` / `unsetenv` between cases.
+
+### Migration
+
+Non-breaking. Consumers that do not set `ACERVO_OFFLINE` see no behavioral change. Consumers that want to enforce offline-only operation (CI tests, sandboxed reference checks, air-gapped builds) can now set `ACERVO_OFFLINE=1` and rely on the typed error to short-circuit any code path that would otherwise hit the network.
+
+---
+
 ## [0.8.0] - 2026-04-23
 
 ### Added
