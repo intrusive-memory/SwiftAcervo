@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension CustomBaseDirectorySuite {
+extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
   /// Tests for Acervo path resolution: sharedModelsDirectory, slugify(), and modelDirectory(for:).
   ///
@@ -173,4 +173,4 @@ extension CustomBaseDirectorySuite {
     }
   }
 
-}  // extension CustomBaseDirectorySuite
+}  // extension SharedStaticStateSuite.CustomBaseDirectorySuite

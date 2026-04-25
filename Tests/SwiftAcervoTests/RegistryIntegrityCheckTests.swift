@@ -56,7 +56,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
   @Suite("Registry Integrity Check")
   struct RegistryIntegrityCheckTests {
 

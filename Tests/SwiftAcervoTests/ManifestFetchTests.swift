@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Tests for the public `Acervo.fetchManifest` API (both the modelId and
   /// `forComponent:` forms) and the underlying `session:`-injectable

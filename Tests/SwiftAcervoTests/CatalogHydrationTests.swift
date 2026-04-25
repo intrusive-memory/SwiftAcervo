@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Tests for Sortie 5: catalog introspection hydration-awareness.
   ///

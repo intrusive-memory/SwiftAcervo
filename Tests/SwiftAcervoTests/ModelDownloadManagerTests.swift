@@ -59,7 +59,7 @@ private actor ProgressCollector {
 
 // MARK: - Tests
 
-extension CustomBaseDirectorySuite {
+extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
   /// Integration tests for `ModelDownloadManager`.
   ///
@@ -442,4 +442,4 @@ extension CustomBaseDirectorySuite {
     }
   }
 
-}  // extension CustomBaseDirectorySuite
+}  // extension SharedStaticStateSuite.CustomBaseDirectorySuite
