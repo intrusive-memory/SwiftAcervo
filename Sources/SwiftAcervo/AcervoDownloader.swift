@@ -212,6 +212,13 @@ extension AcervoDownloader {
     for modelId: String,
     session: URLSession = SecureDownloadSession.shared
   ) async throws -> CDNManifest {
+    // Refuse the fetch up front when offline mode is active. This must run
+    // BEFORE any URLSession call so callers can rely on the gate to keep the
+    // process completely offline (no DNS, no socket, no proxy).
+    if Acervo.isOfflineModeActive {
+      throw AcervoError.offlineModeActive
+    }
+
     let url = buildManifestURL(modelId: modelId)
     let request = buildRequest(from: url)
 
@@ -302,6 +309,14 @@ extension AcervoDownloader {
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
     session: URLSession = SecureDownloadSession.shared
   ) async throws {
+    // Refuse the fetch up front when offline mode is active. This runs
+    // BEFORE the URLSession streaming call so the gate is unconditional
+    // for every file download, regardless of which public entry point
+    // (downloadFile, downloadFiles, hydrateComponent, etc.) routed here.
+    if Acervo.isOfflineModeActive {
+      throw AcervoError.offlineModeActive
+    }
+
     // Stream the HTTP response using bytes(for:)
     let (asyncBytes, response) = try await session.bytes(for: request)
 
@@ -466,6 +481,14 @@ extension AcervoDownloader {
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
     session: URLSession = SecureDownloadSession.shared
   ) async throws {
+    // Refuse the fetch up front when offline mode is active. The streaming
+    // path checks the gate too, but `streamDownloadFile` may delegate here
+    // on its own initiative when bytes(for:) is unavailable, so we re-check
+    // before the legacy URLSession.download call.
+    if Acervo.isOfflineModeActive {
+      throw AcervoError.offlineModeActive
+    }
+
     // Download the file to a temp location using the provided session
     let tempFileURL: URL
     let response: URLResponse

@@ -27,7 +27,27 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.8.0"
+  public static let version = "0.8.1"
+
+  /// The name of the environment variable that gates outbound HTTP fetches.
+  ///
+  /// When this variable is set to `"1"` in the process environment, every
+  /// SwiftAcervo code path that would otherwise contact the CDN refuses the
+  /// fetch and throws ``AcervoError/offlineModeActive`` instead. Read paths
+  /// that only touch the local filesystem (e.g. ``modelDirectory(for:)``,
+  /// ``isModelAvailable(_:)``, hydrate-from-cache) are unaffected.
+  static let offlineModeEnvironmentVariable = "ACERVO_OFFLINE"
+
+  /// `true` when the `ACERVO_OFFLINE` environment variable is set to `"1"`.
+  ///
+  /// Evaluated on every read; tests can toggle the variable with
+  /// `setenv` / `unsetenv` between cases. Other values (including the empty
+  /// string, `"true"`, and `"yes"`) do **not** activate offline mode — only
+  /// the literal string `"1"` does, matching the documented contract for
+  /// downstream consumers.
+  static var isOfflineModeActive: Bool {
+    ProcessInfo.processInfo.environment[offlineModeEnvironmentVariable] == "1"
+  }
 }
 
 // MARK: - Path Resolution
