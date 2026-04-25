@@ -22,7 +22,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.8.1")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.8.2")
     ],
     targets: [
         .target(
@@ -380,6 +380,63 @@ let weights = try await AcervoManager.shared.withLocalAccess(loraURL) { handle i
 ```
 
 `LocalHandle` provides `url(for:)`, `url(matching:)`, and `urls(matching:)` for looking up files within the scoped root. If the URL doesn't exist on disk, `AcervoError.localPathNotFound(url:)` is thrown.
+
+---
+
+## Testing Your Code Against SwiftAcervo
+
+Two pieces of SwiftAcervo state are process-wide and can race across parallel test suites:
+
+- **`Acervo.customBaseDirectory`** — the model-storage override (`URL?`). When you set it in a test, every other test in the same process sees the new value until you restore it.
+- **`ACERVO_OFFLINE` environment variable** — when set to `"1"`, every download path throws `AcervoError.offlineModeActive`. Like `customBaseDirectory`, it's read on every Acervo download call, so any test that sets it briefly will trip the gate for any concurrent test that fetches a manifest or a file.
+
+Swift Testing runs `@Suite` types in parallel by default. The two patterns that work reliably are:
+
+### 1. Serialize all global-state-touching tests under a single parent
+
+If your tests set `customBaseDirectory` or `ACERVO_OFFLINE`, nest them under a single `.serialized` parent suite — and put the *readers* there too. Anything that calls `Acervo.download`, `Acervo.fetchManifest`, `Acervo.ensureAvailable`, `Acervo.modelDirectory(for:)`, or `Acervo.sharedModelsDirectory` is a reader.
+
+```swift
+@Suite("My Acervo Tests", .serialized)
+struct MyAcervoTests {
+
+    @Test("download writes into customBaseDirectory")
+    func usesCustomBase() async throws {
+        let tempBase = FileManager.default.temporaryDirectory
+            .appendingPathComponent("my-test-\(UUID())")
+        Acervo.customBaseDirectory = tempBase
+        defer { Acervo.customBaseDirectory = nil }
+
+        try await Acervo.download(modelId: "org/repo", files: [])
+        // ... assertions ...
+    }
+}
+```
+
+The `.serialized` trait orders all tests *within* the suite. Tests in *sibling* suites still run in parallel with this one, so they must not touch the same globals.
+
+### 2. Don't read the global at all
+
+Path-construction logic that depends on `sharedModelsDirectory` should use the `in: baseDirectory` overloads where they exist (e.g. `Acervo.isModelAvailable(_:in:)`, `Acervo.listModels(in:)`). They take the base directory as an explicit parameter and never touch `customBaseDirectory`, so they're race-immune by construction.
+
+```swift
+let tempBase = FileManager.default.temporaryDirectory
+    .appendingPathComponent("my-test-\(UUID())")
+try FileManager.default.createDirectory(at: tempBase, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: tempBase) }
+
+// No global read — fully isolated, safe to run in parallel.
+let models = try Acervo.listModels(in: tempBase)
+#expect(models.isEmpty)
+```
+
+For pure path helpers, `Acervo.slugify(_:)` is a pure function and is always safe to call from any context.
+
+### What goes wrong without isolation
+
+The classic flake mode: test A sets `Acervo.customBaseDirectory = tempA` and reads `Acervo.sharedModelsDirectory`, expecting `tempA`. Concurrent test B sets `Acervo.customBaseDirectory = tempB` between A's set and read. A receives `tempB` and the assertion fails. The same shape applies to `ACERVO_OFFLINE`: an unrelated test that briefly sets it can cause a sibling test's `Acervo.fetchManifest` call to throw `offlineModeActive` instead of completing.
+
+If you see intermittent CI failures asserting on a path component or catching `offlineModeActive` unexpectedly, the cause is almost always cross-suite global-state contention — not a bug in Acervo's behavior.
 
 ---
 

@@ -10,7 +10,7 @@ import Testing
 ///
 /// Nested under `MockURLProtocolSuite` so it inherits `.serialized` — the
 /// mock's static storage is not safe to race against sibling suites.
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   @Suite("Download Session Injection")
   struct DownloadSessionInjection {

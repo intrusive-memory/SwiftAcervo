@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Tests for `Acervo.hydrateComponent`. Nested under `MockURLProtocolSuite`
   /// so it inherits the parent's `.serialized` trait and cannot race with

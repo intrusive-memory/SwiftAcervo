@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Tests for `Acervo.ensureAvailable(modelId, files:)` empty-files behavior.
   /// Exercises the requestedFiles.isEmpty branch in AcervoDownloader.swift

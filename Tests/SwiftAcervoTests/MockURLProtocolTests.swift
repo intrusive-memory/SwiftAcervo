@@ -3,15 +3,14 @@ import Testing
 
 @testable import SwiftAcervo
 
-/// Shared parent suite for every test that manipulates `MockURLProtocol`'s
-/// static state. The `.serialized` trait on this enclosing suite forces all
-/// contained tests (including those in nested suites) to run one at a time,
-/// which is required because Swift Testing otherwise executes distinct
-/// `@Suite` types in parallel and would race on the mock's shared storage.
-@Suite("MockURLProtocol", .serialized)
-struct MockURLProtocolSuite {
+/// Smoke tests for the `MockURLProtocol` test harness.
+///
+/// Nested under `SharedStaticStateSuite.MockURLProtocolSuite` so it inherits
+/// the grandparent's `.serialized` trait and cannot race with any other
+/// suite that touches process-wide static state (URLProtocol stub or
+/// `Acervo.customBaseDirectory`).
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
-  /// Smoke tests for the `MockURLProtocol` test harness.
   @Suite("Harness")
   struct Harness {
 

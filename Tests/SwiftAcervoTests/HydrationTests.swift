@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// The canonical 7 hydration tests enumerated in `docs/complete/hydration_todo.md`
   /// § Tests to Add (Sortie 6 of OPERATION DESERT BLUEPRINT). Nested under

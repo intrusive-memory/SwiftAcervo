@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Manifest error-mode tests: decoding failures, integrity mismatches, and
   /// unsupported versions. Each test exercises a different failure path in

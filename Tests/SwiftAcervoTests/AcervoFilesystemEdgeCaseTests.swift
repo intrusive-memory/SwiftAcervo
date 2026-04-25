@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension CustomBaseDirectorySuite {
+extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
   /// Tests for filesystem edge cases: file permission denial and disk-full simulation.
   ///
@@ -305,4 +305,4 @@ extension CustomBaseDirectorySuite {
     }
   }
 
-}  // extension CustomBaseDirectorySuite
+}  // extension SharedStaticStateSuite.CustomBaseDirectorySuite

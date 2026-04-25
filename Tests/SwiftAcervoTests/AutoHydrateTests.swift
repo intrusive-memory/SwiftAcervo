@@ -3,7 +3,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   /// Tests for Sortie 4 auto-hydrate plumbing. Nested under `MockURLProtocolSuite`
   /// so all tests inherit `.serialized` and cannot race on `MockURLProtocol`'s

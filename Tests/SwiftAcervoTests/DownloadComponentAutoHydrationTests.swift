@@ -32,7 +32,7 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension MockURLProtocolSuite {
+extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   @Suite("Download Component Auto-Hydration")
   struct DownloadComponentAutoHydrationTests {
