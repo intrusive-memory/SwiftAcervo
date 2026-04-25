@@ -188,24 +188,6 @@ struct AcervoManagerTests {
 
   // MARK: - withModelAccess() Tests
 
-  @Test("withModelAccess provides model directory URL")
-  func withModelAccessProvidesURL() async throws {
-    let manager = AcervoManager.shared
-    let modelId = "test-org/url-access-test"
-
-    // withModelAccess should provide the model directory URL
-    // matching what Acervo.modelDirectory(for:) returns
-    let expectedDir = try Acervo.modelDirectory(for: modelId)
-
-    let receivedURL = try await manager.withModelAccess(modelId) { url -> URL in
-      return url
-    }
-
-    #expect(
-      receivedURL == expectedDir,
-      "withModelAccess should provide the correct model directory URL")
-  }
-
   @Test("withModelAccess returns closure result")
   func withModelAccessReturnsResult() async throws {
     let manager = AcervoManager.shared

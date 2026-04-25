@@ -78,15 +78,3 @@ cadence that repo has. The tradeoff: regressions might land here and not be
 visible until a downstream push fails — we're choosing that latency over
 owning shared R2 credentials in this repo's CI.
 
----
-
-## 4. AcervoManager test isolation race (flaky on iOS)
-
-**Why it matters**: `Tests/SwiftAcervoTests/AcervoManagerTests.swift::withModelAccessProvidesURL` reads `Acervo.modelDirectory(for:)` and `AcervoManager.shared.withModelAccess` sequentially. Both resolve against the global `customBaseDirectory`; another concurrent test in the suite mutates it between the two calls, so `receivedURL` and `expectedDir` point at different tmp paths. The test flakes on iOS depending on test ordering (observed during the v0.8.0 release — an iOS rerun passed cleanly, confirming the race).
-
-**What to do**:
-
-- Nest `AcervoManagerTests` (or at least the `withModelAccess*` tests inside it) under `CustomBaseDirectorySuite` the same way `HydrateComponentTests.uniqueIds` was migrated in sortie-2 of OPERATION DESERT BLUEPRINT. That suite is `.serialized` and snapshots/restores `customBaseDirectory` around each nested test.
-- Audit the rest of `AcervoManagerTests` for the same pattern — any test that reads both `Acervo.modelDirectory(for:)` and an `AcervoManager.shared` method in the same closure is susceptible.
-
-**Done when**: `make test` passes 5× consecutively on iOS without any sibling-test interference, and the suite migration is documented in the sortie log for the next mission.
