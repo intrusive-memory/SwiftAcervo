@@ -195,13 +195,14 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
       // Append a file the manifest didn't account for when its checksum was
       // computed. The recomputed checksum picks up the extra sha256 entry.
-      let tamperedFiles = valid.files + [
-        CDNManifestFile(
-          path: "smuggled.bin",
-          sha256: "4444444444444444444444444444444444444444444444444444444444444444",
-          sizeBytes: 8
-        )
-      ]
+      let tamperedFiles =
+        valid.files + [
+          CDNManifestFile(
+            path: "smuggled.bin",
+            sha256: "4444444444444444444444444444444444444444444444444444444444444444",
+            sizeBytes: 8
+          )
+        ]
       let tampered = CDNManifest(
         manifestVersion: valid.manifestVersion,
         modelId: valid.modelId,
