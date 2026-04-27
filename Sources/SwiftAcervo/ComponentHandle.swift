@@ -33,6 +33,14 @@ public struct ComponentHandle: Sendable {
   /// The resolved base directory for this component on disk.
   let baseDirectory: URL
 
+  /// The root directory URL for this component on disk.
+  ///
+  /// Returns the component's base directory as a public accessor. Use this
+  /// when a consumer needs the directory itself rather than a specific file
+  /// within it (e.g., to pass a directory path to a third-party tokenizer
+  /// loader that accepts a directory URL).
+  public var rootDirectoryURL: URL { baseDirectory }
+
   /// Creates a handle for the given component and base directory.
   ///
   /// This initializer is internal: consumers never construct handles directly.
