@@ -33,12 +33,17 @@ public struct ComponentHandle: Sendable {
   /// The resolved base directory for this component on disk.
   let baseDirectory: URL
 
-  /// The root directory URL for this component on disk.
+  /// The root directory for this component on disk.
   ///
-  /// Returns the component's base directory as a public accessor. Use this
-  /// when a consumer needs the directory itself rather than a specific file
-  /// within it (e.g., to pass a directory path to a third-party tokenizer
-  /// loader that accepts a directory URL).
+  /// Use this when you need the component's top-level directory URL directly
+  /// rather than resolving a specific file within it. Equivalent to the
+  /// directory passed to `AcervoManager.withComponentAccess`.
+  ///
+  /// - Note: Naming mismatch with `LocalHandle`: the counterpart handle type
+  ///   exposes its root as `public let rootURL: URL` (a stored property on a
+  ///   non-registered local path), whereas `ComponentHandle` exposes it here
+  ///   as `rootDirectoryURL` to emphasise that it is always a directory (never
+  ///   a single file). The two accessors are semantically equivalent.
   public var rootDirectoryURL: URL { baseDirectory }
 
   /// Creates a handle for the given component and base directory.
