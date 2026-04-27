@@ -63,6 +63,11 @@ public enum AcervoError: LocalizedError, Sendable {
   /// The manifest's `modelId` field does not match the requested model.
   case manifestModelIdMismatch(expected: String, actual: String)
 
+  /// A manifest entry has a relative path that is empty, absolute, or
+  /// contains traversal components (`.` / `..`). Such manifests are
+  /// rejected to prevent writing outside the model directory.
+  case invalidManifestPath(String)
+
   /// A downloaded file's size does not match the manifest.
   case downloadSizeMismatch(fileName: String, expected: Int64, actual: Int64)
 
@@ -132,6 +137,10 @@ public enum AcervoError: LocalizedError, Sendable {
 
     case .manifestModelIdMismatch(let expected, let actual):
       return "CDN manifest model ID mismatch: expected '\(expected)', got '\(actual)'"
+
+    case .invalidManifestPath(let path):
+      return
+        "CDN manifest contains an invalid file path '\(path)' (must be a non-empty relative path with no '.' or '..' components)"
 
     case .downloadSizeMismatch(let fileName, let expected, let actual):
       return

@@ -274,4 +274,72 @@ struct CDNManifestTests {
       return expected == "org/requested-repo" && actual == "org/actual-repo"
     }
   }
+
+  // MARK: - Path Traversal Defense
+
+  @Test(
+    "Manifest with traversal path is rejected on decode",
+    arguments: [
+      "../etc/passwd",
+      "../../etc/passwd",
+      "weights/../../etc/passwd",
+      "//etc/passwd",
+      "",
+      "/",
+      ".",
+      "./config.json",
+      "weights/./config.json",
+      "weights//config.json",
+      "weights/..",
+    ])
+  func manifestRejectsTraversalPaths(badPath: String) throws {
+    let escaped = badPath.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    let json = """
+      {
+          "manifestVersion": 1,
+          "modelId": "org/repo",
+          "slug": "org_repo",
+          "updatedAt": "2026-03-22T00:00:00Z",
+          "files": [
+              {"path": "\(escaped)", "sha256": "aaaa", "sizeBytes": 1}
+          ],
+          "manifestChecksum": "placeholder"
+      }
+      """
+    #expect {
+      try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
+    } throws: { error in
+      guard case AcervoError.invalidManifestPath(let raw) = error else {
+        return false
+      }
+      return raw == badPath
+    }
+  }
+
+  @Test("Single leading slash is stripped, otherwise valid path accepted")
+  func manifestStripsLeadingSlash() throws {
+    let flat = try CDNManifestFile.validatedRelativePath("/config.json")
+    #expect(flat == "config.json")
+
+    let nested = try CDNManifestFile.validatedRelativePath("/weights/shard1.safetensors")
+    #expect(nested == "weights/shard1.safetensors")
+
+    let absolute = try CDNManifestFile.validatedRelativePath("/etc/passwd")
+    #expect(absolute == "etc/passwd")
+  }
+
+  @Test("Nested relative paths are accepted unchanged")
+  func manifestAcceptsNestedPaths() throws {
+    let cases = [
+      "config.json",
+      "weights/shard1.safetensors",
+      "speech_tokenizer/config.json",
+      "a/b/c/d.json",
+    ]
+    for path in cases {
+      let validated = try CDNManifestFile.validatedRelativePath(path)
+      #expect(validated == path)
+    }
+  }
 }

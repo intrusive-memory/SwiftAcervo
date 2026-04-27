@@ -242,6 +242,8 @@ extension AcervoDownloader {
     let manifest: CDNManifest
     do {
       manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
+    } catch let error as AcervoError {
+      throw error
     } catch {
       throw AcervoError.manifestDecodingFailed(error)
     }
