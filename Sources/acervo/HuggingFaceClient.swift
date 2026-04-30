@@ -27,6 +27,26 @@ enum HFIntegrityError: Error, CustomStringConvertible {
   }
 }
 
+/// Static hints surfaced when LFS verification fails in patterns that
+/// map to operator-actionable conditions.
+enum LFSVerificationHints {
+  /// When every file-level `verifyLFS` call returned HTTP 404, the
+  /// repo almost certainly is not Git LFS-backed: the LFS metadata
+  /// endpoint exists per file, and a 404 across the entire repo means
+  /// none of the files are tracked by LFS. Surface this as a clear
+  /// hint so the operator knows to pass `--no-verify` instead of
+  /// staring at a wall of `HTTP 404 for <filename>` errors.
+  static let notLFSBackedHint =
+    """
+
+    hint: every file returned HTTP 404 from the HuggingFace LFS API.
+          This typically means the repo is not Git LFS-backed (for
+          example: lmstudio-community/* and aydin99/*). Pass
+          --no-verify to skip CHECK 1 for non-LFS repos.
+
+    """
+}
+
 /// Talks to HuggingFace's LFS metadata endpoint to reconcile downloaded
 /// bytes against the authoritative `oid` (SHA-256) that HF publishes.
 ///

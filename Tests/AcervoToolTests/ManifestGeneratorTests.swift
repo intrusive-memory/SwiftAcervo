@@ -91,6 +91,68 @@
       #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
     }
 
+    @Test("Nested subdirs with same basename produce distinct full relative paths")
+    func nestedSubdirectoriesProduceDistinctPaths() async throws {
+      let dir = try makeTempDir()
+      defer { try? FileManager.default.removeItem(at: dir) }
+
+      // Create three files all named `config.json` with distinct
+      // contents in three different directories: one at the staging
+      // root, one in `text_encoder/`, one in `vae/`. This mirrors the
+      // nested-layout HF repos (FLUX.2, etc.) that triggered the
+      // basename-only manifest bug from TODO.md P0.
+      let textEncoderDir = dir.appendingPathComponent("text_encoder", isDirectory: true)
+      let vaeDir = dir.appendingPathComponent("vae", isDirectory: true)
+      try FileManager.default.createDirectory(at: textEncoderDir, withIntermediateDirectories: true)
+      try FileManager.default.createDirectory(at: vaeDir, withIntermediateDirectories: true)
+
+      try write("{\"root\": true}", to: dir.appendingPathComponent("config.json"))
+      try write("{\"te\": true}", to: textEncoderDir.appendingPathComponent("config.json"))
+      try write("{\"vae\": true}", to: vaeDir.appendingPathComponent("config.json"))
+
+      let generator = ManifestGenerator(modelId: "org/repo")
+      let manifestURL = try await generator.generate(directory: dir)
+
+      let data = try Data(contentsOf: manifestURL)
+      let manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
+
+      let paths = manifest.files.map(\.path).sorted()
+      #expect(
+        paths == ["config.json", "text_encoder/config.json", "vae/config.json"],
+        "expected three distinct nested paths, got \(paths)"
+      )
+
+      // Distinct content means distinct SHA-256s. If the bug regressed,
+      // all three would either collapse to one entry (overwriting each
+      // other) or produce duplicate `config.json` paths with three
+      // different hashes.
+      let shas = Set(manifest.files.map(\.sha256))
+      #expect(shas.count == 3, "expected three distinct SHA-256s, got \(shas.count)")
+
+      #expect(manifest.verifyChecksum() == true)
+    }
+
+    @Test("relativePath helper throws when the file is outside the base")
+    func relativePathHelperThrowsForOutsideBase() throws {
+      let base = URL(fileURLWithPath: "/tmp/some-base/path", isDirectory: true)
+      let outside = URL(fileURLWithPath: "/var/folders/totally/different/file.txt")
+
+      var thrown: Error?
+      do {
+        _ = try ManifestGenerator.relativePath(of: outside, under: base)
+      } catch {
+        thrown = error
+      }
+
+      guard case .some(AcervoToolError.relativePathOutsideBase(let file, _)) = thrown else {
+        Issue.record(
+          "Expected AcervoToolError.relativePathOutsideBase, got \(String(describing: thrown))"
+        )
+        return
+      }
+      #expect(file == outside.path)
+    }
+
     @Test("Generated manifest file is sorted and stable")
     func generatedManifestIsSorted() async throws {
       let dir = try makeTempDir()

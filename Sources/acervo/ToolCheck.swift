@@ -43,6 +43,17 @@ enum AcervoToolError: Error, CustomStringConvertible {
   /// `aws` (for example, `R2_ACCESS_KEY_ID`).
   case missingEnvironmentVariable(String)
 
+  /// A file enumerated under a staging base directory could not be
+  /// expressed as a relative path under that base. This indicates a
+  /// path-representation mismatch between the base URL and the
+  /// enumerator's child URL (for example, `/tmp` vs `/private/tmp`)
+  /// that survived symlink resolution. Surfaced as a hard error rather
+  /// than silently falling back to `lastPathComponent`, which would
+  /// produce a manifest with ambiguous duplicate paths for nested
+  /// layouts (HF repos with `text_encoder/`, `tokenizer/`, `vae/`
+  /// subdirectories).
+  case relativePathOutsideBase(file: String, base: String)
+
   var description: String {
     switch self {
     case .missingTool(let name):
@@ -65,6 +76,9 @@ enum AcervoToolError: Error, CustomStringConvertible {
       return "CDN manifest at \(url) failed verifyChecksum() (CHECK 5 failed)"
     case .missingEnvironmentVariable(let name):
       return "Required environment variable not set: \(name)"
+    case .relativePathOutsideBase(let file, let base):
+      return
+        "Cannot compute relative path: \(file) is not contained in \(base). Refusing to fall back to basename, which would produce ambiguous manifest entries."
     }
   }
 }

@@ -168,7 +168,7 @@ actor ManifestGenerator {
 
     var results: [DiscoveredFile] = []
     for case let fileURL as URL in enumerator {
-      let relative = Self.relativePath(of: fileURL, under: directory)
+      let relative = try Self.relativePath(of: fileURL, under: directory)
 
       // Apply exclusion rules.
       let lastComponent = fileURL.lastPathComponent
@@ -189,13 +189,30 @@ actor ManifestGenerator {
 
   // MARK: - Helpers
 
-  private static func relativePath(of fileURL: URL, under baseURL: URL) -> String {
-    let basePath = baseURL.path.hasSuffix("/") ? baseURL.path : baseURL.path + "/"
-    let filePath = fileURL.path
-    if filePath.hasPrefix(basePath) {
-      return String(filePath.dropFirst(basePath.count))
+  /// Computes `fileURL`'s path relative to `baseURL` using URL path
+  /// components, which survives `/tmp` ↔ `/private/tmp` symlink
+  /// divergence and trailing-slash inconsistencies that can fool a
+  /// naïve `String.hasPrefix` comparison on `URL.path`.
+  ///
+  /// Throws `AcervoToolError.relativePathOutsideBase` rather than
+  /// falling back to `lastPathComponent`. A silent basename fallback
+  /// produced ambiguous manifest entries for nested HuggingFace layouts
+  /// (multiple `config.json` files collapsed to a single path with
+  /// distinct SHA-256s) — see TODO.md P0 for the failure mode.
+  internal static func relativePath(of fileURL: URL, under baseURL: URL) throws -> String {
+    let baseComponents = baseURL.resolvingSymlinksInPath().pathComponents
+    let fileComponents = fileURL.resolvingSymlinksInPath().pathComponents
+
+    guard fileComponents.count > baseComponents.count,
+      Array(fileComponents.prefix(baseComponents.count)) == baseComponents
+    else {
+      throw AcervoToolError.relativePathOutsideBase(
+        file: fileURL.path,
+        base: baseURL.path
+      )
     }
-    return fileURL.lastPathComponent
+
+    return fileComponents.dropFirst(baseComponents.count).joined(separator: "/")
   }
 
   private static func derivedModelId(from directory: URL) -> String {
