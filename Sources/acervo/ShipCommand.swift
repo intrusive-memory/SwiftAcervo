@@ -157,6 +157,7 @@ struct ShipCommand: AsyncParsableCommand {
         quiet: progressOptions.quiet
       )
       var failures: [String] = []
+      var lfsAllNotFound = !discovered.isEmpty
       for (relativePath, fileURL) in discovered {
         defer { verifyReporter.advance() }
         let actualSHA256: String
@@ -164,6 +165,7 @@ struct ShipCommand: AsyncParsableCommand {
           actualSHA256 = try IntegrityVerification.sha256(of: fileURL)
         } catch {
           failures.append("\(relativePath): hash failed — \(error.localizedDescription)")
+          lfsAllNotFound = false
           continue
         }
 
@@ -175,18 +177,30 @@ struct ShipCommand: AsyncParsableCommand {
             stagingURL: fileURL
           )
         } catch let hfError as HFIntegrityError {
+          if case .httpError(let status, _) = hfError, status != 404 {
+            lfsAllNotFound = false
+          }
+          if case .checksumMismatch = hfError {
+            lfsAllNotFound = false
+          }
+          if case .missingOID = hfError {
+            lfsAllNotFound = false
+          }
           try? FileManager.default.removeItem(at: fileURL)
           failures.append("\(relativePath): \(hfError.description)")
         } catch {
+          lfsAllNotFound = false
           failures.append("\(relativePath): \(error.localizedDescription)")
         }
       }
 
       if !failures.isEmpty {
         let body = failures.joined(separator: "\n")
-        FileHandle.standardError.write(
-          Data("error: HuggingFace LFS verification failed:\n\(body)\n".utf8)
-        )
+        var message = "error: HuggingFace LFS verification failed:\n\(body)\n"
+        if lfsAllNotFound {
+          message += LFSVerificationHints.notLFSBackedHint
+        }
+        FileHandle.standardError.write(Data(message.utf8))
         throw ExitCode.failure
       }
       FileHandle.standardOutput.write(

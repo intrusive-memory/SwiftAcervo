@@ -97,6 +97,7 @@ struct DownloadCommand: AsyncParsableCommand {
       quiet: progressOptions.quiet
     )
     var failures: [String] = []
+    var lfsAllNotFound = !discovered.isEmpty
     for (relativePath, fileURL) in discovered {
       defer { reporter.advance() }
       let actualSHA256: String
@@ -104,6 +105,7 @@ struct DownloadCommand: AsyncParsableCommand {
         actualSHA256 = try IntegrityVerification.sha256(of: fileURL)
       } catch {
         failures.append("\(relativePath): hash failed — \(error.localizedDescription)")
+        lfsAllNotFound = false
         continue
       }
 
@@ -115,18 +117,30 @@ struct DownloadCommand: AsyncParsableCommand {
           stagingURL: fileURL
         )
       } catch let hfError as HFIntegrityError {
+        if case .httpError(let status, _) = hfError, status != 404 {
+          lfsAllNotFound = false
+        }
+        if case .checksumMismatch = hfError {
+          lfsAllNotFound = false
+        }
+        if case .missingOID = hfError {
+          lfsAllNotFound = false
+        }
         try? FileManager.default.removeItem(at: fileURL)
         failures.append("\(relativePath): \(hfError.description)")
       } catch {
+        lfsAllNotFound = false
         failures.append("\(relativePath): \(error.localizedDescription)")
       }
     }
 
     if !failures.isEmpty {
       let body = failures.joined(separator: "\n")
-      FileHandle.standardError.write(
-        Data("error: HuggingFace LFS verification failed:\n\(body)\n".utf8)
-      )
+      var message = "error: HuggingFace LFS verification failed:\n\(body)\n"
+      if lfsAllNotFound {
+        message += LFSVerificationHints.notLFSBackedHint
+      }
+      FileHandle.standardError.write(Data(message.utf8))
       throw ExitCode.failure
     }
 
@@ -223,15 +237,13 @@ struct DownloadCommand: AsyncParsableCommand {
     let excludedPrefixes: [String] = [".huggingface/"]
 
     var results: [(String, URL)] = []
-    let basePath = stagingURL.path.hasSuffix("/") ? stagingURL.path : stagingURL.path + "/"
 
     for case let fileURL as URL in enumerator {
-      let relative: String
-      if fileURL.path.hasPrefix(basePath) {
-        relative = String(fileURL.path.dropFirst(basePath.count))
-      } else {
-        relative = fileURL.lastPathComponent
-      }
+      // Use the same path-components-based relative-path computation as
+      // ManifestGenerator so nested HuggingFace layouts (e.g.
+      // text_encoder/, tokenizer/, vae/) yield correct relative paths
+      // for HF LFS verification (CHECK 1).
+      let relative = try ManifestGenerator.relativePath(of: fileURL, under: stagingURL)
 
       if excludedNames.contains(fileURL.lastPathComponent) { continue }
       if excludedPrefixes.contains(where: { relative.hasPrefix($0) }) { continue }

@@ -74,6 +74,38 @@ public struct CDNManifestFile: Codable, Sendable {
     self.sha256 = sha256
     self.sizeBytes = sizeBytes
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case path, sha256, sizeBytes
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let rawPath = try container.decode(String.self, forKey: .path)
+    self.path = try Self.validatedRelativePath(rawPath)
+    self.sha256 = try container.decode(String.self, forKey: .sha256)
+    self.sizeBytes = try container.decode(Int64.self, forKey: .sizeBytes)
+  }
+
+  /// Normalizes and validates a manifest-supplied relative path.
+  ///
+  /// Strips any leading `/` characters, then rejects the path if it is
+  /// empty or contains an empty / `.` / `..` component. This is the trust
+  /// boundary that prevents a malicious manifest from writing outside the
+  /// model directory via path traversal.
+  static func validatedRelativePath(_ raw: String) throws -> String {
+    let trimmed: Substring = raw.first == "/" ? raw.dropFirst() : Substring(raw)
+    guard !trimmed.isEmpty else {
+      throw AcervoError.invalidManifestPath(raw)
+    }
+    let components = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+    for component in components {
+      guard !component.isEmpty, component != ".", component != ".." else {
+        throw AcervoError.invalidManifestPath(raw)
+      }
+    }
+    return String(trimmed)
+  }
 }
 
 // MARK: - Manifest Validation
