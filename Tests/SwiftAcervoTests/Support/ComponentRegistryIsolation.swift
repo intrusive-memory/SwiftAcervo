@@ -46,10 +46,18 @@ func makeTestAppGroupID() -> String {
 /// Removes the on-disk Group Containers directory for a given test group ID,
 /// if it exists. Safe to call even when the directory was never created.
 func cleanupTestGroupContainer(_ groupID: String) {
-  let groupRoot = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Group Containers")
-    .appendingPathComponent(groupID)
-  try? FileManager.default.removeItem(at: groupRoot)
+  #if os(macOS)
+    let groupRoot = FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Group Containers")
+      .appendingPathComponent(groupID)
+    try? FileManager.default.removeItem(at: groupRoot)
+  #else
+    if let groupRoot = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: groupID
+    ) {
+      try? FileManager.default.removeItem(at: groupRoot)
+    }
+  #endif
 }
 
 // MARK: - Combined helper (env var + ComponentRegistry)

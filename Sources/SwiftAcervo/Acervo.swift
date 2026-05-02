@@ -63,13 +63,17 @@ extension Acervo {
   /// export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
   /// ```
   ///
-  /// UI apps (macOS, iOS) ignore this variable: they declare the App Group in
-  /// `com.apple.security.application-groups` inside their `.entitlements` file
-  /// and SwiftAcervo reads it at runtime via `SecTaskCopyValueForEntitlement`.
+  /// macOS UI apps may instead declare the App Group in
+  /// `com.apple.security.application-groups` inside their `.entitlements`
+  /// file; SwiftAcervo reads it at runtime via `SecTaskCopyValueForEntitlement`.
+  /// On iOS, `SecTaskCopyValueForEntitlement` is not part of the public SDK,
+  /// so iOS consumers must supply the identifier via this environment
+  /// variable (e.g. set in `main` before any SwiftAcervo call).
   ///
   /// Resolution order in ``sharedModelsDirectory``:
   /// 1. `ACERVO_APP_GROUP_ID` environment variable
   /// 2. First entry of `com.apple.security.application-groups` entitlement
+  ///    (macOS only)
   /// 3. `fatalError` — no silent fallback
   public static let appGroupEnvironmentVariable = "ACERVO_APP_GROUP_ID"
 
@@ -78,8 +82,8 @@ extension Acervo {
 
   /// Resolves the App Group identifier for the current process.
   ///
-  /// Reads ``appGroupEnvironmentVariable`` first, then falls back to the
-  /// running binary's `com.apple.security.application-groups` entitlement.
+  /// Reads ``appGroupEnvironmentVariable`` first, then on macOS falls back to
+  /// the running binary's `com.apple.security.application-groups` entitlement.
   /// Returns `nil` if neither source supplies a value — callers that need a
   /// path treat this as a configuration error.
   static var resolvedAppGroupIdentifier: String? {
@@ -88,25 +92,35 @@ extension Acervo {
     {
       return envValue
     }
-    return readApplicationGroupFromEntitlements()
+    #if os(macOS)
+      return readApplicationGroupFromEntitlements()
+    #else
+      return nil
+    #endif
   }
 
-  /// Reads the first entry of `com.apple.security.application-groups` from
-  /// the running binary's entitlements via the Security framework.
-  ///
-  /// Returns `nil` for binaries without entitlements (unsigned CLI tools,
-  /// test runners) or whose entitlements lack the application-groups key.
-  private static func readApplicationGroupFromEntitlements() -> String? {
-    guard let task = SecTaskCreateFromSelf(nil) else { return nil }
-    let key = "com.apple.security.application-groups" as CFString
-    guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else {
+  #if os(macOS)
+    /// Reads the first entry of `com.apple.security.application-groups` from
+    /// the running binary's entitlements via the Security framework.
+    ///
+    /// Returns `nil` for binaries without entitlements (unsigned CLI tools,
+    /// test runners) or whose entitlements lack the application-groups key.
+    ///
+    /// macOS only: `SecTaskCreateFromSelf` and `SecTaskCopyValueForEntitlement`
+    /// are not part of the public iOS SDK. iOS consumers must supply the
+    /// group identifier through ``appGroupEnvironmentVariable``.
+    private static func readApplicationGroupFromEntitlements() -> String? {
+      guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+      let key = "com.apple.security.application-groups" as CFString
+      guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else {
+        return nil
+      }
+      if let array = value as? [String], let first = array.first, !first.isEmpty {
+        return first
+      }
       return nil
     }
-    if let array = value as? [String], let first = array.first, !first.isEmpty {
-      return first
-    }
-    return nil
-  }
+  #endif
 
   /// Marks a URL as excluded from iCloud backup.
   ///
@@ -131,7 +145,9 @@ extension Acervo {
   /// Group identifier is configured (see ``appGroupEnvironmentVariable``).
   ///
   /// - **iOS**: resolves via `containerURL(forSecurityApplicationGroupIdentifier:)`.
-  ///   The entitlement must be granted; CLIs do not exist on iOS.
+  ///   The entitlement must be granted; the group ID itself must be supplied
+  ///   via ``appGroupEnvironmentVariable`` because iOS does not expose
+  ///   `SecTaskCopyValueForEntitlement` publicly.
   /// - **macOS**: computed deterministically as
   ///   `~/Library/Group Containers/<group-id>/SharedModels/`. Signed UI apps
   ///   land at the same path the entitlement API would return; unsigned CLI

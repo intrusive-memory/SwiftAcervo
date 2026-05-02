@@ -169,18 +169,34 @@ extension SharedStaticStateSuite.AppGroupEnvironmentSuite {
     @Test("ACERVO_APP_GROUP_ID env var drives sharedModelsDirectory path")
     func envVarDrivesSharedModelsDirectory() {
       withIsolatedSharedModelsDirectory { sharedDir in
-        // The helper sets ACERVO_APP_GROUP_ID to a unique value; the
-        // resolved path must include that value (env var, not entitlements).
         let envValue = ProcessInfo.processInfo.environment[
           Acervo.appGroupEnvironmentVariable
         ]
         #expect(envValue != nil, "Helper should have set the env var")
-        if let envValue {
+        guard let envValue else { return }
+        #if os(macOS)
+          // macOS computes the path deterministically from the group ID, so
+          // the env value appears verbatim as a path component.
           #expect(
             sharedDir.path.contains(envValue),
             "sharedModelsDirectory path \(sharedDir.path) must contain group ID \(envValue)"
           )
-        }
+        #else
+          // iOS resolves through containerURL(...), which on Simulator returns
+          // a UUID-keyed path that does not contain the group ID literally.
+          // Verify the resolved path matches what containerURL hands back for
+          // the same identifier.
+          let expected = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: envValue
+          )?.appendingPathComponent("SharedModels")
+          #expect(expected != nil, "containerURL should resolve for env-supplied group ID")
+          if let expected {
+            #expect(
+              sharedDir.standardizedFileURL == expected.standardizedFileURL,
+              "sharedModelsDirectory \(sharedDir.path) should equal containerURL-derived path \(expected.path)"
+            )
+          }
+        #endif
       }
     }
 
