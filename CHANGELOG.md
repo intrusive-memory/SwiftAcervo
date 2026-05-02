@@ -7,6 +7,31 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.9.0] - 2026-05-02
+
+### Changed (Breaking)
+
+- **Removed `Acervo.customBaseDirectory`** and the `~/Library/Application Support/SwiftAcervo/SharedModels/` fallback that previously lived behind it. `Acervo.sharedModelsDirectory` now resolves the App Group identifier from one of two sources, in order:
+  1. `ACERVO_APP_GROUP_ID` environment variable (CLIs, scripts, test runners — typically set in `~/.zprofile`).
+  2. First entry of the running binary's `com.apple.security.application-groups` entitlement (macOS UI apps; read via `SecTaskCopyValueForEntitlement`).
+  If neither source supplies a value, the property traps with `fatalError` — there is no silent per-process fallback, on purpose.
+- **macOS path layout** is now computed deterministically as `~/Library/Group Containers/<group-id>/SharedModels/`. Signed UI apps and unsigned CLIs land at the same directory by construction, so a model downloaded by either is immediately visible to the other.
+- **iOS path layout** continues to resolve via `containerURL(forSecurityApplicationGroupIdentifier:)`. iOS consumers must supply the group ID through `ACERVO_APP_GROUP_ID` because `SecTaskCopyValueForEntitlement` is not part of the public iOS SDK.
+
+### Migration
+
+Consumers that referenced `Acervo.customBaseDirectory` (e.g. SwiftBruja and SwiftProyecto test suites) will not compile against this version. Replace test-time path overrides with the `ACERVO_APP_GROUP_ID` environment variable — set it to a unique value per test for isolation, and clean up the resolved Group Containers directory in teardown.
+
+For interactive shells and CLI tools, export the canonical group ID in `~/.zprofile`:
+
+```sh
+export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
+```
+
+`xcodebuild` does not propagate shell env vars into the xctest runner; SwiftAcervo's checked-in scheme at `.swiftpm/xcode/xcshareddata/xcschemes/SwiftAcervo-Package.xcscheme` declares `ACERVO_APP_GROUP_ID=group.acervo.testbundle.default` in its `<EnvironmentVariables>` block so `make test` and CI work without shell setup.
+
+---
+
 ## [0.8.1] - 2026-04-25
 
 ### Added

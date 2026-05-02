@@ -50,6 +50,10 @@ jobs:
             -scheme SwiftAcervo \
             -destination 'platform=macOS,arch=arm64'
 
+      # ACERVO_APP_GROUP_ID comes from the checked-in scheme
+      # .swiftpm/xcode/xcshareddata/xcschemes/SwiftAcervo-Package.xcscheme.
+      # Shell env does not propagate through xcodebuild test to the xctest
+      # runner; the scheme is the canonical channel.
       - name: Test
         run: |
           xcodebuild test \
@@ -98,6 +102,8 @@ jobs:
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
 
+      # ACERVO_APP_GROUP_ID is supplied by the scheme's <EnvironmentVariables>
+      # block, which xcodebuild forwards into the iOS Simulator test runner.
       - name: Test on iOS
         run: |
           xcodebuild test-without-building \

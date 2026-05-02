@@ -18,6 +18,7 @@
 //
 
 import Foundation
+import Security
 
 /// Static API namespace for shared AI model discovery and management.
 ///
@@ -27,7 +28,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.8.5"
+  public static let version = "0.9.0"
 
   /// The name of the environment variable that gates outbound HTTP fetches.
   ///
@@ -54,19 +55,72 @@ public enum Acervo {
 
 extension Acervo {
 
-  /// The App Group identifier for shared model storage across
-  /// intrusive-memory apps. Intentionally not configurable by consumers.
-  private static let appGroupIdentifier = "group.intrusive-memory.models"
+  /// Environment variable that supplies the App Group identifier to consumers
+  /// without an entitlements file (CLI tools, scripts, test runners).
+  ///
+  /// Set in `~/.zprofile` for interactive shells:
+  /// ```sh
+  /// export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
+  /// ```
+  ///
+  /// macOS UI apps may instead declare the App Group in
+  /// `com.apple.security.application-groups` inside their `.entitlements`
+  /// file; SwiftAcervo reads it at runtime via `SecTaskCopyValueForEntitlement`.
+  /// On iOS, `SecTaskCopyValueForEntitlement` is not part of the public SDK,
+  /// so iOS consumers must supply the identifier via this environment
+  /// variable (e.g. set in `main` before any SwiftAcervo call).
+  ///
+  /// Resolution order in ``sharedModelsDirectory``:
+  /// 1. `ACERVO_APP_GROUP_ID` environment variable
+  /// 2. First entry of `com.apple.security.application-groups` entitlement
+  ///    (macOS only)
+  /// 3. `fatalError` — no silent fallback
+  public static let appGroupEnvironmentVariable = "ACERVO_APP_GROUP_ID"
 
-  /// The subdirectory name within the container for model storage.
+  /// The subdirectory name within the App Group container for model storage.
   private static let modelsSubdirectory = "SharedModels"
 
-  /// Optional override for the base model storage directory.
+  /// Resolves the App Group identifier for the current process.
   ///
-  /// When set, ``sharedModelsDirectory`` returns this URL directly,
-  /// bypassing the App Group and Application Support resolution.
-  /// Set this before any download or model-access calls.
-  nonisolated(unsafe) public static var customBaseDirectory: URL?
+  /// Reads ``appGroupEnvironmentVariable`` first, then on macOS falls back to
+  /// the running binary's `com.apple.security.application-groups` entitlement.
+  /// Returns `nil` if neither source supplies a value — callers that need a
+  /// path treat this as a configuration error.
+  static var resolvedAppGroupIdentifier: String? {
+    if let envValue = ProcessInfo.processInfo.environment[appGroupEnvironmentVariable],
+      !envValue.isEmpty
+    {
+      return envValue
+    }
+    #if os(macOS)
+      return readApplicationGroupFromEntitlements()
+    #else
+      return nil
+    #endif
+  }
+
+  #if os(macOS)
+    /// Reads the first entry of `com.apple.security.application-groups` from
+    /// the running binary's entitlements via the Security framework.
+    ///
+    /// Returns `nil` for binaries without entitlements (unsigned CLI tools,
+    /// test runners) or whose entitlements lack the application-groups key.
+    ///
+    /// macOS only: `SecTaskCreateFromSelf` and `SecTaskCopyValueForEntitlement`
+    /// are not part of the public iOS SDK. iOS consumers must supply the
+    /// group identifier through ``appGroupEnvironmentVariable``.
+    private static func readApplicationGroupFromEntitlements() -> String? {
+      guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+      let key = "com.apple.security.application-groups" as CFString
+      guard let value = SecTaskCopyValueForEntitlement(task, key, nil) else {
+        return nil
+      }
+      if let array = value as? [String], let first = array.first, !first.isEmpty {
+        return first
+      }
+      return nil
+    }
+  #endif
 
   /// Marks a URL as excluded from iCloud backup.
   ///
@@ -87,37 +141,64 @@ extension Acervo {
 
   /// The canonical base directory for all shared AI models.
   ///
-  /// Resolves to the App Group container for `group.intrusive-memory.models`
-  /// when the entitlement is available (sandboxed apps). Falls back to
-  /// `Application Support/SwiftAcervo/SharedModels/` for non-sandboxed
-  /// contexts (e.g., tests, CLI tools).
+  /// Same path for every consumer — UI app, CLI, test runner — once the App
+  /// Group identifier is configured (see ``appGroupEnvironmentVariable``).
   ///
-  /// All model directories are stored as direct children of this path,
-  /// named using the slugified model ID.
+  /// - **iOS**: resolves via `containerURL(forSecurityApplicationGroupIdentifier:)`.
+  ///   The entitlement must be granted; the group ID itself must be supplied
+  ///   via ``appGroupEnvironmentVariable`` because iOS does not expose
+  ///   `SecTaskCopyValueForEntitlement` publicly.
+  /// - **macOS**: computed deterministically as
+  ///   `~/Library/Group Containers/<group-id>/SharedModels/`. Signed UI apps
+  ///   land at the same path the entitlement API would return; unsigned CLI
+  ///   tools can read/write the directory by virtue of file-system permissions.
   ///
-  /// ```swift
-  /// let baseDir = Acervo.sharedModelsDirectory
-  /// // App Group: <container>/SharedModels/
-  /// // Fallback:  ~/Library/Application Support/SwiftAcervo/SharedModels/
-  /// ```
+  /// All model directories are stored as direct children of this path, named
+  /// using the slugified model ID.
+  ///
+  /// - Important: Calls `fatalError` when no App Group identifier is
+  ///   configured. CLIs must export ``appGroupEnvironmentVariable`` (typically
+  ///   in `~/.zprofile`); UI apps must declare the group in their
+  ///   `.entitlements` file. Acervo refuses to invent a per-process fallback
+  ///   path because that is exactly the divergence the App Group container
+  ///   exists to prevent.
   public static var sharedModelsDirectory: URL {
-    if let custom = customBaseDirectory {
-      return custom
+    guard let groupID = resolvedAppGroupIdentifier else {
+      fatalError(
+        """
+        SwiftAcervo: no App Group identifier configured.
+
+        UI apps (macOS / iOS): declare `com.apple.security.application-groups` \
+        in your .entitlements file.
+
+        CLI tools / scripts / test runners: export ACERVO_APP_GROUP_ID in \
+        your shell environment (typically ~/.zprofile):
+
+            export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
+
+        See SwiftAcervo's README and AGENTS.md for details.
+        """
+      )
     }
-    if let groupURL = FileManager.default.containerURL(
-      forSecurityApplicationGroupIdentifier: appGroupIdentifier
-    ) {
+    #if os(iOS)
+      guard
+        let groupURL = FileManager.default.containerURL(
+          forSecurityApplicationGroupIdentifier: groupID
+        )
+      else {
+        fatalError(
+          "SwiftAcervo: App Group '\(groupID)' is not granted to this iOS process. "
+            + "Add it to com.apple.security.application-groups in the app's entitlements."
+        )
+      }
       return groupURL.appendingPathComponent(modelsSubdirectory)
-    }
-    // Fallback for non-sandboxed or non-entitled contexts
-    let appSupport = FileManager.default.urls(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask
-    ).first!
-    return
-      appSupport
-      .appendingPathComponent("SwiftAcervo")
-      .appendingPathComponent(modelsSubdirectory)
+    #else
+      return
+        FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Group Containers")
+        .appendingPathComponent(groupID)
+        .appendingPathComponent(modelsSubdirectory)
+    #endif
   }
 
   /// Converts a model ID to a filesystem-safe directory name.

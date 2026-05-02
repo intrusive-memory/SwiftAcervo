@@ -7,6 +7,15 @@ ACERVO_BINARY = acervo
 BIN_DIR = bin
 DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 
+# Test runs read ACERVO_APP_GROUP_ID from the checked-in scheme at
+# .swiftpm/xcode/xcshareddata/xcschemes/SwiftAcervo-Package.xcscheme. The
+# scheme sets it to `group.acervo.testbundle.default` so tests never write
+# into a developer's real shared-models directory. Individual tests that
+# need stricter isolation override the value per-test via the
+# `withIsolatedAcervoState` helper. Shell env vars are NOT propagated by
+# xcodebuild to the xctest runner, so the scheme is the only reliable
+# channel.
+
 .PHONY: build test clean resolve lint help release \
         build-acervo install-acervo release-acervo \
         test-acervo-unit test-acervo-cdn
@@ -58,11 +67,11 @@ release-acervo: resolve
 	fi
 
 test-acervo-unit: resolve
-	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
+	xcodebuild test -scheme $(TEST_SCHEME) -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests
 
 test-acervo-cdn: resolve
-	xcodebuild test -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) \
+	xcodebuild test -scheme $(TEST_SCHEME) -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests/CDNManifestFetchTests
 
 help:

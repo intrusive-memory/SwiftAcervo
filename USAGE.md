@@ -22,7 +22,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.8.2")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.9.0")
     ],
     targets: [
         .target(
@@ -35,15 +35,24 @@ let package = Package(
 
 Or add via Xcode: **File > Add Package Dependencies** → enter repository URL.
 
-### 2. Enable the App Group entitlement (REQUIRED for cross-app sharing)
+### 2. Tell SwiftAcervo where its App Group lives (REQUIRED)
 
-SwiftAcervo stores models in the App Group container `group.intrusive-memory.models`. Without this entitlement, your app silently falls back to `~/Library/Application Support/SwiftAcervo/SharedModels/`, which is **not shared** — every app re-downloads every model, defeating the whole point of the library.
+SwiftAcervo stores every model under `~/Library/Group Containers/<your-app-group-id>/SharedModels/` on macOS and inside the App Group container on iOS. The path is identical for UI apps and CLIs once the group ID is configured, which is what makes cross-process sharing work. **There is no fallback** — `Acervo.sharedModelsDirectory` calls `fatalError` if no App Group ID can be resolved, on purpose, because a per-process fallback path is exactly the divergence App Groups exist to prevent.
 
-**Xcode setup** (do this for every target that calls into SwiftAcervo, including extensions):
+SwiftAcervo learns the App Group identifier in two ways:
+
+1. **`ACERVO_APP_GROUP_ID` environment variable** — used by CLI tools, scripts, test runners, and anything else without an entitlements file.
+2. **`com.apple.security.application-groups` entitlement** — read at runtime via `SecTaskCopyValueForEntitlement`. Used by signed UI apps. SwiftAcervo takes the **first** group in the array.
+
+The env var wins if both are set.
+
+#### For UI apps (macOS / iOS)
+
+Declare the App Group in your `.entitlements` file. **Xcode setup** (do this for every target that calls into SwiftAcervo, including extensions):
 
 1. Select the target → **Signing & Capabilities**.
 2. Click **+ Capability** → **App Groups**.
-3. Check (or add) `group.intrusive-memory.models`.
+3. Check (or add) `group.intrusive-memory.models` (or your own group ID).
 4. Rebuild.
 
 **Manual `.entitlements` file** (for non-Xcode builds):
@@ -64,9 +73,26 @@ SwiftAcervo stores models in the App Group container `group.intrusive-memory.mod
 
 **Provisioning profile**: the profile must include the App Group. When Xcode manages signing automatically, this is handled for you; for manual profiles, regenerate after adding the group in the Apple Developer portal.
 
-**How to verify it's wired up**: at startup, print `Acervo.sharedModelsDirectory`. A correctly entitled app shows a path under `~/Library/Group Containers/group.intrusive-memory.models/...` on macOS or inside the app sandbox's `Group Containers` on iOS. A path ending in `Application Support/SwiftAcervo/SharedModels` means the fallback kicked in — go back and add the capability.
+#### For CLI tools, scripts, and test runners
 
-> **Unsigned macOS CLI tools** (like the `acervo` binary itself) can't join App Groups. They use the fallback path by design. For consumer apps that need cross-app sharing, the entitlement is mandatory.
+Export `ACERVO_APP_GROUP_ID` in your shell. The standard place is `~/.zprofile` so every interactive shell on the machine inherits it:
+
+```sh
+# ~/.zprofile
+export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
+```
+
+For CI, set the same variable in the job environment (GitHub Actions `env:`, `.envrc`, etc.). Without it, every Acervo path-resolution call traps with a `fatalError` and the message tells you exactly what to do.
+
+#### Verifying the wiring
+
+At startup, print `Acervo.sharedModelsDirectory`. The path should contain your App Group identifier:
+
+```
+~/Library/Group Containers/group.intrusive-memory.models/SharedModels
+```
+
+If you get a `fatalError` with the message `SwiftAcervo: no App Group identifier configured.`, your UI app is missing the entitlement or your CLI shell is missing the env var.
 
 See **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** for the full directory layout and troubleshooting.
 
@@ -99,7 +125,7 @@ let modelDir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct
 ## Integration Checklist
 
 - [ ] Add SwiftAcervo dependency to `Package.swift`.
-- [ ] **Enable the `group.intrusive-memory.models` App Group entitlement on every target that calls into SwiftAcervo** (see step 2 above). Verify at runtime by printing `Acervo.sharedModelsDirectory` — if the path contains `Application Support/SwiftAcervo`, the capability is missing.
+- [ ] **Configure the App Group identifier on every consumer**: UI apps declare `com.apple.security.application-groups` in their `.entitlements` file; CLI tools / scripts / CI export `ACERVO_APP_GROUP_ID` (see step 2 above). Verify at runtime by printing `Acervo.sharedModelsDirectory` — a `fatalError` with `no App Group identifier configured` means neither source supplied a value.
 - [ ] Decide your consumption level (see "Three Ways to Avoid Naming Files" below).
 - [ ] Call `ModelDownloadManager.shared.ensureModelsAvailable()` (or a lower-level equivalent) at app startup, typically behind an `await`.
 - [ ] Provide progress feedback via the callback.
@@ -387,25 +413,36 @@ let weights = try await AcervoManager.shared.withLocalAccess(loraURL) { handle i
 
 Two pieces of SwiftAcervo state are process-wide and can race across parallel test suites:
 
-- **`Acervo.customBaseDirectory`** — the model-storage override (`URL?`). When you set it in a test, every other test in the same process sees the new value until you restore it.
-- **`ACERVO_OFFLINE` environment variable** — when set to `"1"`, every download path throws `AcervoError.offlineModeActive`. Like `customBaseDirectory`, it's read on every Acervo download call, so any test that sets it briefly will trip the gate for any concurrent test that fetches a manifest or a file.
+- **`ACERVO_APP_GROUP_ID` environment variable** — drives `Acervo.sharedModelsDirectory`. Tests that need an isolated model directory set it to a unique value (e.g. `"group.acervo.test.<uuid>"`) so the resolved path becomes `~/Library/Group Containers/group.acervo.test.<uuid>/SharedModels/`, distinct from the production directory. Restore the prior value (or unset) on exit.
+- **`ACERVO_OFFLINE` environment variable** — when set to `"1"`, every download path throws `AcervoError.offlineModeActive`. Like the App Group var, it's read on every Acervo call, so any test that sets it briefly will trip the gate for any concurrent test that fetches a manifest or a file.
 
 Swift Testing runs `@Suite` types in parallel by default. The two patterns that work reliably are:
 
-### 1. Serialize all global-state-touching tests under a single parent
+### 1. Serialize all env-mutating tests under a single parent
 
-If your tests set `customBaseDirectory` or `ACERVO_OFFLINE`, nest them under a single `.serialized` parent suite — and put the *readers* there too. Anything that calls `Acervo.download`, `Acervo.fetchManifest`, `Acervo.ensureAvailable`, `Acervo.modelDirectory(for:)`, or `Acervo.sharedModelsDirectory` is a reader.
+If your tests set `ACERVO_APP_GROUP_ID` or `ACERVO_OFFLINE`, nest them under a single `.serialized` parent suite — and put the *readers* there too. Anything that calls `Acervo.download`, `Acervo.fetchManifest`, `Acervo.ensureAvailable`, `Acervo.modelDirectory(for:)`, or `Acervo.sharedModelsDirectory` is a reader.
 
 ```swift
 @Suite("My Acervo Tests", .serialized)
 struct MyAcervoTests {
 
-    @Test("download writes into customBaseDirectory")
-    func usesCustomBase() async throws {
-        let tempBase = FileManager.default.temporaryDirectory
-            .appendingPathComponent("my-test-\(UUID())")
-        Acervo.customBaseDirectory = tempBase
-        defer { Acervo.customBaseDirectory = nil }
+    @Test("download writes into a per-test App Group container")
+    func usesIsolatedGroup() async throws {
+        let testGroupID = "group.mytests.acervo.\(UUID().uuidString.lowercased())"
+        let previous = ProcessInfo.processInfo.environment["ACERVO_APP_GROUP_ID"]
+        setenv("ACERVO_APP_GROUP_ID", testGroupID, 1)
+        defer {
+            if let previous {
+                setenv("ACERVO_APP_GROUP_ID", previous, 1)
+            } else {
+                unsetenv("ACERVO_APP_GROUP_ID")
+            }
+            // Clean up the per-test container directory.
+            let groupRoot = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Group Containers")
+                .appendingPathComponent(testGroupID)
+            try? FileManager.default.removeItem(at: groupRoot)
+        }
 
         try await Acervo.download(modelId: "org/repo", files: [])
         // ... assertions ...
@@ -413,11 +450,11 @@ struct MyAcervoTests {
 }
 ```
 
-The `.serialized` trait orders all tests *within* the suite. Tests in *sibling* suites still run in parallel with this one, so they must not touch the same globals.
+The `.serialized` trait orders all tests *within* the suite. Tests in *sibling* suites still run in parallel with this one, so they must not touch the same env vars.
 
 ### 2. Don't read the global at all
 
-Path-construction logic that depends on `sharedModelsDirectory` should use the `in: baseDirectory` overloads where they exist (e.g. `Acervo.isModelAvailable(_:in:)`, `Acervo.listModels(in:)`). They take the base directory as an explicit parameter and never touch `customBaseDirectory`, so they're race-immune by construction.
+Path-construction logic that depends on `sharedModelsDirectory` should use the `in: baseDirectory` overloads where they exist (e.g. `Acervo.isModelAvailable(_:in:)`, `Acervo.listModels(in:)`). They take the base directory as an explicit parameter and never touch the env var, so they're race-immune by construction.
 
 ```swift
 let tempBase = FileManager.default.temporaryDirectory
@@ -434,9 +471,9 @@ For pure path helpers, `Acervo.slugify(_:)` is a pure function and is always saf
 
 ### What goes wrong without isolation
 
-The classic flake mode: test A sets `Acervo.customBaseDirectory = tempA` and reads `Acervo.sharedModelsDirectory`, expecting `tempA`. Concurrent test B sets `Acervo.customBaseDirectory = tempB` between A's set and read. A receives `tempB` and the assertion fails. The same shape applies to `ACERVO_OFFLINE`: an unrelated test that briefly sets it can cause a sibling test's `Acervo.fetchManifest` call to throw `offlineModeActive` instead of completing.
+The classic flake mode: test A sets `ACERVO_APP_GROUP_ID` to its per-test value, reads `Acervo.sharedModelsDirectory`, expecting its own path. Concurrent test B overwrites the env var between A's set and read. A receives B's path and the assertion fails. The same shape applies to `ACERVO_OFFLINE`: an unrelated test that briefly sets it can cause a sibling test's `Acervo.fetchManifest` call to throw `offlineModeActive` instead of completing.
 
-If you see intermittent CI failures asserting on a path component or catching `offlineModeActive` unexpectedly, the cause is almost always cross-suite global-state contention — not a bug in Acervo's behavior.
+If you see intermittent CI failures asserting on a path component or catching `offlineModeActive` unexpectedly, the cause is almost always cross-suite env-var contention — not a bug in Acervo's behavior.
 
 ---
 

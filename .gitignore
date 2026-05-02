@@ -1,5 +1,13 @@
 .build/
 .swiftpm/
+# Track the shared SPM scheme so its <EnvironmentVariables> (notably
+# ACERVO_APP_GROUP_ID for the test bundle) survive `xcodebuild`'s
+# auto-generation. Everything else under .swiftpm/ stays local.
+!.swiftpm/
+!.swiftpm/xcode/
+!.swiftpm/xcode/xcshareddata/
+!.swiftpm/xcode/xcshareddata/xcschemes/
+!.swiftpm/xcode/xcshareddata/xcschemes/*.xcscheme
 Package.resolved
 *.xcodeproj
 *.xcworkspace

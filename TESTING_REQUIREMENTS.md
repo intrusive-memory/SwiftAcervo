@@ -69,7 +69,7 @@ Resolution: thread a `session: URLSession = SecureDownloadSession.shared` parame
 
 ### Test isolation for global state
 
-Already tracked in [FOLLOW_UP.md](FOLLOW_UP.md) "Pre-existing Test Flake" and "Test-Isolation Primitive." Relevant here because it forces current tests to work around global state with UUID-suffixed IDs (`HydrateComponentTests.uniqueIds`, `HydrationTests.uniqueIds`, `AutoHydrateTests.uniqueIds`) and `defer { unregister }` blocks. `Acervo.customBaseDirectory` is an even thornier case: `AcervoPathTests` and `AcervoFilesystemEdgeCaseTests` race on it when run in parallel. A per-suite isolation primitive on `ComponentRegistry.shared` and `Acervo.customBaseDirectory` would make new-test authoring safer and eliminate a recurring flake.
+Already tracked in [FOLLOW_UP.md](FOLLOW_UP.md) "Pre-existing Test Flake" and "Test-Isolation Primitive." Relevant here because it forces current tests to work around global state with UUID-suffixed IDs (`HydrateComponentTests.uniqueIds`, `HydrationTests.uniqueIds`, `AutoHydrateTests.uniqueIds`) and `defer { unregister }` blocks. The model-storage root is now driven by the `ACERVO_APP_GROUP_ID` environment variable (the prior `customBaseDirectory` static was removed). The checked-in scheme at `.swiftpm/xcode/xcshareddata/xcschemes/SwiftAcervo-Package.xcscheme` sets it to `group.acervo.testbundle.default` so tests share a stable bundle root; tests that need stricter per-test isolation override the value via `withIsolatedAcervoState` in `Tests/SwiftAcervoTests/Support/ComponentRegistryIsolation.swift`. The `AppGroupEnvironmentSuite` `.serialized` parent serializes any test that mutates the env var.
 
 ---
 
