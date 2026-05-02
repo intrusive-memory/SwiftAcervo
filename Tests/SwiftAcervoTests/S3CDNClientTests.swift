@@ -308,5 +308,397 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       #expect(xml.contains("<Key>weird&amp;key</Key>"))
       #expect(xml.contains("<Quiet>false</Quiet>"))
     }
+
+    // MARK: - putObject (single-shot)
+
+    /// Helper: writes `bytes` to a uniquely-named file in the system temp
+    /// directory and returns its URL. Caller is responsible for cleanup.
+    static func writeTempFile(
+      _ bytes: Data,
+      suffix: String = ".bin"
+    ) throws -> URL {
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+          "s3cdnclient-test-\(UUID().uuidString)\(suffix)"
+        )
+      try bytes.write(to: url)
+      return url
+    }
+
+    /// Helper: writes a synthetic file of `size` bytes filled with a
+    /// deterministic byte pattern (so different runs produce identical
+    /// hashes) to a uniquely-named temp file. Caller cleans up.
+    static func writeSyntheticFile(size: Int) throws -> URL {
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(
+          "s3cdnclient-test-\(UUID().uuidString).synthetic"
+        )
+      // Deterministic pattern: a single 4096-byte block of (i & 0xFF)
+      // copied repeatedly. Streamed write so we never hold the whole
+      // payload in memory in the test process either.
+      let block = Data((0..<4096).map { UInt8($0 & 0xFF) })
+      FileManager.default.createFile(atPath: url.path, contents: nil)
+      let handle = try FileHandle(forWritingTo: url)
+      defer { try? handle.close() }
+      var written = 0
+      while written < size {
+        let remaining = size - written
+        let chunk = remaining >= block.count
+          ? block
+          : block.prefix(remaining)
+        try handle.write(contentsOf: chunk)
+        written += chunk.count
+      }
+      return url
+    }
+
+    @Test("putObject single-shot: one signed PUT, sha256 matches fixture")
+    func putObjectSingleShot() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      // Fixture: "hello world\n" (12 bytes) — well under the default
+      // 100 MiB single-shot threshold, so this exercises that path.
+      // SHA-256 hex of "hello world\n":
+      //   a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447
+      let fixtureBytes = Data("hello world\n".utf8)
+      let expectedSHA256 =
+        "a948904f2f0f479b8f8197694b30184b0d2ed1c1cd2a1ec0fb85d299a192a447"
+
+      let url = try Self.writeTempFile(fixtureBytes)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      // Capture the PUT request's headers so we can assert the
+      // x-amz-content-sha256 was set to the streaming hash and that the
+      // request was signed.
+      MockURLProtocol.responder = { request in
+        let response = HTTPURLResponse(
+          url: request.url!,
+          statusCode: 200,
+          httpVersion: "HTTP/1.1",
+          headerFields: [
+            "ETag": "\"single-shot-etag\"",
+          ]
+        )!
+        return (response, Data())
+      }
+
+      let client = Self.makeClient()
+      let result = try await client.putObject(
+        key: "models/foo/hello.txt",
+        bodyURL: url
+      )
+
+      #expect(result.key == "models/foo/hello.txt")
+      #expect(result.sha256 == expectedSHA256)
+      #expect(result.etag == "\"single-shot-etag\"")
+      // Exactly one PUT — no multipart sequence on the single-shot path.
+      #expect(MockURLProtocol.requestCount == 1)
+    }
+
+    // MARK: - putObject (multipart)
+
+    /// Build a client whose thresholds are small enough that a 33 MiB
+    /// file produces 3 parts. We pick 16 MiB part size (matching prod)
+    /// and a 4 MiB single-shot threshold so any file >4 MiB lands on
+    /// the multipart path.
+    static func makeMultipartClient(
+      singleShotThreshold: Int64 = 4 * 1024 * 1024,
+      multipartPartSize: Int64 = 16 * 1024 * 1024
+    ) -> S3CDNClient {
+      let session = MockURLProtocol.session()
+      return S3CDNClient(
+        credentials: testCredentials(),
+        session: session,
+        singleShotThreshold: singleShotThreshold,
+        multipartPartSize: multipartPartSize
+      )
+    }
+
+    /// Tracks every request the multipart mock dispatches. Marked as a
+    /// final class so the closure can mutate it under the protocol's
+    /// internal lock without crossing actor boundaries.
+    final class RequestLog: @unchecked Sendable {
+      let lock = NSLock()
+      var entries: [(method: String, query: String)] = []
+
+      func record(method: String, query: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries.append((method: method, query: query))
+      }
+
+      func snapshot() -> [(method: String, query: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return entries
+      }
+    }
+
+    /// Dispatches multipart-upload responses based on URL query.
+    ///   * `?uploads`            (POST)   → InitiateMultipartUploadResult XML
+    ///   * `?partNumber=N&uploadId=…` (PUT) → 200 + ETag header
+    ///   * `?uploadId=…`         (POST)   → CompleteMultipartUploadResult XML
+    ///   * `?uploadId=…`         (DELETE) → 204
+    static func multipartResponder(
+      uploadId: String,
+      log: RequestLog,
+      partFailureNumber: Int? = nil
+    ) -> MockURLProtocol.Responder {
+      return { request in
+        let method = request.httpMethod ?? "GET"
+        let query = request.url?.query ?? ""
+        log.record(method: method, query: query)
+
+        // Initiate: POST .?uploads
+        if method == "POST" && query == "uploads" {
+          let xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <InitiateMultipartUploadResult>
+              <Bucket>test-bucket</Bucket>
+              <Key>models/foo/big.bin</Key>
+              <UploadId>\(uploadId)</UploadId>
+            </InitiateMultipartUploadResult>
+            """
+          let resp = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/xml"]
+          )!
+          return (resp, Data(xml.utf8))
+        }
+
+        // Upload part: PUT .?partNumber=N&uploadId=…
+        if method == "PUT" && query.contains("partNumber=") {
+          // Extract the partNumber from the query string.
+          let comps = URLComponents(
+            url: request.url!, resolvingAgainstBaseURL: false
+          )
+          let partNumberStr = comps?.queryItems?
+            .first(where: { $0.name == "partNumber" })?.value ?? "?"
+          let partNumber = Int(partNumberStr) ?? -1
+
+          if let failAt = partFailureNumber, partNumber == failAt {
+            let resp = HTTPURLResponse(
+              url: request.url!,
+              statusCode: 500,
+              httpVersion: "HTTP/1.1",
+              headerFields: [:]
+            )!
+            return (resp, Data("Internal Server Error".utf8))
+          }
+
+          let resp = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+              "ETag": "\"part-\(partNumber)-etag\"",
+            ]
+          )!
+          return (resp, Data())
+        }
+
+        // Complete: POST .?uploadId=…  (no partNumber)
+        if method == "POST" && query.contains("uploadId=")
+          && !query.contains("partNumber=")
+        {
+          let xml = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <CompleteMultipartUploadResult>
+              <Location>https://example.r2/test-bucket/models/foo/big.bin</Location>
+              <Bucket>test-bucket</Bucket>
+              <Key>models/foo/big.bin</Key>
+              <ETag>"final-etag-deadbeef"</ETag>
+            </CompleteMultipartUploadResult>
+            """
+          let resp = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/xml"]
+          )!
+          return (resp, Data(xml.utf8))
+        }
+
+        // Abort: DELETE .?uploadId=…
+        if method == "DELETE" && query.contains("uploadId=") {
+          let resp = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 204,
+            httpVersion: "HTTP/1.1",
+            headerFields: [:]
+          )!
+          return (resp, Data())
+        }
+
+        // Unknown — fail loudly.
+        let resp = HTTPURLResponse(
+          url: request.url!,
+          statusCode: 500,
+          httpVersion: "HTTP/1.1",
+          headerFields: [:]
+        )!
+        return (resp, Data("unhandled request: \(method) \(query)".utf8))
+      }
+    }
+
+    @Test(
+      "putObject multipart happy path: initiate → N upload-parts → complete"
+    )
+    func putObjectMultipartHappyPath() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      // 33 MiB synthetic file → with 16 MiB part size, that's 3 parts
+      // (16 + 16 + 1 MiB). Documented size choice: large enough to
+      // exercise the part-iteration loop with a non-uniform final part,
+      // small enough to write to disk in a unit test without measurable
+      // wall-clock cost.
+      let fileSize = 33 * 1024 * 1024
+      let url = try Self.writeSyntheticFile(size: fileSize)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let log = RequestLog()
+      MockURLProtocol.responder = Self.multipartResponder(
+        uploadId: "TEST-UPLOAD-ID-HAPPY",
+        log: log,
+        partFailureNumber: nil
+      )
+
+      let client = Self.makeMultipartClient()
+      let result = try await client.putObject(
+        key: "models/foo/big.bin",
+        bodyURL: url
+      )
+
+      #expect(result.key == "models/foo/big.bin")
+      #expect(result.etag == "\"final-etag-deadbeef\"")
+      #expect(result.sha256.count == 64)  // hex SHA-256
+
+      let entries = log.snapshot()
+      // Expected order: 1× POST ?uploads, 3× PUT ?partNumber=…, 1× POST
+      // ?uploadId=… (complete). No DELETE on the happy path.
+      #expect(entries.count == 5)
+      #expect(entries.first?.method == "POST")
+      #expect(entries.first?.query == "uploads")
+
+      let partRequests = entries.filter { $0.method == "PUT" }
+      #expect(partRequests.count == 3)
+      #expect(partRequests[0].query.contains("partNumber=1"))
+      #expect(partRequests[1].query.contains("partNumber=2"))
+      #expect(partRequests[2].query.contains("partNumber=3"))
+
+      let lastEntry = entries.last!
+      #expect(lastEntry.method == "POST")
+      #expect(lastEntry.query.contains("uploadId="))
+      #expect(!lastEntry.query.contains("partNumber="))
+
+      // No abort on happy path.
+      #expect(!entries.contains(where: { $0.method == "DELETE" }))
+    }
+
+    @Test("putObject multipart: aborts and rethrows when an upload-part fails")
+    func putObjectMultipartAbortsOnPartFailure() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      // 33 MiB → 3 parts; fail the second part.
+      let fileSize = 33 * 1024 * 1024
+      let url = try Self.writeSyntheticFile(size: fileSize)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let log = RequestLog()
+      MockURLProtocol.responder = Self.multipartResponder(
+        uploadId: "TEST-UPLOAD-ID-FAIL",
+        log: log,
+        partFailureNumber: 2
+      )
+
+      let client = Self.makeMultipartClient()
+
+      var threw = false
+      do {
+        _ = try await client.putObject(
+          key: "models/foo/big.bin",
+          bodyURL: url
+        )
+      } catch {
+        threw = true
+      }
+      #expect(threw, "Expected putObject to rethrow on part-2 failure")
+
+      let entries = log.snapshot()
+      // We expect: initiate, part 1 success, part 2 fail, abort.
+      // No part 3 (we stop on first failure), no complete.
+      let initiateCount = entries.filter {
+        $0.method == "POST" && $0.query == "uploads"
+      }.count
+      #expect(initiateCount == 1)
+
+      let partRequests = entries.filter { $0.method == "PUT" }
+      #expect(partRequests.count == 2)  // part 1 success, part 2 fails
+
+      let abortCount = entries.filter { $0.method == "DELETE" }.count
+      #expect(
+        abortCount == 1,
+        "abortMultipartUpload must be called exactly once on part failure"
+      )
+
+      let completeCount = entries.filter {
+        $0.method == "POST" && $0.query.contains("uploadId=")
+          && !$0.query.contains("partNumber=")
+      }.count
+      #expect(completeCount == 0, "complete must not run after abort")
+    }
+
+    // MARK: - putObject (streaming memory discipline)
+
+    /// Structural assertion that the multipart path streams chunks off
+    /// disk via `FileHandle.read(upToCount:)` rather than loading the
+    /// whole file into memory. We assert this by:
+    ///
+    ///   1. Driving an 18 MiB upload (>16 MiB part size, <100 MiB
+    ///      single-shot threshold by default — so we lower the
+    ///      threshold to force multipart).
+    ///   2. Verifying the multipart request sequence ran (initiate →
+    ///      2 PUTs → complete).
+    ///   3. Cross-referencing the source-tree exit criterion
+    ///      `git grep "Data(contentsOf:" Sources/SwiftAcervo/S3CDNClient.swift`
+    ///      which is checked outside this test.
+    ///
+    /// The 18 MiB choice is deliberate: it's just over one 16 MiB part,
+    /// so we get a 2-part upload with a small (~2 MiB) tail. Documented
+    /// in the EXECUTION_PLAN guidance to avoid writing 200 MiB of test
+    /// data per run.
+    @Test("putObject multipart streams from disk in chunks (no whole-file load)")
+    func putObjectMultipartStreamingMemory() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      let fileSize = 18 * 1024 * 1024
+      let url = try Self.writeSyntheticFile(size: fileSize)
+      defer { try? FileManager.default.removeItem(at: url) }
+
+      let log = RequestLog()
+      MockURLProtocol.responder = Self.multipartResponder(
+        uploadId: "TEST-UPLOAD-ID-STREAM",
+        log: log,
+        partFailureNumber: nil
+      )
+
+      let client = Self.makeMultipartClient()
+      let result = try await client.putObject(
+        key: "models/foo/stream.bin",
+        bodyURL: url
+      )
+
+      #expect(result.sha256.count == 64)
+      let entries = log.snapshot()
+      let partRequests = entries.filter { $0.method == "PUT" }
+      // 18 MiB / 16 MiB part size → 2 parts (16 MiB + 2 MiB).
+      #expect(partRequests.count == 2)
+      #expect(partRequests[0].query.contains("partNumber=1"))
+      #expect(partRequests[1].query.contains("partNumber=2"))
+    }
   }
 }

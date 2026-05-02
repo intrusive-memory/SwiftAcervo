@@ -107,17 +107,73 @@ public struct S3DeleteResult: Sendable, Equatable {
 /// supplied `AcervoCDNCredentials`.
 public actor S3CDNClient {
 
+  /// Default upper bound on a single-shot `PUT`. Files at or below this
+  /// size are uploaded in one signed request; anything larger is uploaded
+  /// via the S3 multipart-upload protocol.
+  ///
+  /// 100 MiB is the threshold called out in `EXECUTION_PLAN.md` (WU1.S3,
+  /// task 1). It comfortably exceeds any small "metadata" file (config,
+  /// tokenizer, manifest) while keeping a single request small enough to
+  /// be signed and replayed without memory pressure on the caller.
+  public static let defaultSingleShotThreshold: Int64 = 100 * 1024 * 1024
+
+  /// Default S3 multipart-upload part size.
+  ///
+  /// 16 MiB. The S3 spec mandates a 5 MiB minimum (except the final part)
+  /// and a 5 GiB per-part maximum. 16 MiB is a long-standing AWS-CLI-aligned
+  /// default: large enough to amortize per-request signing overhead on
+  /// fast links, small enough that a single in-flight part fits
+  /// comfortably in memory on every supported platform. The last part of
+  /// any upload may be smaller; intermediate parts are exactly this size.
+  public static let defaultMultipartPartSize: Int64 = 16 * 1024 * 1024
+
   private let credentials: AcervoCDNCredentials
   private let session: URLSession
   private let signer: SigV4Signer
+
+  /// Single-shot threshold for this client instance. Tests can lower this
+  /// to exercise the multipart path with small synthetic files.
+  let singleShotThreshold: Int64
+
+  /// Multipart part size for this client instance. Tests can lower this
+  /// to drive multi-part uploads against modestly sized synthetic files.
+  let multipartPartSize: Int64
 
   public init(
     credentials: AcervoCDNCredentials,
     session: URLSession = .shared
   ) {
+    self.init(
+      credentials: credentials,
+      session: session,
+      singleShotThreshold: Self.defaultSingleShotThreshold,
+      multipartPartSize: Self.defaultMultipartPartSize
+    )
+  }
+
+  /// Test-facing initializer. The two threshold knobs are only useful in
+  /// tests that need to exercise the multipart path without writing
+  /// hundreds of MiB to disk; production callers should use the public
+  /// initializer above.
+  internal init(
+    credentials: AcervoCDNCredentials,
+    session: URLSession,
+    singleShotThreshold: Int64,
+    multipartPartSize: Int64
+  ) {
+    precondition(
+      singleShotThreshold > 0,
+      "S3CDNClient.singleShotThreshold must be positive"
+    )
+    precondition(
+      multipartPartSize > 0,
+      "S3CDNClient.multipartPartSize must be positive"
+    )
     self.credentials = credentials
     self.session = session
     self.signer = SigV4Signer(credentials: credentials, service: "s3")
+    self.singleShotThreshold = singleShotThreshold
+    self.multipartPartSize = multipartPartSize
   }
 
   // MARK: - listObjects
@@ -320,6 +376,444 @@ public actor S3CDNClient {
     }
 
     return try DeleteObjectsResultParser.parse(data, requestedKeys: keys)
+  }
+
+  // MARK: - putObject
+
+  /// Streams the file at `bodyURL` to `key` in the configured bucket.
+  ///
+  /// Files at or below `singleShotThreshold` are uploaded in a single
+  /// signed `PUT`. Larger files are uploaded via the S3 multipart-upload
+  /// protocol with `multipartPartSize`-sized parts (last part may be
+  /// smaller). In both cases the SHA-256 returned in the result is
+  /// computed by streaming the file from disk; the whole file is never
+  /// loaded into memory.
+  ///
+  /// Throws `AcervoError.cdnAuthorizationFailed(operation:)` on 401/403
+  /// from any underlying request. Any non-2xx response on a multipart
+  /// upload-part triggers a best-effort `abortMultipartUpload` to release
+  /// R2-side state before the original error is rethrown. The client
+  /// itself does not retry — the caller decides whether to.
+  public func putObject(
+    key: String,
+    bodyURL: URL
+  ) async throws -> S3PutResult {
+    // Determine the file size up front. We need it to decide between the
+    // single-shot and multipart paths, and we'll need an authoritative
+    // value for `Content-Length` on the signed PUT (URLSession would set
+    // one from the streamed file body anyway, but signing must agree).
+    let attrs = try FileManager.default.attributesOfItem(atPath: bodyURL.path)
+    let fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+
+    if fileSize <= singleShotThreshold {
+      return try await singleShotPut(
+        key: key,
+        bodyURL: bodyURL,
+        fileSize: fileSize
+      )
+    } else {
+      return try await multipartPut(
+        key: key,
+        bodyURL: bodyURL,
+        fileSize: fileSize
+      )
+    }
+  }
+
+  // MARK: - putObject (single-shot)
+
+  /// Single-shot signed PUT. Two file passes:
+  ///   1. Stream the file once to compute the SHA-256 hex digest needed
+  ///      for `x-amz-content-sha256` (signing requires it before the
+  ///      upload starts).
+  ///   2. Stream it again via `URLSession.upload(for:fromFile:)`, which
+  ///      keeps the body off the heap.
+  ///
+  /// Two passes are intentional. There is no way to compute the body
+  /// hash AFTER signing (the hash is part of the canonical request).
+  /// We accept the second pass to keep the signer pure and to never
+  /// load the file into memory.
+  private func singleShotPut(
+    key: String,
+    bodyURL: URL,
+    fileSize: Int64
+  ) async throws -> S3PutResult {
+    let sha256Hex = try Self.streamingSHA256Hex(
+      of: bodyURL,
+      bufferSize: Self.streamingHashBufferSize
+    )
+
+    let url = bucketURL(path: key, queryItems: [])
+    var request = URLRequest(url: url)
+    request.httpMethod = "PUT"
+    request.setValue(
+      String(fileSize), forHTTPHeaderField: "Content-Length"
+    )
+    request.setValue(
+      "application/octet-stream", forHTTPHeaderField: "Content-Type"
+    )
+
+    let signed = signer.sign(request, payloadHash: .precomputed(sha256Hex))
+
+    let (_, response) = try await session.upload(
+      for: signed,
+      fromFile: bodyURL
+    )
+
+    guard let http = response as? HTTPURLResponse else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    if http.statusCode == 401 || http.statusCode == 403 {
+      throw AcervoError.cdnAuthorizationFailed(operation: "put")
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+
+    let etag = http.value(forHTTPHeaderField: "ETag") ?? ""
+    return S3PutResult(key: key, etag: etag, sha256: sha256Hex)
+  }
+
+  // MARK: - putObject (multipart)
+
+  /// Multipart PUT. Walks the standard S3 sequence:
+  ///   1. `POST <key>?uploads`            → uploadId
+  ///   2. `PUT  <key>?partNumber=N&uploadId=…` × N parts → ETag per part
+  ///   3. `POST <key>?uploadId=…`         → final ETag (commit)
+  ///
+  /// On any failure during step 2, a best-effort
+  /// `DELETE <key>?uploadId=…` (Abort) is dispatched to release R2-side
+  /// state, then the original error is rethrown. The client never
+  /// retries internally.
+  ///
+  /// SHA-256 of the whole file is computed incrementally as each chunk
+  /// is read off disk; per-part `x-amz-content-sha256` is computed over
+  /// each chunk independently and used in that part's signature.
+  private func multipartPut(
+    key: String,
+    bodyURL: URL,
+    fileSize: Int64
+  ) async throws -> S3PutResult {
+    let uploadId = try await initiateMultipartUpload(key: key)
+
+    var wholeFileHasher = SHA256()
+    var parts: [(partNumber: Int, etag: String)] = []
+    var partNumber = 1
+
+    // Stream parts off disk via `FileHandle`. We deliberately never load
+    // the whole `bodyURL` into a single `Data` value — the exit criterion
+    // for this sortie greps the source tree for that anti-pattern. Each
+    // chunk is sized to `multipartPartSize`; the final chunk may be
+    // smaller.
+    let handle: FileHandle
+    do {
+      handle = try FileHandle(forReadingFrom: bodyURL)
+    } catch {
+      // No upload was initiated successfully without an Abort guard yet,
+      // but in practice we already initiated. Best-effort abort.
+      try? await abortMultipartUpload(key: key, uploadId: uploadId)
+      throw error
+    }
+    defer { try? handle.close() }
+
+    do {
+      while true {
+        // `read(upToCount:)` returns up to `count` bytes, or an empty
+        // `Data` at EOF. Loading 16 MiB into memory is intentional —
+        // a single in-flight part body is bounded by `multipartPartSize`
+        // by design, and 16 MiB is the documented part size.
+        let chunkSize = Int(multipartPartSize)
+        let chunk = try handle.read(upToCount: chunkSize) ?? Data()
+        if chunk.isEmpty { break }
+
+        // Feed the whole-file hasher.
+        chunk.withUnsafeBytes { buf in
+          wholeFileHasher.update(bufferPointer: buf)
+        }
+
+        let etag = try await uploadPart(
+          key: key,
+          uploadId: uploadId,
+          partNumber: partNumber,
+          bodyChunk: chunk
+        )
+        parts.append((partNumber: partNumber, etag: etag))
+        partNumber += 1
+      }
+    } catch {
+      // Any uploadPart failure (including non-2xx) reaches here. Clean
+      // up the R2-side multipart state, then rethrow the original error.
+      try? await abortMultipartUpload(key: key, uploadId: uploadId)
+      throw error
+    }
+
+    let finalDigest = wholeFileHasher.finalize()
+    let wholeFileSHA256 = finalDigest
+      .map { String(format: "%02x", $0) }
+      .joined()
+
+    let completeETag: String
+    do {
+      completeETag = try await completeMultipartUpload(
+        key: key,
+        uploadId: uploadId,
+        parts: parts
+      )
+    } catch {
+      try? await abortMultipartUpload(key: key, uploadId: uploadId)
+      throw error
+    }
+
+    _ = fileSize  // bookkeeping; useful for future progress wiring.
+
+    return S3PutResult(
+      key: key,
+      etag: completeETag,
+      sha256: wholeFileSHA256
+    )
+  }
+
+  // MARK: - Multipart helpers (private)
+
+  /// `POST <key>?uploads` — initiate a multipart upload. Returns the
+  /// `UploadId` from the response XML.
+  private func initiateMultipartUpload(key: String) async throws -> String {
+    let url = bucketURL(
+      path: key,
+      queryItems: [URLQueryItem(name: "uploads", value: nil)]
+    )
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    // No body. Set Content-Length explicitly so URLSession doesn't add
+    // its own header that disagrees with the signed canonical request.
+    request.setValue("0", forHTTPHeaderField: "Content-Length")
+
+    let signed = signer.sign(request, payloadHash: .empty)
+    let (data, response) = try await perform(signed)
+
+    guard let http = response as? HTTPURLResponse else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    if http.statusCode == 401 || http.statusCode == 403 {
+      throw AcervoError.cdnAuthorizationFailed(
+        operation: "initiateMultipartUpload"
+      )
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+
+    return try InitiateMultipartUploadParser.parse(data)
+  }
+
+  /// `PUT <key>?partNumber=N&uploadId=…` — upload one part. Returns the
+  /// `ETag` header from the response (S3 requires it for the final
+  /// `CompleteMultipartUpload` body).
+  private func uploadPart(
+    key: String,
+    uploadId: String,
+    partNumber: Int,
+    bodyChunk: Data
+  ) async throws -> String {
+    let url = bucketURL(
+      path: key,
+      queryItems: [
+        URLQueryItem(name: "partNumber", value: String(partNumber)),
+        URLQueryItem(name: "uploadId", value: uploadId),
+      ]
+    )
+
+    let partSHA256Hex = SigV4Signer.sha256Hex(bodyChunk)
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "PUT"
+    request.setValue(
+      String(bodyChunk.count), forHTTPHeaderField: "Content-Length"
+    )
+    request.setValue(
+      "application/octet-stream", forHTTPHeaderField: "Content-Type"
+    )
+
+    let signed = signer.sign(
+      request, payloadHash: .precomputed(partSHA256Hex)
+    )
+
+    let (_, response) = try await session.upload(
+      for: signed, from: bodyChunk
+    )
+
+    guard let http = response as? HTTPURLResponse else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    if http.statusCode == 401 || http.statusCode == 403 {
+      throw AcervoError.cdnAuthorizationFailed(operation: "uploadPart")
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    guard let etag = http.value(forHTTPHeaderField: "ETag"),
+      !etag.isEmpty
+    else {
+      // S3 contract: every successful uploadPart returns an ETag header.
+      // Missing means the response is malformed; surface as a generic
+      // failure for now.
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    return etag
+  }
+
+  /// `POST <key>?uploadId=…` with a `<CompleteMultipartUpload>` body.
+  /// Returns the final object ETag.
+  private func completeMultipartUpload(
+    key: String,
+    uploadId: String,
+    parts: [(partNumber: Int, etag: String)]
+  ) async throws -> String {
+    let body = Self.buildCompleteMultipartUploadXML(parts: parts)
+    let bodyData = Data(body.utf8)
+    let payloadSHA256Hex = SigV4Signer.sha256Hex(bodyData)
+
+    let url = bucketURL(
+      path: key,
+      queryItems: [URLQueryItem(name: "uploadId", value: uploadId)]
+    )
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.httpBody = bodyData
+    request.setValue("application/xml", forHTTPHeaderField: "Content-Type")
+    request.setValue(
+      String(bodyData.count), forHTTPHeaderField: "Content-Length"
+    )
+
+    let signed = signer.sign(
+      request, payloadHash: .precomputed(payloadSHA256Hex)
+    )
+    let (data, response) = try await perform(signed)
+
+    guard let http = response as? HTTPURLResponse else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    if http.statusCode == 401 || http.statusCode == 403 {
+      throw AcervoError.cdnAuthorizationFailed(
+        operation: "completeMultipartUpload"
+      )
+    }
+    guard (200..<300).contains(http.statusCode) else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+
+    // CompleteMultipartUpload returns an XML body with the final ETag,
+    // but the response may also surface 200 with an embedded error
+    // payload. We parse the XML and prefer the parsed ETag; fall back
+    // to the response header if parsing yields nothing.
+    if let parsedETag = try? CompleteMultipartUploadResultParser.parse(data),
+      !parsedETag.isEmpty
+    {
+      return parsedETag
+    }
+    return http.value(forHTTPHeaderField: "ETag") ?? ""
+  }
+
+  /// `DELETE <key>?uploadId=…` — release R2-side multipart state. Best-
+  /// effort: callers invoke this after a part-upload failure and do not
+  /// surface this method's errors (the original failure is the one that
+  /// matters).
+  private func abortMultipartUpload(
+    key: String,
+    uploadId: String
+  ) async throws {
+    let url = bucketURL(
+      path: key,
+      queryItems: [URLQueryItem(name: "uploadId", value: uploadId)]
+    )
+    var request = URLRequest(url: url)
+    request.httpMethod = "DELETE"
+
+    let signed = signer.sign(request, payloadHash: .empty)
+    let (_, response) = try await perform(signed)
+
+    guard let http = response as? HTTPURLResponse else {
+      // TODO(WU2.S1): replace with cdnOperationFailed
+      throw URLError(.badServerResponse)
+    }
+    // 204 is the documented success status. 404 is treated as success
+    // (the upload is already gone — exactly what we wanted).
+    if http.statusCode == 404 || (200..<300).contains(http.statusCode) {
+      return
+    }
+    if http.statusCode == 401 || http.statusCode == 403 {
+      throw AcervoError.cdnAuthorizationFailed(
+        operation: "abortMultipartUpload"
+      )
+    }
+    // TODO(WU2.S1): replace with cdnOperationFailed
+    throw URLError(.badServerResponse)
+  }
+
+  // MARK: - Streaming SHA-256
+
+  /// Buffer size used when stream-hashing a file from disk. 1 MiB is a
+  /// good trade-off between syscall amortization and memory footprint;
+  /// the buffer is reused across reads.
+  static let streamingHashBufferSize: Int = 1 * 1024 * 1024
+
+  /// Computes the SHA-256 hex digest of `url` by reading it in chunks of
+  /// `bufferSize` bytes via `FileHandle.read(upToCount:)`. The whole file
+  /// is **never** loaded into memory.
+  static func streamingSHA256Hex(
+    of url: URL,
+    bufferSize: Int
+  ) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while true {
+      let chunk = try handle.read(upToCount: bufferSize) ?? Data()
+      if chunk.isEmpty { break }
+      chunk.withUnsafeBytes { buf in
+        hasher.update(bufferPointer: buf)
+      }
+    }
+    let digest = hasher.finalize()
+    return digest.map { String(format: "%02x", $0) }.joined()
+  }
+
+  // MARK: - CompleteMultipartUpload XML envelope
+
+  /// Build the canonical `<CompleteMultipartUpload>` body.
+  ///
+  /// ```xml
+  /// <CompleteMultipartUpload>
+  ///   <Part><PartNumber>1</PartNumber><ETag>"…"</ETag></Part>
+  ///   …
+  /// </CompleteMultipartUpload>
+  /// ```
+  ///
+  /// The S3 spec requires parts be listed in ascending `PartNumber` order;
+  /// we sort defensively in case the caller did not.
+  static func buildCompleteMultipartUploadXML(
+    parts: [(partNumber: Int, etag: String)]
+  ) -> String {
+    let sorted = parts.sorted { $0.partNumber < $1.partNumber }
+    var out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+    out += "<CompleteMultipartUpload>"
+    for p in sorted {
+      out += "<Part>"
+      out += "<PartNumber>\(p.partNumber)</PartNumber>"
+      out += "<ETag>\(xmlEscape(p.etag))</ETag>"
+      out += "</Part>"
+    }
+    out += "</CompleteMultipartUpload>"
+    return out
   }
 
   // MARK: - Networking helper
@@ -673,5 +1167,142 @@ private final class DeleteObjectsResultParser: NSObject, XMLParserDelegate {
       }
     }
     currentText = ""
+  }
+}
+
+// MARK: - InitiateMultipartUploadResult parser
+
+/// Parses the S3 `InitiateMultipartUploadResult` envelope and returns
+/// the `<UploadId>` field. The response shape is:
+///
+/// ```xml
+/// <InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+///   <Bucket>…</Bucket>
+///   <Key>…</Key>
+///   <UploadId>SOMEOPAQUEID</UploadId>
+/// </InitiateMultipartUploadResult>
+/// ```
+private final class InitiateMultipartUploadParser: NSObject, XMLParserDelegate {
+
+  private var uploadId: String? = nil
+  private var inUploadId = false
+  private var currentText = ""
+
+  static func parse(_ data: Data) throws -> String {
+    let delegate = InitiateMultipartUploadParser()
+    let parser = XMLParser(data: data)
+    parser.delegate = delegate
+    if !parser.parse() {
+      // TODO(WU2.S1): replace with cdnOperationFailed (parse failure)
+      throw URLError(.cannotParseResponse)
+    }
+    guard let id = delegate.uploadId, !id.isEmpty else {
+      // TODO(WU2.S1): replace with cdnOperationFailed (missing UploadId)
+      throw URLError(.cannotParseResponse)
+    }
+    return id
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didStartElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?,
+    attributes attributeDict: [String: String] = [:]
+  ) {
+    currentText = ""
+    if elementName == "UploadId" { inUploadId = true }
+  }
+
+  func parser(_ parser: XMLParser, foundCharacters string: String) {
+    if inUploadId { currentText += string }
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didEndElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?
+  ) {
+    if elementName == "UploadId" {
+      uploadId = currentText.trimmingCharacters(
+        in: .whitespacesAndNewlines
+      )
+      inUploadId = false
+    }
+    currentText = ""
+  }
+}
+
+// MARK: - CompleteMultipartUploadResult parser
+
+/// Parses the S3 `CompleteMultipartUploadResult` envelope and returns
+/// the final object's `<ETag>`. The response shape is:
+///
+/// ```xml
+/// <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+///   <Location>…</Location>
+///   <Bucket>…</Bucket>
+///   <Key>…</Key>
+///   <ETag>"…"</ETag>
+/// </CompleteMultipartUploadResult>
+/// ```
+///
+/// We intentionally only look for the top-level `<ETag>` and ignore any
+/// other elements; the caller treats an absent / empty ETag as a fall
+/// through to the response header.
+private final class CompleteMultipartUploadResultParser: NSObject,
+  XMLParserDelegate
+{
+
+  private var etag: String = ""
+  private var inETag = false
+  private var depth = 0
+  private var etagDepth: Int? = nil
+  private var currentText = ""
+
+  static func parse(_ data: Data) throws -> String {
+    let delegate = CompleteMultipartUploadResultParser()
+    let parser = XMLParser(data: data)
+    parser.delegate = delegate
+    if !parser.parse() {
+      throw URLError(.cannotParseResponse)
+    }
+    return delegate.etag
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didStartElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?,
+    attributes attributeDict: [String: String] = [:]
+  ) {
+    depth += 1
+    currentText = ""
+    // Only capture the top-level (depth-2) ETag — depth 1 is the root.
+    if elementName == "ETag" && depth == 2 {
+      inETag = true
+      etagDepth = depth
+    }
+  }
+
+  func parser(_ parser: XMLParser, foundCharacters string: String) {
+    if inETag { currentText += string }
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didEndElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?
+  ) {
+    if elementName == "ETag" && etagDepth == depth {
+      etag = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+      inETag = false
+      etagDepth = nil
+    }
+    currentText = ""
+    depth -= 1
   }
 }
