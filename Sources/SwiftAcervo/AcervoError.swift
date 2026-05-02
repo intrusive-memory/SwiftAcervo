@@ -97,6 +97,41 @@ public enum AcervoError: LocalizedError, Sendable {
   /// (`"head"`, `"list"`, `"delete"`, `"deleteObjects"`, etc.).
   case cdnAuthorizationFailed(operation: String)
 
+  /// A signed CDN request failed with a non-2xx response that is not 401/403.
+  ///
+  /// `operation` is a short label identifying which `S3CDNClient` call failed
+  /// (`"head"`, `"list"`, `"delete"`, `"deleteObjects"`, `"put"`,
+  /// `"initiateMultipartUpload"`, `"uploadPart"`, `"completeMultipartUpload"`,
+  /// `"abortMultipartUpload"`, etc.).
+  ///
+  /// `statusCode` is the HTTP status code returned by R2/S3, or `200` for
+  /// the special case where the response was 2xx but its XML body could not
+  /// be parsed (still a failure from the caller's perspective).
+  ///
+  /// `body` carries the raw response body for caller-side logging. The
+  /// `errorDescription` truncates `body` to keep the human-readable string
+  /// from leaking large payloads into logs; the full body is always
+  /// available on the case payload itself.
+  case cdnOperationFailed(operation: String, statusCode: Int, body: String)
+
+  /// One of `publishModel`'s post-upload verification stages (CHECK 4, 5,
+  /// or 6 in requirements §7) failed. `stage` identifies which stage —
+  /// e.g. `"rehash"`, `"manifest-fetch"`, or `"sample-file"` — so callers
+  /// can distinguish a corrupted local staging directory from a CDN
+  /// readback discrepancy.
+  case publishVerificationFailed(stage: String)
+
+  /// `Acervo.recache(...)`'s caller-supplied `fetchSource` closure threw.
+  /// Wrapped here so the recache call site presents a single error type
+  /// while preserving the original error for logging.
+  case fetchSourceFailed(modelId: String, underlying: any Error)
+
+  /// Maximum length of the `body` substring included in
+  /// `cdnOperationFailed`'s `errorDescription`. Anything longer is
+  /// truncated with a hint that the full body is on the case payload.
+  /// Kept small (512 chars) so a single error string never bloats logs.
+  private static let cdnOperationFailedBodyExcerptLimit: Int = 512
+
   public var errorDescription: String? {
     switch self {
     case .directoryCreationFailed(let path):
@@ -172,6 +207,30 @@ public enum AcervoError: LocalizedError, Sendable {
     case .cdnAuthorizationFailed(let operation):
       return
         "CDN authorization failed for operation '\(operation)' (HTTP 401/403). Check that the credentials are scoped to allow this operation."
+
+    case .cdnOperationFailed(let operation, let statusCode, let body):
+      let limit = Self.cdnOperationFailedBodyExcerptLimit
+      let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+      let bodyHint: String
+      if trimmed.isEmpty {
+        bodyHint = "(empty body)"
+      } else if trimmed.count > limit {
+        let prefix = trimmed.prefix(limit)
+        bodyHint =
+          "\(prefix)… (truncated; full body available on the AcervoError case payload)"
+      } else {
+        bodyHint = trimmed
+      }
+      return
+        "CDN operation '\(operation)' failed with HTTP status \(statusCode). Response body: \(bodyHint)"
+
+    case .publishVerificationFailed(let stage):
+      return
+        "Publish verification failed at stage '\(stage)'. The CDN now serves a manifest whose post-upload check did not match the staged content; investigate before retrying."
+
+    case .fetchSourceFailed(let modelId, let underlying):
+      return
+        "fetchSource closure for model '\(modelId)' threw: \(underlying.localizedDescription)"
     }
   }
 }

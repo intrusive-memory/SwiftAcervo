@@ -21,14 +21,14 @@
 // the small, well-known responses involved here that's appropriate; we
 // would not pick `XMLParser` for a general-purpose XML payload.
 //
-// Cross-sortie hand-off
-// ---------------------
-// Several non-2xx paths currently throw `URLError(.badServerResponse)` with
-// a `// TODO(WU2.S1): replace with cdnOperationFailed` comment. WU2 Sortie 1
-// adds the `cdnOperationFailed`, `publishVerificationFailed`, and
-// `fetchSourceFailed` cases on `AcervoError` and replaces those throws.
-// The 401/403 path uses `AcervoError.cdnAuthorizationFailed` already
-// (introduced in this sortie).
+// Error mapping
+// -------------
+// All non-2xx responses are surfaced as typed `AcervoError` cases. 401/403
+// → `.cdnAuthorizationFailed(operation:)`; any other non-2xx →
+// `.cdnOperationFailed(operation:statusCode:body:)`. 2xx responses whose
+// XML body cannot be parsed are likewise reported as `.cdnOperationFailed`
+// with `statusCode: 200` and the raw body — they are operation failures
+// from the caller's perspective even though the wire status was OK.
 
 import CryptoKit
 import Foundation
@@ -218,15 +218,21 @@ public actor S3CDNClient {
     let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "list",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(operation: "list")
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "list",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
 
     let parsed = try ListObjectsV2Parser.parse(data)
@@ -246,8 +252,11 @@ public actor S3CDNClient {
     let (_, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "head",
+        statusCode: 0,
+        body: ""
+      )
     }
 
     if http.statusCode == 404 {
@@ -257,8 +266,11 @@ public actor S3CDNClient {
       throw AcervoError.cdnAuthorizationFailed(operation: "head")
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "head",
+        statusCode: http.statusCode,
+        body: ""
+      )
     }
 
     let size: Int64
@@ -292,11 +304,14 @@ public actor S3CDNClient {
     request.httpMethod = "DELETE"
 
     let signed = signer.sign(request, payloadHash: .empty)
-    let (_, response) = try await perform(signed)
+    let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "delete",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     // 204 No Content is the success case; 404 is treated as success too.
     if http.statusCode == 404 || (200..<300).contains(http.statusCode) {
@@ -305,8 +320,11 @@ public actor S3CDNClient {
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(operation: "delete")
     }
-    // TODO(WU2.S1): replace with cdnOperationFailed
-    throw URLError(.badServerResponse)
+    throw AcervoError.cdnOperationFailed(
+      operation: "delete",
+      statusCode: http.statusCode,
+      body: Self.bodyExcerpt(data)
+    )
   }
 
   // MARK: - deleteObjects (bulk)
@@ -364,15 +382,21 @@ public actor S3CDNClient {
     let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "deleteObjects",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(operation: "deleteObjects")
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "deleteObjects",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
 
     return try DeleteObjectsResultParser.parse(data, requestedKeys: keys)
@@ -455,21 +479,27 @@ public actor S3CDNClient {
 
     let signed = signer.sign(request, payloadHash: .precomputed(sha256Hex))
 
-    let (_, response) = try await session.upload(
+    let (data, response) = try await session.upload(
       for: signed,
       fromFile: bodyURL
     )
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "put",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(operation: "put")
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "put",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
 
     let etag = http.value(forHTTPHeaderField: "ETag") ?? ""
@@ -594,8 +624,11 @@ public actor S3CDNClient {
     let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "initiateMultipartUpload",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(
@@ -603,8 +636,11 @@ public actor S3CDNClient {
       )
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "initiateMultipartUpload",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
 
     return try InitiateMultipartUploadParser.parse(data)
@@ -642,29 +678,40 @@ public actor S3CDNClient {
       request, payloadHash: .precomputed(partSHA256Hex)
     )
 
-    let (_, response) = try await session.upload(
+    let (data, response) = try await session.upload(
       for: signed, from: bodyChunk
     )
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "uploadPart",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(operation: "uploadPart")
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "uploadPart",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
     guard let etag = http.value(forHTTPHeaderField: "ETag"),
       !etag.isEmpty
     else {
       // S3 contract: every successful uploadPart returns an ETag header.
-      // Missing means the response is malformed; surface as a generic
-      // failure for now.
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      // Missing means the response is malformed — the wire status was 2xx
+      // but the response is unusable, which is an operation failure from
+      // the caller's perspective. We surface the actual status code (not
+      // a synthetic 200) so logs reflect what R2 actually returned.
+      throw AcervoError.cdnOperationFailed(
+        operation: "uploadPart",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
     return etag
   }
@@ -698,8 +745,11 @@ public actor S3CDNClient {
     let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "completeMultipartUpload",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     if http.statusCode == 401 || http.statusCode == 403 {
       throw AcervoError.cdnAuthorizationFailed(
@@ -707,8 +757,11 @@ public actor S3CDNClient {
       )
     }
     guard (200..<300).contains(http.statusCode) else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "completeMultipartUpload",
+        statusCode: http.statusCode,
+        body: Self.bodyExcerpt(data)
+      )
     }
 
     // CompleteMultipartUpload returns an XML body with the final ETag,
@@ -739,11 +792,14 @@ public actor S3CDNClient {
     request.httpMethod = "DELETE"
 
     let signed = signer.sign(request, payloadHash: .empty)
-    let (_, response) = try await perform(signed)
+    let (data, response) = try await perform(signed)
 
     guard let http = response as? HTTPURLResponse else {
-      // TODO(WU2.S1): replace with cdnOperationFailed
-      throw URLError(.badServerResponse)
+      throw AcervoError.cdnOperationFailed(
+        operation: "abortMultipartUpload",
+        statusCode: 0,
+        body: Self.bodyExcerpt(data)
+      )
     }
     // 204 is the documented success status. 404 is treated as success
     // (the upload is already gone — exactly what we wanted).
@@ -755,8 +811,11 @@ public actor S3CDNClient {
         operation: "abortMultipartUpload"
       )
     }
-    // TODO(WU2.S1): replace with cdnOperationFailed
-    throw URLError(.badServerResponse)
+    throw AcervoError.cdnOperationFailed(
+      operation: "abortMultipartUpload",
+      statusCode: http.statusCode,
+      body: Self.bodyExcerpt(data)
+    )
   }
 
   // MARK: - Streaming SHA-256
@@ -917,6 +976,25 @@ public actor S3CDNClient {
     return Data(digest).base64EncodedString()
   }
 
+  // MARK: - Response body diagnostics
+
+  /// Maximum number of bytes we materialize as a UTF-8 string when building
+  /// the `body` payload for `AcervoError.cdnOperationFailed`. Keeps a single
+  /// error from carrying a multi-MiB XML payload around in memory; the case
+  /// payload is for human-readable diagnostics, not for full-response
+  /// archival. `errorDescription` truncates further when formatting.
+  static let bodyExcerptByteLimit: Int = 4 * 1024
+
+  /// Build the `body` string passed to `AcervoError.cdnOperationFailed`.
+  /// We cap at `bodyExcerptByteLimit` bytes (UTF-8 lossy decode) to avoid
+  /// surfacing huge XML payloads through the error type. Empty data and
+  /// non-UTF-8 data both decode to `""`.
+  static func bodyExcerpt(_ data: Data) -> String {
+    if data.isEmpty { return "" }
+    let slice = data.prefix(bodyExcerptByteLimit)
+    return String(decoding: slice, as: UTF8.self)
+  }
+
   // MARK: - Date parsing
 
   /// Parses an HTTP-date (RFC 7231 IMF-fixdate) such as
@@ -957,8 +1035,14 @@ private final class ListObjectsV2Parser: NSObject, XMLParserDelegate {
     let parser = XMLParser(data: data)
     parser.delegate = delegate
     if !parser.parse() {
-      // TODO(WU2.S1): replace with cdnOperationFailed (parse failure)
-      throw URLError(.cannotParseResponse)
+      // 2xx response whose body could not be parsed. We use statusCode 200
+      // (not the actual status, which is not visible at this layer) to
+      // signal "operation failure despite a successful HTTP exchange".
+      throw AcervoError.cdnOperationFailed(
+        operation: "list",
+        statusCode: 200,
+        body: S3CDNClient.bodyExcerpt(data)
+      )
     }
     return delegate.result
   }
@@ -1070,8 +1154,14 @@ private final class DeleteObjectsResultParser: NSObject, XMLParserDelegate {
     let parser = XMLParser(data: data)
     parser.delegate = delegate
     if !parser.parse() {
-      // TODO(WU2.S1): replace with cdnOperationFailed (parse failure)
-      throw URLError(.cannotParseResponse)
+      // 2xx response whose XML body could not be parsed; surface as an
+      // operation failure with a synthetic 200 status (see ListObjectsV2
+      // parse() for rationale).
+      throw AcervoError.cdnOperationFailed(
+        operation: "deleteObjects",
+        statusCode: 200,
+        body: S3CDNClient.bodyExcerpt(data)
+      )
     }
 
     var byKey: [String: S3DeleteResult] = [:]
@@ -1193,12 +1283,24 @@ private final class InitiateMultipartUploadParser: NSObject, XMLParserDelegate {
     let parser = XMLParser(data: data)
     parser.delegate = delegate
     if !parser.parse() {
-      // TODO(WU2.S1): replace with cdnOperationFailed (parse failure)
-      throw URLError(.cannotParseResponse)
+      // 2xx response whose XML body could not be parsed; surface as an
+      // operation failure with a synthetic 200 status (see ListObjectsV2
+      // parse() for rationale).
+      throw AcervoError.cdnOperationFailed(
+        operation: "initiateMultipartUpload",
+        statusCode: 200,
+        body: S3CDNClient.bodyExcerpt(data)
+      )
     }
     guard let id = delegate.uploadId, !id.isEmpty else {
-      // TODO(WU2.S1): replace with cdnOperationFailed (missing UploadId)
-      throw URLError(.cannotParseResponse)
+      // Parsing succeeded but the response is missing the required
+      // <UploadId> element. The wire status was 2xx but the response is
+      // unusable.
+      throw AcervoError.cdnOperationFailed(
+        operation: "initiateMultipartUpload",
+        statusCode: 200,
+        body: S3CDNClient.bodyExcerpt(data)
+      )
     }
     return id
   }
