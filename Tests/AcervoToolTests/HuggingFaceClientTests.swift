@@ -237,7 +237,7 @@
       #expect(files[0].size == 1024)
       #expect(files[0].isXet == false)
       #expect(files[1].path == "model.safetensors")
-      #expect(files[1].size == 2400000000)
+      #expect(files[1].size == 2_400_000_000)
       #expect(files[1].isXet == true)
     }
 
@@ -370,7 +370,7 @@
         Issue.record("Expected .sizeMismatch, got \(failures[0].reason)")
         return
       }
-      #expect(expected == 2400000000)
+      #expect(expected == 2_400_000_000)
       #expect(actual == 4)
     }
 
