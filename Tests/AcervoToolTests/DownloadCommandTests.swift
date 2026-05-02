@@ -10,17 +10,14 @@
   //
   //   B) Process-environment seams: run() calls ToolCheck.validate(), which checks
   //      for `aws` and `hf` on PATH. Tests replace PATH with a temp dir containing
-  //      stub binaries so ToolCheck passes without real installations. Tests also
-  //      exercise the --no-verify path to bypass HuggingFaceClient entirely, meaning
-  //      no live HF calls are made.
+  //      stub binaries so ToolCheck passes without real installations. Tests use
+  //      `HuggingFaceClient.defaultSessionOverride` to route HF API calls through
+  //      a stubbed `URLSession`, so no live HF calls are made — including the
+  //      always-on CHECK 0 completeness step that runs even with --no-verify.
   //
   //   C) Static helper surface: DownloadCommand.enumerateDownloadedFiles(in:) and the
   //      slug/resolveStagingRoot helpers are exercised directly because they are
   //      testable entry points with no external dependencies.
-  //
-  //   SEAM GAP (P2 follow-up): Inject a protocol-typed HF client collaborator so
-  //   tests can assert the verifyLFS call path without spawning a real `hf` binary.
-  //   Today, the HF verification path is tested indirectly via HuggingFaceClientTests.
   //
   //   NOTE ON ENVIRONMENT MUTATION: All tests that mutate PATH are nested under
   //   ProcessEnvironmentSuite (which carries .serialized) to prevent PATH-clobber
@@ -75,6 +72,10 @@
         } else {
           unsetenv("PATH")
         }
+        // Drop any stubbed URLSession so other suites get the real shared
+        // session back. The `.serialized` suite trait guarantees no other
+        // suite is mid-flight while we mutate this static.
+        HuggingFaceClient.defaultSessionOverride = nil
         try? fm.removeItem(at: tempBinDir)
         try? fm.removeItem(at: tempStagingDir)
       }
@@ -130,15 +131,25 @@
         #expect(cmd.noVerify == true)
       }
 
-      // MARK: - Test 2: HuggingFace-only path smoke test (stubbed hf binary)
+      // MARK: - Test 2: HuggingFace-only path smoke test (stubbed hf binary + URLSession)
       //
-      // With the PATH-stub installed (stub `hf` exits 0) and --no-verify provided,
-      // run() downloads via the stub, skips HuggingFaceClient verification, and
-      // exits cleanly. No live HF calls are made; the HF client is bypassed entirely
-      // by the --no-verify flag.
+      // With the PATH-stub installed (stub `hf` exits 0), a stubbed `URLSession`
+      // returning an empty tree, and --no-verify provided, run() downloads via the
+      // stub, completes CHECK 0 against the empty tree, skips LFS verification, and
+      // exits cleanly. No live HF calls are made — both `hf` (subprocess) and the
+      // HF tree API (URLSession) are stubbed.
 
-      @Test("HF smoke test: stub hf binary + --no-verify produces no-throw outcome")
+      @Test("HF smoke test: stub hf binary + stub HF API + --no-verify produces no-throw outcome")
       func huggingFaceSmokeTestNoVerify() async throws {
+        // Use a dedicated stub URLProtocol class scoped to DownloadCommand
+        // tests so its static state can't race with `HuggingFaceClient Tests`
+        // (which share a different `StubURLProtocol`). Both suites run in
+        // their own serialized order, but Swift Testing runs different
+        // suites in parallel by default.
+        let stubConfig = URLSessionConfiguration.ephemeral
+        stubConfig.protocolClasses = [DownloadCommandStubURLProtocol.self]
+        HuggingFaceClient.defaultSessionOverride = URLSession(configuration: stubConfig)
+
         var cmd =
           try AcervoCLI.parseAsRoot([
             "download",
@@ -147,9 +158,6 @@
             "--output", tempStagingDir.path,
           ]) as! DownloadCommand
 
-        // run() must complete without throwing.
-        // The stub `hf` exits 0, the staging dir exists, and --no-verify skips
-        // HuggingFaceClient so no live network calls are made.
         try await cmd.run()
       }
 
@@ -205,6 +213,13 @@
       // walks a local directory. This test exercises it directly without spawning any
       // subprocess or calling HuggingFaceClient.
 
+      // MARK: - Test 5 prelude (dedicated stub URLProtocol)
+      //
+      // The smoke test installs a dedicated URLProtocol subclass so its
+      // static state is fully independent of `StubURLProtocol` (used by
+      // HuggingFaceClient Tests). This prevents cross-suite races where
+      // both suites run in parallel and stomp on each other's responses.
+
       @Test(
         "enumerateDownloadedFiles returns sorted regular files, skipping hidden and excluded names")
       func enumerateDownloadedFilesHelper() throws {
@@ -228,5 +243,35 @@
         #expect(results[1].0 == "tokenizer.json")
       }
     }
+  }
+
+  /// Stand-in for HuggingFace API requests issued by the always-on
+  /// CHECK 0 step in `DownloadCommand.run()`. Returns an empty tree
+  /// (`[]`) for any `/tree/...` URL, which means CHECK 0 has zero files
+  /// to verify and exits cleanly.
+  ///
+  /// Lives in this file (not the shared HF stub) so its static state is
+  /// not shared with `HuggingFaceClient Tests`. Different test suites
+  /// run in parallel by default — sharing a global stub causes one
+  /// suite's matchers to leak into the other's requests.
+  final class DownloadCommandStubURLProtocol: URLProtocol, @unchecked Sendable {
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+      let url = request.url ?? URL(string: "https://stub.invalid/")!
+      let response = HTTPURLResponse(
+        url: url,
+        statusCode: 200,
+        httpVersion: "HTTP/1.1",
+        headerFields: ["Content-Type": "application/json"]
+      )!
+      client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: Data("[]".utf8))
+      client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
   }
 #endif

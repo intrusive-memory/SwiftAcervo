@@ -147,8 +147,22 @@ struct ShipCommand: AsyncParsableCommand {
 
     try runHuggingFaceDownload(into: stagingURL)
 
+    let client = HuggingFaceClient()
+
+    // CHECK 0: completeness — every file HF lists must exist in staging
+    // at the expected size. Catches silent Xet failures before they
+    // propagate into manifest generation and CDN upload. Always runs.
+    try await DownloadCommand.runCompletenessCheck(
+      client: client,
+      modelId: modelId,
+      requestedFiles: files,
+      stagingURL: stagingURL
+    )
+    FileHandle.standardOutput.write(
+      Data("CHECK 0 passed: staging directory matches HF tree listing.\n".utf8)
+    )
+
     if !noVerify {
-      let client = HuggingFaceClient()
       let discovered = try DownloadCommand.enumerateDownloadedFiles(in: stagingURL)
 
       let verifyReporter = ProgressReporter(
@@ -311,6 +325,12 @@ struct ShipCommand: AsyncParsableCommand {
       ])
 
       var environment = ProcessInfo.processInfo.environment
+      // Force-enable Xet protocol support so newer mlx-community/* and
+      // other Xet-backed repos actually download large blobs. Without
+      // this, `hf download` silently writes only metadata for Xet files
+      // and exits 0, producing an apparently-successful but incomplete
+      // staging directory.
+      environment["HF_HUB_ENABLE_HF_XET"] = "1"
       if let token, !token.isEmpty {
         environment["HF_TOKEN"] = token
         environment["HUGGING_FACE_HUB_TOKEN"] = token

@@ -81,14 +81,23 @@ struct DownloadCommand: AsyncParsableCommand {
 
     try runHuggingFaceDownload(into: stagingURL)
 
+    let client = HuggingFaceClient()
+
+    // CHECK 0: confirm every file in HF's tree exists in staging at
+    // the expected size. This catches Xet-backed downloads where `hf`
+    // wrote only metadata sidecars, before we get to LFS verification
+    // (which would mask the symptom as "all files 404 from LFS API").
+    // Runs even with --no-verify because incompleteness is a different
+    // failure mode from checksum mismatch.
+    try await runCompletenessCheck(client: client, stagingURL: stagingURL)
+
     guard !noVerify else {
       FileHandle.standardOutput.write(
-        Data("Downloaded \(modelId) to \(stagingURL.path) (verification skipped).\n".utf8)
+        Data("Downloaded \(modelId) to \(stagingURL.path) (LFS verification skipped).\n".utf8)
       )
       return
     }
 
-    let client = HuggingFaceClient()
     let discovered = try Self.enumerateDownloadedFiles(in: stagingURL)
 
     let reporter = ProgressReporter(
@@ -149,6 +158,65 @@ struct DownloadCommand: AsyncParsableCommand {
     )
   }
 
+  // MARK: - Completeness check (CHECK 0)
+
+  /// Compares every file in HF's tree listing against the staged copy
+  /// and aborts the pipeline on any size mismatch or missing file.
+  /// Shared by `download` and `ship`.
+  static func runCompletenessCheck(
+    client: HuggingFaceClient,
+    modelId: String,
+    requestedFiles: [String],
+    stagingURL: URL
+  ) async throws {
+    let failures: [HFCompletenessFailure]
+    do {
+      failures = try await client.verifyDownloadCompleteness(
+        modelId: modelId,
+        stagingURL: stagingURL,
+        requestedFiles: requestedFiles
+      )
+    } catch let treeError as HFTreeError {
+      let message =
+        "error: failed to fetch HuggingFace file tree for \(modelId): \(treeError.description)\n"
+      FileHandle.standardError.write(Data(message.utf8))
+      throw ExitCode.failure
+    }
+
+    guard failures.isEmpty else {
+      let anyXet = failures.contains(where: { $0.isXet })
+      let body = failures.map { $0.description }.joined(separator: "\n")
+      var message =
+        "error: download is incomplete (\(failures.count) file\(failures.count == 1 ? "" : "s") missing or wrong size):\n\(body)\n"
+      if anyXet {
+        message += """
+
+          hint: at least one offending file is Xet-backed. acervo sets
+                HF_HUB_ENABLE_HF_XET=1 internally, so this typically means
+                an outdated huggingface_hub or hf_xet install — try:
+                    pip install --upgrade huggingface-hub hf_xet
+
+          """
+      }
+      FileHandle.standardError.write(Data(message.utf8))
+      throw ExitCode.failure
+    }
+  }
+
+  /// Instance-method overload that forwards to the static helper using
+  /// the command's bound `modelId` and `files` properties.
+  private func runCompletenessCheck(
+    client: HuggingFaceClient,
+    stagingURL: URL
+  ) async throws {
+    try await Self.runCompletenessCheck(
+      client: client,
+      modelId: modelId,
+      requestedFiles: files,
+      stagingURL: stagingURL
+    )
+  }
+
   // MARK: - hf invocation
 
   private func runHuggingFaceDownload(into stagingURL: URL) throws {
@@ -167,6 +235,12 @@ struct DownloadCommand: AsyncParsableCommand {
       ])
 
       var environment = ProcessInfo.processInfo.environment
+      // Force-enable Xet protocol support so newer mlx-community/* and
+      // other Xet-backed repos actually download large blobs. Without
+      // this, `hf download` silently writes only metadata for Xet files
+      // and exits 0, producing an apparently-successful but incomplete
+      // staging directory.
+      environment["HF_HUB_ENABLE_HF_XET"] = "1"
       if let token, !token.isEmpty {
         environment["HF_TOKEN"] = token
         environment["HUGGING_FACE_HUB_TOKEN"] = token
