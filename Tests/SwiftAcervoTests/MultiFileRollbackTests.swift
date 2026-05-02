@@ -220,8 +220,6 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        Acervo.customBaseDirectory = tempDir
-
         let manifest = makeManifest(modelId: modelId)
         let manifestData = try JSONEncoder().encode(manifest)
 

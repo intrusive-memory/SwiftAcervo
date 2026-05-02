@@ -3,31 +3,23 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension SharedStaticStateSuite.CustomBaseDirectorySuite {
+extension SharedStaticStateSuite.AppGroupEnvironmentSuite {
 
   /// Tests for Acervo path resolution: sharedModelsDirectory, slugify(), and modelDirectory(for:).
   ///
-  /// Nested under `CustomBaseDirectorySuite` (`.serialized`) so every test that
-  /// reads `Acervo.sharedModelsDirectory` or writes `Acervo.customBaseDirectory`
-  /// runs serialized with the other customBaseDirectory-writing suites.
+  /// Nested under `AppGroupEnvironmentSuite` (`.serialized`) because tests
+  /// that read `Acervo.sharedModelsDirectory` indirectly read
+  /// `ACERVO_APP_GROUP_ID`, and concurrent writers would race.
   @Suite("AcervoPathTests")
   struct AcervoPathTests {
 
     // MARK: - sharedModelsDirectory
     //
     // The default-value test ("ends with SharedModels") was deleted as a
-    // chronic CI flake. Its setup read `Acervo.sharedModelsDirectory` —
-    // which routes through the global `customBaseDirectory` — without
-    // owning the global, so any concurrent suite that mutates it (notably
-    // tests under MockURLProtocolSuite that set customBaseDirectory to a
-    // tmp dir) would race and clobber the default. The .serialized trait
-    // on CustomBaseDirectorySuite only serializes WITHIN the parent;
-    // sibling top-level serialized suites still execute in parallel with
-    // it. Coverage of the override mechanism lives in
-    // `customBaseDirectoryRedirectsSharedModelsDirectory` below and in
-    // the integration tests in AcervoFilesystemEdgeCaseTests +
+    // chronic CI flake. Coverage of the resolved path lives in the
+    // integration tests in AcervoFilesystemEdgeCaseTests +
     // ModelDownloadManagerTests, which exercise the same code path with
-    // self-owned base directories.
+    // self-owned base directories via `withIsolatedSharedModelsDirectory`.
 
     // MARK: - slugify
 
@@ -59,43 +51,54 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
     @Test("modelDirectory throws for invalid ID with no slash")
     func modelDirectoryNoSlash() {
-      #expect(throws: AcervoError.self) {
-        _ = try Acervo.modelDirectory(for: "no-slash-model")
+      withIsolatedSharedModelsDirectory { _ in
+        #expect(throws: AcervoError.self) {
+          _ = try Acervo.modelDirectory(for: "no-slash-model")
+        }
       }
     }
 
     @Test("modelDirectory throws for invalid ID with multiple slashes")
     func modelDirectoryMultipleSlashes() {
-      #expect(throws: AcervoError.self) {
-        _ = try Acervo.modelDirectory(for: "a/b/c")
+      withIsolatedSharedModelsDirectory { _ in
+        #expect(throws: AcervoError.self) {
+          _ = try Acervo.modelDirectory(for: "a/b/c")
+        }
       }
     }
 
     @Test("modelDirectory throws invalidModelId for empty string")
     func modelDirectoryEmptyString() {
-      #expect(throws: AcervoError.self) {
-        _ = try Acervo.modelDirectory(for: "")
+      withIsolatedSharedModelsDirectory { _ in
+        #expect(throws: AcervoError.self) {
+          _ = try Acervo.modelDirectory(for: "")
+        }
       }
     }
 
     @Test("modelDirectory constructs correct path for valid ID")
     func modelDirectoryValidId() throws {
-      let dir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
-      let expected = Acervo.sharedModelsDirectory
-        .appendingPathComponent("mlx-community_Qwen2.5-7B-Instruct-4bit")
-      #expect(dir == expected)
+      try withIsolatedSharedModelsDirectory { sharedDir in
+        let dir = try Acervo.modelDirectory(for: "mlx-community/Qwen2.5-7B-Instruct-4bit")
+        let expected = sharedDir.appendingPathComponent("mlx-community_Qwen2.5-7B-Instruct-4bit")
+        #expect(dir == expected)
+      }
     }
 
     @Test("modelDirectory path is under sharedModelsDirectory")
     func modelDirectoryUnderShared() throws {
-      let dir = try Acervo.modelDirectory(for: "org/repo")
-      #expect(dir.path.hasPrefix(Acervo.sharedModelsDirectory.path))
+      try withIsolatedSharedModelsDirectory { sharedDir in
+        let dir = try Acervo.modelDirectory(for: "org/repo")
+        #expect(dir.path.hasPrefix(sharedDir.path))
+      }
     }
 
     @Test("modelDirectory uses slugified name as last path component")
     func modelDirectoryLastComponent() throws {
-      let dir = try Acervo.modelDirectory(for: "mlx-community/Phi-3-mini-4k-instruct-4bit")
-      #expect(dir.lastPathComponent == "mlx-community_Phi-3-mini-4k-instruct-4bit")
+      try withIsolatedSharedModelsDirectory { _ in
+        let dir = try Acervo.modelDirectory(for: "mlx-community/Phi-3-mini-4k-instruct-4bit")
+        #expect(dir.lastPathComponent == "mlx-community_Phi-3-mini-4k-instruct-4bit")
+      }
     }
 
     // MARK: - slugify() Edge Cases
@@ -161,16 +164,32 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
       #expect(result == "Org_Model-Name")
     }
 
-    // MARK: - customBaseDirectory
+    // MARK: - ACERVO_APP_GROUP_ID resolution
 
-    @Test("customBaseDirectory redirects sharedModelsDirectory")
-    func customBaseDirectoryRedirectsSharedModelsDirectory() {
-      let tempRoot = FileManager.default.temporaryDirectory
-        .appendingPathComponent("acervo-test-\(UUID())")
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
-      #expect(Acervo.sharedModelsDirectory.path.hasPrefix(tempRoot.path))
+    @Test("ACERVO_APP_GROUP_ID env var drives sharedModelsDirectory path")
+    func envVarDrivesSharedModelsDirectory() {
+      withIsolatedSharedModelsDirectory { sharedDir in
+        // The helper sets ACERVO_APP_GROUP_ID to a unique value; the
+        // resolved path must include that value (env var, not entitlements).
+        let envValue = ProcessInfo.processInfo.environment[
+          Acervo.appGroupEnvironmentVariable
+        ]
+        #expect(envValue != nil, "Helper should have set the env var")
+        if let envValue {
+          #expect(
+            sharedDir.path.contains(envValue),
+            "sharedModelsDirectory path \(sharedDir.path) must contain group ID \(envValue)"
+          )
+        }
+      }
+    }
+
+    @Test("sharedModelsDirectory ends with SharedModels")
+    func sharedModelsDirectoryEndsWithSharedModels() {
+      withIsolatedSharedModelsDirectory { sharedDir in
+        #expect(sharedDir.lastPathComponent == "SharedModels")
+      }
     }
   }
 
-}  // extension SharedStaticStateSuite.CustomBaseDirectorySuite
+}  // extension SharedStaticStateSuite.AppGroupEnvironmentSuite

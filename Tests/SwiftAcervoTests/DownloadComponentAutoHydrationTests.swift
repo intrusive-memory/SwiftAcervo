@@ -24,7 +24,7 @@
 // Nesting: extension on MockURLProtocolSuite so the `.serialized` trait
 // serializes this test against all other MockURLProtocol users. The test
 // also calls withIsolatedAcervoState (Sortie 2's helper) to snapshot-and-
-// restore Acervo.customBaseDirectory and ComponentRegistry.shared state.
+// restore ACERVO_APP_GROUP_ID and ComponentRegistry.shared state.
 
 import CryptoKit
 import Foundation

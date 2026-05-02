@@ -19,16 +19,16 @@ AI applications on macOS and iOS each tend to manage their own model storage. An
 
 **One path. No subdirectories. Every project uses SwiftAcervo.**
 
-All models live under a single canonical directory inside the App Group container for `group.intrusive-memory.models`:
+All models live under a single canonical directory inside the App Group container that the consumer configures:
 
 ```
-<App Group Container>/SharedModels/{org}_{repo}/
+~/Library/Group Containers/<app-group-id>/SharedModels/{org}_{repo}/
 ```
 
-For example:
+For example, with `ACERVO_APP_GROUP_ID=group.intrusive-memory.models`:
 
 ```
-<App Group Container>/SharedModels/
+~/Library/Group Containers/group.intrusive-memory.models/SharedModels/
 ├── mlx-community_Qwen2.5-7B-Instruct-4bit/
 │   ├── config.json
 │   ├── tokenizer.json
@@ -39,6 +39,8 @@ For example:
 └── mlx-community_snac_24khz/
     └── config.json
 ```
+
+The same directory is used by signed UI apps (resolved via the `com.apple.security.application-groups` entitlement) and unsigned CLI tools (resolved via the `ACERVO_APP_GROUP_ID` environment variable). Both write to the same path, so a model downloaded by either is immediately visible to the other. See [SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md) for full path-resolution rules.
 
 LLM, TTS, audio, and vision models are all peers in the same flat directory. The presence of `config.json` marks a model as valid. SwiftAcervo finds and downloads models -- it does **not** load them. Loading is the consumer's job.
 
@@ -264,7 +266,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 | Method | Description |
 |--------|-------------|
-| `sharedModelsDirectory` | Returns App Group container path + `SharedModels/` |
+| `sharedModelsDirectory` | Returns `<App Group Container>/SharedModels/` (group ID resolved via `ACERVO_APP_GROUP_ID` env var or `com.apple.security.application-groups` entitlement). Traps with `fatalError` if neither source supplies a value. |
 | `modelDirectory(for:)` | Returns local directory URL for a model ID |
 | `slugify(_:)` | Converts `org/repo` to `org_repo` |
 
@@ -379,7 +381,7 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 
 ## Consumer Integration
 
-SwiftAcervo is the model management layer for the [intrusive-memory](https://github.com/intrusive-memory) ecosystem. Each consumer project depends on SwiftAcervo for model discovery and downloading, then loads models using its own framework. Because every project shares the same App Group container (`group.intrusive-memory.models`), a model downloaded by any one tool is immediately available to all others.
+SwiftAcervo is the model management layer for the [intrusive-memory](https://github.com/intrusive-memory) ecosystem. Each consumer project depends on SwiftAcervo for model discovery and downloading, then loads models using its own framework. Because every project resolves to the same App Group container (`group.intrusive-memory.models` for shipped intrusive-memory apps, supplied via entitlements for UI apps and `ACERVO_APP_GROUP_ID` for CLIs), a model downloaded by any one tool is immediately available to all others.
 
 ### SwiftBruja (MLX Inference)
 

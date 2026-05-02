@@ -3,13 +3,15 @@ import Testing
 
 @testable import SwiftAcervo
 
-extension SharedStaticStateSuite.CustomBaseDirectorySuite {
+extension SharedStaticStateSuite.AppGroupEnvironmentSuite {
 
   /// Tests for filesystem edge cases: file permission denial and disk-full simulation.
   ///
-  /// All tests use the `customBaseDirectory` isolation pattern from §6 of TESTING_REQUIREMENTS.md.
-  /// Nested under `CustomBaseDirectorySuite` (`.serialized`) so writes to
-  /// `Acervo.customBaseDirectory` cannot race with sibling suites.
+  /// These tests use self-owned `tempRoot` directories and the
+  /// `Acervo.listModels(in:)` / `AcervoDownloader.ensureDirectory(at:)`
+  /// overloads, so they do not actually mutate `ACERVO_APP_GROUP_ID`. They
+  /// remain nested under `AppGroupEnvironmentSuite` (`.serialized`) for
+  /// historical isolation guarantees.
   @Suite("Filesystem Edge Cases")
   struct AcervoFilesystemEdgeCaseTests {
 
@@ -39,10 +41,8 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
     // MARK: - File Permission Denial
 
-    /// Verifies that `Acervo.listModels()` throws a descriptive error (not a crash)
+    /// Verifies that `Acervo.listModels(in:)` throws a descriptive error (not a crash)
     /// when the model directory is non-readable/non-executable (permissions 0o000).
-    ///
-    /// This covers §7 priority 3: "No test for file permission denial on model directory."
     @Test("listModels throws when model directory is non-readable")
     func listModelsThrowsOnNonReadableDirectory() throws {
       let tempRoot = FileManager.default.temporaryDirectory
@@ -58,20 +58,17 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         try? FileManager.default.removeItem(at: tempRoot)
       }
 
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
-
       // Remove all permissions so contentsOfDirectory will fail with a permission error.
       try FileManager.default.setAttributes(
         [.posixPermissions: 0o000],
         ofItemAtPath: tempRoot.path
       )
 
-      // listModels() must throw — not crash — when the directory is unreadable.
+      // listModels(in:) must throw — not crash — when the directory is unreadable.
       // The exact error type depends on the OS (typically CocoaError / NSFileReadNoPermissionError),
       // but any thrown error satisfies the requirement.
       #expect(throws: (any Error).self) {
-        _ = try Acervo.listModels()
+        _ = try Acervo.listModels(in: tempRoot)
       }
     }
 
@@ -81,8 +78,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
     /// `AcervoError.directoryCreationFailed` when a regular file already occupies
     /// the target path, making directory creation impossible.
     ///
-    /// This covers §7 priority 2: "No test for disk-full condition during download."
-    ///
     /// NOTE: True disk-full simulation requires a ramdisk; this test verifies error
     /// handling for a path-creation failure as the closest unit-testable equivalent.
     @Test("ensureDirectory throws directoryCreationFailed when path is occupied by a file")
@@ -91,9 +86,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         .appendingPathComponent("acervo-test-\(UUID())")
       try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: tempRoot) }
-
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
 
       // Place a regular file at the path where we will try to create a directory.
       // FileManager cannot create a directory at a path already occupied by a file,
@@ -125,9 +117,11 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
 
   /// Tests for symlink behavior in `Acervo.listModels`.
   ///
-  /// All tests use the `customBaseDirectory` isolation pattern from §6 of TESTING_REQUIREMENTS.md.
-  /// Nested under `CustomBaseDirectorySuite` (`.serialized`) so writes to
-  /// `Acervo.customBaseDirectory` cannot race with sibling suites.
+  /// These tests use self-owned `tempRoot` directories and call
+  /// `Acervo.listModels(in:)` directly, so they do not touch
+  /// `ACERVO_APP_GROUP_ID`. They remain nested under
+  /// `AppGroupEnvironmentSuite` (`.serialized`) for historical isolation
+  /// guarantees.
   @Suite("Symlink Discovery Edge Cases")
   struct AcervoSymlinkEdgeCaseTests {
 
@@ -160,8 +154,8 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
     /// `isDirectory == false` (the symlink is a symlink, not a directory), so
     /// `listModels` silently skips symlink entries via the `guard` on line 261.
     ///
-    /// The real model directory (placed outside `customBaseDirectory`) is not
-    /// scanned, so the result is 0 models — no crash, no double-count.
+    /// The real model directory (placed outside `tempRoot`) is not scanned, so
+    /// the result is 0 models — no crash, no double-count.
     @Test("symlink in model directory does not cause double-count or error in listModels")
     func symlinkToValidModelIsSkippedWithoutError() throws {
       // tempRoot is where Acervo will scan — it will contain the symlink only.
@@ -169,9 +163,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         .appendingPathComponent("acervo-test-\(UUID())")
       try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: tempRoot) }
-
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
 
       // realModelRoot is outside tempRoot so the real model dir is not scanned directly.
       let realModelRoot = FileManager.default.temporaryDirectory
@@ -191,7 +182,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         withDestinationPath: realModelDir.path
       )
 
-      // Call listModels(in:) directly to avoid racing on the global customBaseDirectory.
       // The symlink is skipped (isDirectory == false for the symlink URL), so the
       // result is empty — no double-count, no crash.
       let models = try Acervo.listModels(in: tempRoot)
@@ -216,9 +206,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
       try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
-
       // Create a symlink whose destination does not exist.
       let brokenSymlinkPath =
         tempRoot
@@ -233,8 +220,7 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         withDestinationPath: nonexistentTarget
       )
 
-      // Call listModels(in:) directly to avoid racing on the global customBaseDirectory.
-      // listModels must not throw — it should skip the broken symlink and return
+      // listModels(in:) must not throw — it should skip the broken symlink and return
       // an empty array (partial results).
       let models = try Acervo.listModels(in: tempRoot)
       #expect(
@@ -260,9 +246,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
       try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: tempRoot) }
 
-      Acervo.customBaseDirectory = tempRoot
-      defer { Acervo.customBaseDirectory = nil }
-
       // Create the real model directory outside tempRoot.
       let realModelRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("acervo-real-\(UUID())")
@@ -278,7 +261,6 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
         withDestinationPath: realModelDir.path
       )
 
-      // Call listModels(in:) directly to avoid racing on the global customBaseDirectory.
       // listModels skips the symlink (isDirectory == false for symlink URLs), so
       // result is empty before removal too.
       let modelsBefore = try Acervo.listModels(in: tempRoot)
@@ -305,4 +287,4 @@ extension SharedStaticStateSuite.CustomBaseDirectorySuite {
     }
   }
 
-}  // extension SharedStaticStateSuite.CustomBaseDirectorySuite
+}  // extension SharedStaticStateSuite.AppGroupEnvironmentSuite

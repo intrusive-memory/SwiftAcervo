@@ -15,7 +15,7 @@ SwiftAcervo solves a critical problem: AI applications on macOS and iOS each man
 - **Invisible to others** — A model downloaded by one app can't be found by another
 - **Fragile paths** — Every project hardcodes its own cache directory
 
-**Solution**: One canonical directory in the App Group container (`group.intrusive-memory.models`). Models downloaded by any app are immediately visible to all others.
+**Solution**: One canonical directory in the App Group container. The identifier is supplied per-consumer — UI apps via `com.apple.security.application-groups` in their entitlements file; CLIs/scripts/tests via the `ACERVO_APP_GROUP_ID` environment variable (typically `group.intrusive-memory.models`). All consumers resolve to the same `~/Library/Group Containers/<group-id>/SharedModels/` path, so models downloaded by any one are immediately visible to all others. SwiftAcervo refuses to invent a per-process fallback when neither source is configured.
 
 SwiftAcervo provides:
 - **Discovery** — Find models by name or fuzzy search
@@ -60,7 +60,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 ### 🌐 Model Storage and Discovery
 
 - **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** — Where models live
-  - Canonical path: `<App Group Container>/SharedModels/`
+  - Canonical path: `~/Library/Group Containers/<app-group-id>/SharedModels/`
   - Directory structure and naming conventions
   - Validity marker (`config.json`)
   - Migration from legacy paths
@@ -264,7 +264,7 @@ print()
 1. **Zero external dependencies** — Foundation + CryptoKit only
 2. **CDN-only downloads** — All from private Cloudflare R2
 3. **Per-file verification** — SHA-256 manifest integrity checking
-4. **Shared models** — One App Group container for all intrusive-memory projects
+4. **Shared models** — One App Group container for all intrusive-memory projects (group ID supplied via entitlements for UI apps, `ACERVO_APP_GROUP_ID` env var for CLIs)
 5. **Not a model loader** — SwiftAcervo finds and downloads; consumers load
 6. **iOS 26.0+ and macOS 26.0+ only** — No legacy platform support
 7. **Swift 6 strict concurrency** — `@Sendable` closures, actors, no data races
