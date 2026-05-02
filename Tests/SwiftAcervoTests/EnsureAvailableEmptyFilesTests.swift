@@ -74,8 +74,6 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        Acervo.customBaseDirectory = tempDir
-
         let manifest = Self.makeThreeFileManifest(modelId: modelId)
         let encodedManifest = try JSONEncoder().encode(manifest)
 
@@ -153,8 +151,6 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        Acervo.customBaseDirectory = tempDir
-
         let manifest = Self.makeThreeFileManifest(modelId: modelId)
         let encodedManifest = try JSONEncoder().encode(manifest)
 
@@ -226,8 +222,6 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        Acervo.customBaseDirectory = tempDir
 
         let manifest = Self.makeThreeFileManifest(modelId: modelId)
         let encodedManifest = try JSONEncoder().encode(manifest)

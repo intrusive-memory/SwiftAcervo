@@ -8,7 +8,7 @@ import Testing
 /// Nested under `SharedStaticStateSuite.MockURLProtocolSuite` so it inherits
 /// the grandparent's `.serialized` trait and cannot race with any other
 /// suite that touches process-wide static state (URLProtocol stub or
-/// `Acervo.customBaseDirectory`).
+/// `ACERVO_APP_GROUP_ID`).
 extension SharedStaticStateSuite.MockURLProtocolSuite {
 
   @Suite("Harness")

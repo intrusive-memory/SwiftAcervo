@@ -9,17 +9,24 @@
 ## Canonical Path
 
 ```
-<App Group Container>/SharedModels/
+~/Library/Group Containers/<app-group-id>/SharedModels/
 ```
 
-### Resolving the App Group Container
+The same path applies to UI apps (where the OS mounts the App Group container into the sandbox at this location) and CLI tools (which read/write the directory directly via filesystem permissions). This is what makes cross-process model sharing work — every consumer lands at the same directory.
 
-**For sandboxed apps** (iOS, macOS):
-- App Group: `group.intrusive-memory.models`
-- Container path: Returned by `FileManager.default.containerURL(forSecurityApplicationGroupIdentifier:)`
+### Resolving the App Group identifier
 
-**Fallback** (if App Group is unavailable):
-- `~/Library/Application Support/SwiftAcervo/SharedModels/`
+SwiftAcervo learns the App Group ID at runtime in two ways:
+
+1. **`ACERVO_APP_GROUP_ID` environment variable** — used by CLI tools, scripts, test runners, and anything else without an entitlements file. Typically set in `~/.zprofile`:
+   ```sh
+   export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
+   ```
+2. **`com.apple.security.application-groups` entitlement** — read off the running binary via `SecTaskCopyValueForEntitlement`. Used by signed UI apps. SwiftAcervo takes the **first** group in the array.
+
+The env var wins if both are set.
+
+**There is no fallback path.** If neither source supplies a value, `Acervo.sharedModelsDirectory` calls `fatalError`. A per-process `Application Support/...` fallback is exactly the divergence App Groups exist to prevent: a CLI and a UI app would land at different paths and stop sharing.
 
 ### Getting the Path
 
@@ -27,7 +34,8 @@
 import SwiftAcervo
 
 let sharedDir = Acervo.sharedModelsDirectory
-// Returns: <App Group Container>/SharedModels/
+// macOS: ~/Library/Group Containers/<group-id>/SharedModels/
+// iOS:   <App Group Container>/SharedModels/ (mounted into the app sandbox)
 ```
 
 **Never hardcode this path.** Always use `Acervo.sharedModelsDirectory`.
@@ -199,14 +207,9 @@ let modelsDir = container.appendingPathComponent("SharedModels")
 
 ### Fallback
 
-If App Group is unavailable (sandboxing disabled or group not enabled):
+There isn't one. Calling `Acervo.sharedModelsDirectory` without a configured App Group identifier traps with `fatalError`. A `Application Support/SwiftAcervo/SharedModels` fallback used to exist but was removed because it caused unsigned CLI tools and signed UI apps to write to different directories — exactly the bug the App Group container exists to prevent.
 
-```swift
-let fallback = URL(filePath: NSHomeDirectory())
-    .appendingPathComponent("Library/Application Support/SwiftAcervo/SharedModels")
-```
-
-**Note**: This fallback is NOT shared across apps. Only use if App Group is genuinely unavailable.
+If you need to read or write models from a non-app context (CLI, script, CI), set `ACERVO_APP_GROUP_ID` in the shell environment.
 
 ---
 
@@ -289,7 +292,7 @@ com.apple.security.application-groups
 3. **+ Capability** → App Groups
 4. Add: `group.intrusive-memory.models`
 
-**Without this capability**: App Group container is inaccessible, falls back to `~/Library/Application Support/SwiftAcervo/SharedModels/` (not shared).
+**Without this capability**: `Acervo.sharedModelsDirectory` traps with `fatalError`. Add the entitlement (or, for non-app contexts, export `ACERVO_APP_GROUP_ID`).
 
 ### macOS (Unsigned or Disabled Sandbox)
 

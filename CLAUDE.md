@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - Zero external dependencies (Foundation + CryptoKit only)
 - All downloads go through the private R2 CDN
 - `config.json` presence is the universal model validity marker
-- Canonical path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
+- Canonical path: `~/Library/Group Containers/<group-id>/SharedModels/{org}_{repo}/`. The group ID is supplied per-consumer via `com.apple.security.application-groups` entitlement (UI apps) or the `ACERVO_APP_GROUP_ID` environment variable (CLIs/tests). No fallback — `Acervo.sharedModelsDirectory` traps with `fatalError` if neither source is configured.
 - Manifest-first file selection: consumers do not know what files exist until the CDN manifest returns; the manifest is the sole authoritative source, and names not in it throw `AcervoError.fileNotInManifest`.
 
 ---

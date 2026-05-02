@@ -13,7 +13,7 @@ extension SharedStaticStateSuite {
   /// `SharedStaticStateSuite` (`.serialized`) so the env-var write window
   /// inside `withOfflineModeActive` cannot race against any other test that
   /// reads the gate via the download path. The grandparent serializes
-  /// against the MockURLProtocol- and customBaseDirectory-extending suites
+  /// against the MockURLProtocol- and ACERVO_APP_GROUP_ID-extending suites
   /// that contain almost every download-path test in the project.
   @Suite("Offline Mode Gate")
   struct OfflineModeGateTests {
