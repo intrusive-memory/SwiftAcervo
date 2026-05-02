@@ -158,6 +158,43 @@ extension Acervo {
     }
     return sharedModelsDirectory.appendingPathComponent(slugify(modelId))
   }
+
+  /// Returns the model directory for a given model ID, creating it (and any
+  /// intermediate directories) on disk if it does not already exist.
+  ///
+  /// This is a path-only operation — it never contacts the CDN and never
+  /// downloads files. Use it when a caller (typically a CLI tool or a
+  /// side-loading flow) needs to write into the canonical shared-models
+  /// location without committing to a CDN fetch. To ensure a model's *files*
+  /// are present, use ``ensureAvailable(_:files:progress:)`` instead.
+  ///
+  /// In contexts where the App Group entitlement
+  /// (`group.intrusive-memory.models`) is unavailable — typically CLI tools
+  /// or non-sandboxed processes — this resolves through the same
+  /// ``sharedModelsDirectory`` fallback chain, so the path matches what a
+  /// consuming library would see when running with the entitlement absent.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: The URL of the (now-existing) model directory within
+  ///   ``sharedModelsDirectory``.
+  /// - Throws: ``AcervoError/invalidModelId`` if the model ID does not contain
+  ///   exactly one "/", or any error thrown by `FileManager.createDirectory`.
+  ///
+  /// ```swift
+  /// let dir = try Acervo.ensureModelDirectory(
+  ///     for: "mlx-community/Qwen2.5-7B-Instruct-4bit"
+  /// )
+  /// // Directory now exists; safe to write files into it.
+  /// ```
+  @discardableResult
+  public static func ensureModelDirectory(for modelId: String) throws -> URL {
+    let dir = try modelDirectory(for: modelId)
+    try FileManager.default.createDirectory(
+      at: dir,
+      withIntermediateDirectories: true
+    )
+    return dir
+  }
 }
 
 // MARK: - Availability
