@@ -88,6 +88,15 @@ public enum AcervoError: LocalizedError, Sendable {
   /// instead.
   case offlineModeActive
 
+  /// A signed mutation request to the CDN was rejected with HTTP 401 or 403.
+  /// The R2 IAM scope is doing its job (read-only key attempting a write,
+  /// missing signature, expired credential, etc.); surface clearly so callers
+  /// can distinguish "credentials problem" from a transient network error.
+  ///
+  /// `operation` is a short label identifying which `S3CDNClient` call failed
+  /// (`"head"`, `"list"`, `"delete"`, `"deleteObjects"`, etc.).
+  case cdnAuthorizationFailed(operation: String)
+
   public var errorDescription: String? {
     switch self {
     case .directoryCreationFailed(let path):
@@ -159,6 +168,10 @@ public enum AcervoError: LocalizedError, Sendable {
     case .offlineModeActive:
       return
         "Offline mode is active (ACERVO_OFFLINE=1); the requested resource was not found in the local SharedModels directory."
+
+    case .cdnAuthorizationFailed(let operation):
+      return
+        "CDN authorization failed for operation '\(operation)' (HTTP 401/403). Check that the credentials are scoped to allow this operation."
     }
   }
 }
