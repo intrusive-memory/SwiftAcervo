@@ -31,6 +31,12 @@ struct AcervoCLI: AsyncParsableCommand {
         # Or step by step:
         acervo download mlx-community/Qwen2.5-7B-Instruct-4bit
         acervo upload mlx-community/Qwen2.5-7B-Instruct-4bit /tmp/acervo-staging/mlx-community_Qwen2.5-7B-Instruct-4bit
+
+        # Re-pull a model from HF and atomically republish (prunes orphans):
+        acervo recache mlx-community/Qwen2.5-7B-Instruct-4bit
+
+        # Wipe a model from local cache, staging, and CDN:
+        acervo delete mlx-community/Qwen2.5-7B-Instruct-4bit --local --cdn --yes
       """,
     version: acervoVersion,
     subcommands: [
@@ -39,6 +45,8 @@ struct AcervoCLI: AsyncParsableCommand {
       ShipCommand.self,
       ManifestCommand.self,
       VerifyCommand.self,
+      DeleteCommand.self,
+      RecacheCommand.self,
     ]
   )
 }

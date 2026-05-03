@@ -7,6 +7,21 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.11.0] - 2026-05-03
+
+### Added
+
+- **`acervo delete <model-id>`** — new subcommand that removes a model from one or more storage tiers. Scope flags: `--local` (implies both `--staging` and `--cache`), `--staging` (purges `$STAGING_DIR/<slug>`), `--cache` (purges the App Group cache via `Acervo.deleteModel`), `--cdn` (purges every object under `models/<slug>/` via `Acervo.deleteFromCDN`). `--cdn` prompts for TTY confirmation; `--yes` bypasses for CI/non-TTY runs. `--dry-run` previews without performing.
+- **`acervo recache <model-id> [files...]`** — new subcommand that re-pulls a model from HuggingFace into the staging directory and atomically republishes it to the CDN via `Acervo.recache`. The orphan-prune step runs by default; pass `--keep-orphans` to retain stale keys. Off-TTY runs that would prune require `--yes`.
+- **`TTYConfirm`** helper — shared confirmation primitive used by destructive subcommands. TTY → prompts. Non-TTY without `--yes` → throws `AcervoToolError.confirmationRequired` with a clear message instructing the user to pass `--yes`.
+- **`CredentialResolver`** — resolves `AcervoCDNCredentials` from `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_ENDPOINT` / `R2_PUBLIC_URL` (required) plus `R2_BUCKET` / `R2_REGION` (optional with defaults). The library never reads from `ProcessInfo.environment`; this lives in the CLI target only.
+
+### Migration
+
+The existing `acervo ship` / `upload` / `download` commands are unchanged and still work as before. The new `delete` and `recache` commands cover the workflow needed to retire CI-driven model caching in favor of doing it manually from a maintainer's machine.
+
+---
+
 ## [0.10.1] - 2026-05-03
 
 ### Added

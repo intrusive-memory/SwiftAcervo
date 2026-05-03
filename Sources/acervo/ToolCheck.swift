@@ -43,6 +43,12 @@ enum AcervoToolError: Error, CustomStringConvertible {
   /// `aws` (for example, `R2_ACCESS_KEY_ID`).
   case missingEnvironmentVariable(String)
 
+  /// A destructive subcommand was invoked without `--yes` and stdin is
+  /// not attached to a TTY (typically: piped input, CI). The operator
+  /// must explicitly opt in via `--yes` so we never destroy data on a
+  /// non-interactive host.
+  case confirmationRequired
+
   /// A file enumerated under a staging base directory could not be
   /// expressed as a relative path under that base. This indicates a
   /// path-representation mismatch between the base URL and the
@@ -76,6 +82,9 @@ enum AcervoToolError: Error, CustomStringConvertible {
       return "CDN manifest at \(url) failed verifyChecksum() (CHECK 5 failed)"
     case .missingEnvironmentVariable(let name):
       return "Required environment variable not set: \(name)"
+    case .confirmationRequired:
+      return
+        "This is a destructive operation and stdin is not a TTY. Re-run with --yes to confirm non-interactively."
     case .relativePathOutsideBase(let file, let base):
       return
         "Cannot compute relative path: \(file) is not contained in \(base). Refusing to fall back to basename, which would produce ambiguous manifest entries."
@@ -106,6 +115,14 @@ enum ToolCheck {
       FileHandle.standardError.write(Data(message.utf8))
       throw AcervoToolError.missingTool("hf")
     }
+  }
+
+  /// Public-to-the-CLI version of `isToolAvailable`. Subcommands that
+  /// only depend on a subset of the legacy tool surface (e.g. `recache`
+  /// needs `hf` but not `aws`) call this directly instead of going
+  /// through the all-or-nothing `validate()`.
+  static func isToolOnPath(name: String) -> Bool {
+    isToolAvailable(name: name)
   }
 
   // MARK: - Private
