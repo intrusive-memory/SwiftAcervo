@@ -107,12 +107,14 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       var entries: [Entry] = []
 
       func record(_ entry: Entry) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         entries.append(entry)
       }
 
       func snapshot() -> [Entry] {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return entries
       }
 
@@ -120,7 +122,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       /// they were dispatched. Used to assert manifest.json is LAST.
       func putKeys(bucket: String) -> [String] {
         let prefix = "/\(bucket)/"
-        return entries
+        return
+          entries
           .filter { $0.method == "PUT" && !$0.query.contains("partNumber=") }
           .map { entry in
             entry.path.hasPrefix(prefix)
@@ -147,7 +150,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       log: S3RequestLog,
       existingKeys: [String],
       publishedFiles: @escaping @Sendable () -> [String: Data],
-      deleteOutcome: @escaping @Sendable ([String]) -> [(key: String, success: Bool, error: String?)],
+      deleteOutcome:
+        @escaping @Sendable ([String]) -> [(key: String, success: Bool, error: String?)],
       publicManifestOverride: (@Sendable () -> Data?)? = nil,
       publicSampleOverride: (@Sendable () -> Data?)? = nil
     ) -> MockURLProtocol.Responder {
@@ -407,7 +411,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       let manifestKey = "models/org_repo/manifest.json"
       #expect(putKeys.last == manifestKey, "manifest.json must be the last PUT")
       let nonManifestKeys = putKeys.dropLast()
-      #expect(!nonManifestKeys.contains(manifestKey),
+      #expect(
+        !nonManifestKeys.contains(manifestKey),
         "manifest.json must appear exactly once, at the end")
     }
 
@@ -483,7 +488,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         "models/org_repo/old-model.bin",
         "models/org_repo/legacy/tokenizer.model",
       ]
-      #expect(deletedKeys == expectedOrphans,
+      #expect(
+        deletedKeys == expectedOrphans,
         "orphan-prune must delete exactly the stale keys, got \(deletedKeys)")
     }
 
@@ -495,7 +501,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       let (dir, _) = try Self.makeStagingDir(files: [
-        ("config.json", "{\"a\":1}"),
+        ("config.json", "{\"a\":1}")
       ])
       defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -533,7 +539,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       let deleteCalls = entries.filter {
         $0.method == "POST" && $0.query == "delete="
       }
-      #expect(deleteCalls.isEmpty,
+      #expect(
+        deleteCalls.isEmpty,
         "keepOrphans: true must not call deleteObjects")
     }
 
@@ -545,7 +552,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       let (dir, _) = try Self.makeStagingDir(files: [
-        ("config.json", "{\"x\":1}"),
+        ("config.json", "{\"x\":1}")
       ])
       defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -584,7 +591,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         thrown = error
       }
 
-      guard case let .some(err as AcervoError) = thrown,
+      guard case .some(let err as AcervoError) = thrown,
         case .publishVerificationFailed(let stage) = err
       else {
         Issue.record(
@@ -603,7 +610,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       let (dir, _) = try Self.makeStagingDir(files: [
-        ("config.json", "{\"good\":true}"),
+        ("config.json", "{\"good\":true}")
       ])
       defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -643,7 +650,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         thrown = error
       }
 
-      guard case let .some(err as AcervoError) = thrown,
+      guard case .some(let err as AcervoError) = thrown,
         case .publishVerificationFailed(let stage) = err
       else {
         Issue.record(
@@ -662,7 +669,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       let (dir, _) = try Self.makeStagingDir(files: [
-        ("config.json", "{\"k\":1}"),
+        ("config.json", "{\"k\":1}")
       ])
       defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -700,7 +707,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         thrown = error
       }
 
-      guard case let .some(err as AcervoError) = thrown,
+      guard case .some(let err as AcervoError) = thrown,
         case .publishOrphanPruneFailed(let failedKeys, let publishedManifest) = err
       else {
         Issue.record(
@@ -708,7 +715,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
         return
       }
-      #expect(Set(failedKeys) == Set([orphanKey1, orphanKey2]),
+      #expect(
+        Set(failedKeys) == Set([orphanKey1, orphanKey2]),
         "failedKeys must contain every key the orphan-prune could not remove")
       // The published manifest is surfaced so callers can record success
       // semantics with the prune-failed warning.
@@ -728,7 +736,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       let (dir, _) = try Self.makeStagingDir(files: [
-        ("config.json", "{\"k\":1}"),
+        ("config.json", "{\"k\":1}")
       ])
       defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -783,13 +791,16 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       for request in manifestReqs + sampleReqs {
         // 1. cache-buster query parameter present
         let query = request.url?.query ?? ""
-        #expect(query.contains("cb="),
+        #expect(
+          query.contains("cb="),
           "public readback must carry a cb= cache-buster, got query=\(query)")
         // 2. Cache-Control: no-cache header set
-        #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache",
+        #expect(
+          request.value(forHTTPHeaderField: "Cache-Control") == "no-cache",
           "public readback must set Cache-Control: no-cache")
         // 3. .reloadIgnoringLocalCacheData on the request itself
-        #expect(request.cachePolicy == .reloadIgnoringLocalCacheData,
+        #expect(
+          request.cachePolicy == .reloadIgnoringLocalCacheData,
           "public readback must use .reloadIgnoringLocalCacheData")
       }
     }
@@ -805,12 +816,14 @@ final class PublicRequestLog: @unchecked Sendable {
   private var entries: [URLRequest] = []
 
   func record(_ request: URLRequest) {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     entries.append(request)
   }
 
   func snapshot() -> [URLRequest] {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    defer { lock.unlock() }
     return entries
   }
 }

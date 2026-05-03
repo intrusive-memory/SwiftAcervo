@@ -123,11 +123,12 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
       #expect(MockURLProtocol.requestCount == 2)
       #expect(objects.count == 3)
-      #expect(objects.map(\.key) == [
-        "models/foo/a.bin",
-        "models/foo/b.bin",
-        "models/foo/c.bin",
-      ])
+      #expect(
+        objects.map(\.key) == [
+          "models/foo/a.bin",
+          "models/foo/b.bin",
+          "models/foo/c.bin",
+        ])
       #expect(objects.map(\.size) == [10, 20, 30])
       #expect(objects[0].etag == "\"aaaa\"")
     }
@@ -343,7 +344,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       var written = 0
       while written < size {
         let remaining = size - written
-        let chunk = remaining >= block.count
+        let chunk =
+          remaining >= block.count
           ? block
           : block.prefix(remaining)
         try handle.write(contentsOf: chunk)
@@ -377,7 +379,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           statusCode: 200,
           httpVersion: "HTTP/1.1",
           headerFields: [
-            "ETag": "\"single-shot-etag\"",
+            "ETag": "\"single-shot-etag\""
           ]
         )!
         return (response, Data())
@@ -423,12 +425,14 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       var entries: [(method: String, query: String)] = []
 
       func record(method: String, query: String) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         entries.append((method: method, query: query))
       }
 
       func snapshot() -> [(method: String, query: String)] {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return entries
       }
     }
@@ -473,7 +477,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           let comps = URLComponents(
             url: request.url!, resolvingAgainstBaseURL: false
           )
-          let partNumberStr = comps?.queryItems?
+          let partNumberStr =
+            comps?.queryItems?
             .first(where: { $0.name == "partNumber" })?.value ?? "?"
           let partNumber = Int(partNumberStr) ?? -1
 
@@ -492,7 +497,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
             statusCode: 200,
             httpVersion: "HTTP/1.1",
             headerFields: [
-              "ETag": "\"part-\(partNumber)-etag\"",
+              "ETag": "\"part-\(partNumber)-etag\""
             ]
           )!
           return (resp, Data())

@@ -277,7 +277,8 @@ public enum AcervoError: LocalizedError, Sendable {
 
     case .publishOrphanPruneFailed(let failedKeys, _):
       let preview = failedKeys.prefix(5).joined(separator: ", ")
-      let suffix = failedKeys.count > 5
+      let suffix =
+        failedKeys.count > 5
         ? " … (\(failedKeys.count - 5) more; full list available on the AcervoError case payload)"
         : ""
       return

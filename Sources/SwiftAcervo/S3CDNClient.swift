@@ -580,7 +580,8 @@ public actor S3CDNClient {
     }
 
     let finalDigest = wholeFileHasher.finalize()
-    let wholeFileSHA256 = finalDigest
+    let wholeFileSHA256 =
+      finalDigest
       .map { String(format: "%02x", $0) }
       .joined()
 

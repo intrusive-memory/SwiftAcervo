@@ -120,9 +120,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=host;x-amz-date, "
-          + "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=host;x-amz-date, "
+        + "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
     )
     #expect(signed.value(forHTTPHeaderField: "x-amz-date") == "20150830T123600Z")
     #expect(
@@ -147,9 +147,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=host;x-amz-date, "
-          + "Signature=a67d582fa61cc504c4bae71f336f98b97f1ea3c7a6bfe1b6e45aec72011b9aeb"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=host;x-amz-date, "
+        + "Signature=a67d582fa61cc504c4bae71f336f98b97f1ea3c7a6bfe1b6e45aec72011b9aeb"
     )
   }
 
@@ -171,9 +171,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=host;x-amz-date, "
-          + "Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=host;x-amz-date, "
+        + "Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"
     )
   }
 
@@ -207,9 +207,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=host;my-header1;x-amz-date, "
-          + "Signature=c9d5ea9f3f72853aea855b47ea873832890dbdd183b4468f858259531a5138ea"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=host;my-header1;x-amz-date, "
+        + "Signature=c9d5ea9f3f72853aea855b47ea873832890dbdd183b4468f858259531a5138ea"
     )
   }
 
@@ -227,9 +227,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=host;x-amz-date, "
-          + "Signature=5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=host;x-amz-date, "
+        + "Signature=5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"
     )
   }
 
@@ -258,9 +258,9 @@ struct SigV4SignerTests {
     #expect(
       auth
         == "AWS4-HMAC-SHA256 "
-          + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
-          + "SignedHeaders=content-type;host;x-amz-date, "
-          + "Signature=ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a"
+        + "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, "
+        + "SignedHeaders=content-type;host;x-amz-date, "
+        + "Signature=ff11897932ad3f4e8b18135d722051e5ac45fc38421b1da7b9d196a0fe09473a"
     )
     #expect(signed.value(forHTTPHeaderField: "x-amz-content-sha256") == bodyHex)
   }

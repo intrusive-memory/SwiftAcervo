@@ -95,8 +95,8 @@ public struct SigV4Signer: Sendable {
     }
 
     // Step 0 — Required timestamps.
-    let amzDate = Self.amzDate(from: date)        // YYYYMMDDTHHMMSSZ
-    let dateStamp = String(amzDate.prefix(8))     // YYYYMMDD
+    let amzDate = Self.amzDate(from: date)  // YYYYMMDDTHHMMSSZ
+    let dateStamp = String(amzDate.prefix(8))  // YYYYMMDD
 
     // Step 1 — Build the canonical request.
     //
