@@ -31,6 +31,20 @@ struct AcervoErrorTests {
       .cdnOperationFailed(operation: "put", statusCode: 500, body: "InternalError"),
       .publishVerificationFailed(stage: "sample-file"),
       .fetchSourceFailed(modelId: "org/repo", underlying: URLError(.timedOut)),
+      .manifestZeroByteFile(path: "weights.bin"),
+      .manifestPostWriteCorrupted(path: "/tmp/staging/manifest.json"),
+      .manifestRelativePathOutsideBase(file: "/tmp/elsewhere", base: "/tmp/staging"),
+      .publishOrphanPruneFailed(
+        failedKeys: ["models/org_repo/old.bin"],
+        publishedManifest: CDNManifest(
+          manifestVersion: 1,
+          modelId: "org/repo",
+          slug: "org_repo",
+          updatedAt: "2026-01-01T00:00:00Z",
+          files: [],
+          manifestChecksum: String(repeating: "0", count: 64)
+        )
+      ),
     ]
 
     for error in errors {

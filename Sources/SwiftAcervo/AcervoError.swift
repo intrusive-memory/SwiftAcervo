@@ -126,6 +126,37 @@ public enum AcervoError: LocalizedError, Sendable {
   /// while preserving the original error for logging.
   case fetchSourceFailed(modelId: String, underlying: any Error)
 
+  /// `ManifestGenerator` (CHECK 2) refused to write a manifest because the
+  /// staging directory contains a zero-byte file. `path` is the relative
+  /// path of the offender within the staging directory.
+  case manifestZeroByteFile(path: String)
+
+  /// `ManifestGenerator` (CHECK 3) wrote `manifest.json` and re-read it,
+  /// but the round-tripped manifest's `manifestChecksum` no longer matched
+  /// the recomputed checksum. The manifest is removed from disk before
+  /// this error is thrown so the caller cannot accidentally publish a
+  /// corrupted manifest. `path` is the absolute path that briefly existed.
+  case manifestPostWriteCorrupted(path: String)
+
+  /// A file enumerated under a staging base directory could not be
+  /// expressed as a relative path under that base. Indicates a path-
+  /// representation mismatch between the base URL and the enumerator's
+  /// child URL (e.g. `/tmp` vs `/private/tmp`) that survived symlink
+  /// resolution. Surfaced as a hard error rather than silently falling
+  /// back to `lastPathComponent`, which would produce ambiguous duplicate
+  /// paths in the manifest.
+  case manifestRelativePathOutsideBase(file: String, base: String)
+
+  /// `publishModel` attempted to delete orphan keys after a successful
+  /// publish, but the bulk-delete returned per-key failures. The new
+  /// manifest is already live and serving traffic; the orphans are
+  /// storage waste, not a correctness bug. `failedKeys` lists every key
+  /// the orphan-prune could not remove so the caller can retry that
+  /// subset. The published `CDNManifest` is also surfaced so the caller
+  /// can return success-with-warnings semantics if desired.
+  case publishOrphanPruneFailed(
+    failedKeys: [String], publishedManifest: CDNManifest)
+
   /// Maximum length of the `body` substring included in
   /// `cdnOperationFailed`'s `errorDescription`. Anything longer is
   /// truncated with a hint that the full body is on the case payload.
@@ -231,6 +262,26 @@ public enum AcervoError: LocalizedError, Sendable {
     case .fetchSourceFailed(let modelId, let underlying):
       return
         "fetchSource closure for model '\(modelId)' threw: \(underlying.localizedDescription)"
+
+    case .manifestZeroByteFile(let path):
+      return
+        "Refusing to write manifest: zero-byte file in staging at relative path '\(path)' (CHECK 2 failed)."
+
+    case .manifestPostWriteCorrupted(let path):
+      return
+        "Post-write manifest checksum mismatch at '\(path)' (CHECK 3 failed). The just-written manifest has been deleted; investigate the staging directory before retrying."
+
+    case .manifestRelativePathOutsideBase(let file, let base):
+      return
+        "Cannot compute relative path: '\(file)' is not contained in '\(base)'. Refusing to fall back to basename, which would produce ambiguous manifest entries for nested layouts."
+
+    case .publishOrphanPruneFailed(let failedKeys, _):
+      let preview = failedKeys.prefix(5).joined(separator: ", ")
+      let suffix = failedKeys.count > 5
+        ? " … (\(failedKeys.count - 5) more; full list available on the AcervoError case payload)"
+        : ""
+      return
+        "publishModel succeeded but the orphan-prune step left \(failedKeys.count) key(s) on the CDN: \(preview)\(suffix). The new manifest is live; the orphans are storage waste and can be retried."
     }
   }
 }

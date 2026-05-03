@@ -63,8 +63,18 @@
   @testable import SwiftAcervo
   @testable import acervo
 
-  @Suite("VerifyCommand Tests")
-  struct VerifyCommandTests {
+  extension ProcessEnvironmentSuite {
+    /// Unit tests for `VerifyCommand` argument parsing, CDN-mode staging
+    /// resolution, and the zero-byte / mismatch error surfaces.
+    ///
+    /// The `.serialized` trait is provided by the parent `ProcessEnvironmentSuite`,
+    /// which serializes all tests that mutate process-wide state (STAGING_DIR,
+    /// R2_PUBLIC_URL, etc.). Without this nesting these tests race the other
+    /// env-touching suites (DownloadCommand, ShipCommand, ToolCheck) and the
+    /// CDN-mode staging-absent test fails intermittently in CI because another
+    /// suite flips its env mid-run.
+    @Suite("VerifyCommand Tests")
+    struct VerifyCommandTests {
 
     // MARK: - Helpers
 
@@ -305,12 +315,13 @@
       #expect(!(thrownError is ExitCode))
 
       // Must be the specific zero-byte guard.
-      guard case .some(AcervoToolError.zeroByteFile(let path)) = thrownError else {
+      guard case .some(AcervoError.manifestZeroByteFile(let path)) = thrownError else {
         Issue.record(
-          "Expected AcervoToolError.zeroByteFile, got \(String(describing: thrownError))")
+          "Expected AcervoError.manifestZeroByteFile, got \(String(describing: thrownError))")
         return
       }
       #expect(path == "empty.bin")
+    }
     }
   }
 #endif
