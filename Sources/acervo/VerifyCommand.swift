@@ -67,8 +67,13 @@ struct VerifyCommand: AsyncParsableCommand {
     let directoryURL = URL(fileURLWithPath: path, isDirectory: true)
 
     let generator = ManifestGenerator(modelId: modelId)
+    let reporterBox = ManifestProgressReporterBox(quiet: progressOptions.quiet)
     let manifestURL = try await generator.generate(
-      directory: directoryURL, quiet: progressOptions.quiet)
+      directory: directoryURL,
+      progress: { completed, total in
+        reporterBox.handle(completed: completed, total: total)
+      }
+    )
 
     let manifestData = try Data(contentsOf: manifestURL)
     let manifest = try JSONDecoder().decode(CDNManifest.self, from: manifestData)

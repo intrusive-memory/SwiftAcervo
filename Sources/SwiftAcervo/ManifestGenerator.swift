@@ -1,5 +1,32 @@
+// ManifestGenerator.swift
+// SwiftAcervo
+//
+// Lifted from `Sources/acervo/ManifestGenerator.swift` per requirements §6.7
+// (and reaffirmed in EXECUTION_PLAN WU2 Sortie 2 task 5). The library now
+// owns CDN-mutation orchestration end-to-end via `Acervo.publishModel`, and
+// the manifest generator is a precondition step the orchestrator drives
+// directly. Lifting also keeps the `acervo` CLI thin: its `ManifestCommand`
+// becomes a passthrough wrapper around this public type.
+//
+// Behavioural parity with the original:
+//   - CHECK 2: refuse to write a manifest if any scanned file is zero bytes.
+//   - CHECK 3: re-read the just-written manifest and run `verifyChecksum()`;
+//     on mismatch, delete the file before throwing.
+//   - Same scanning rules: skip `manifest.json` / `.DS_Store`, skip the
+//     `.huggingface/` prefix, skip non-regular files and symlinks.
+//
+// What changed during the lift:
+//   - The CLI-only `AcervoToolError` → library-level `AcervoError` cases
+//     (`manifestZeroByteFile`, `manifestPostWriteCorrupted`,
+//     `manifestRelativePathOutsideBase`).
+//   - The CLI-only `ProgressReporter` (Progress.swift dependency) → an
+//     optional `progress: (@Sendable (Int, Int) -> Void)?` closure called
+//     once per file with `(completed, total)`. The CLI wires its own
+//     `ProgressReporter.advance()` into that closure so the user-visible
+//     progress bar is unchanged.
+
+import CryptoKit
 import Foundation
-import SwiftAcervo
 
 /// Produces a `manifest.json` for a locally-staged model directory.
 ///
@@ -7,17 +34,17 @@ import SwiftAcervo
 /// with `IntegrityVerification.sha256(of:)`, and constructs a `CDNManifest`
 /// that captures the path, size, and SHA-256 of every file in the tree.
 ///
-/// The generator enforces two of the acervo integrity checks defined in
-/// `REQUIREMENTS-acervo-tool.md`:
+/// The generator enforces two of the integrity checks that gate any
+/// CDN publish:
 ///
 /// - **CHECK 2** — Refuses to write a manifest if any scanned file is
 ///   zero bytes. The check runs over every candidate file *before* any
 ///   bytes are written to disk.
 /// - **CHECK 3** — Immediately re-reads the written manifest from disk
 ///   and calls `CDNManifest.verifyChecksum()`. On mismatch the manifest
-///   file is deleted and `AcervoToolError.manifestChecksumMismatch` is
+///   file is deleted and `AcervoError.manifestPostWriteCorrupted` is
 ///   thrown so the caller never proceeds with a corrupted manifest.
-actor ManifestGenerator {
+public actor ManifestGenerator {
 
   /// Schema version written into `manifest.json`. Matches
   /// `CDNManifest.supportedVersion` to keep producer and consumer in sync.
@@ -36,12 +63,13 @@ actor ManifestGenerator {
   ]
 
   /// Path component prefixes that cause a file to be skipped entirely
-  /// (mirrors the `--exclude` patterns used by `CDNUploader`).
+  /// (mirrors the `--exclude` patterns historically used for HuggingFace
+  /// staging trees).
   private static let excludedPathPrefixes: [String] = [
     ".huggingface/"
   ]
 
-  init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {
+  public init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {
     self.modelId = modelId
     self.manifestVersion = manifestVersion
   }
@@ -51,36 +79,38 @@ actor ManifestGenerator {
   ///
   /// - Parameters:
   ///   - directory: Local staging directory. Must exist and be readable.
-  ///   - quiet: When `false` and stdout is a TTY, renders a TUI progress
-  ///     bar advanced once per file as the per-file SHA-256 is computed.
-  ///     The default preserves the original silent behaviour used by
-  ///     unit tests and other library callers.
+  ///   - progress: Optional progress hook invoked once per file as the
+  ///     per-file SHA-256 is computed. The closure receives
+  ///     `(completed, total)` counts. The default is `nil` (no progress).
   /// - Returns: Absolute `URL` of the written `manifest.json`.
   /// - Throws:
-  ///   - `AcervoToolError.zeroByteFile` when any scanned file is 0 bytes.
-  ///   - `AcervoToolError.manifestChecksumMismatch` when the just-written
+  ///   - `AcervoError.manifestZeroByteFile` when any scanned file is 0 bytes.
+  ///   - `AcervoError.manifestPostWriteCorrupted` when the just-written
   ///     manifest fails `verifyChecksum()` on re-read.
   ///   - Errors from `FileManager` / `FileHandle` / `JSONEncoder`.
-  func generate(directory: URL, quiet: Bool = true) async throws -> URL {
+  public func generate(
+    directory: URL,
+    progress: (@Sendable (Int, Int) -> Void)? = nil
+  ) async throws -> URL {
     let resolvedDirectory = directory.resolvingSymlinksInPath()
     let discovered = try scan(directory: resolvedDirectory)
 
     // CHECK 2: bail BEFORE writing anything if any file is zero bytes.
     for entry in discovered where entry.size == 0 {
-      throw AcervoToolError.zeroByteFile(entry.relativePath)
+      throw AcervoError.manifestZeroByteFile(path: entry.relativePath)
     }
 
-    let reporter = ProgressReporter(
-      label: "Hashing manifest: ",
-      total: discovered.count,
-      quiet: quiet
-    )
+    let total = discovered.count
+
+    // Announce the total up front so progress consumers can size their
+    // UI before the first hash completes.
+    progress?(0, total)
 
     // Hash every surviving file and build manifest entries.
     var manifestFiles: [CDNManifestFile] = []
     manifestFiles.reserveCapacity(discovered.count)
+    var completed = 0
     for entry in discovered {
-      defer { reporter.advance() }
       let sha = try IntegrityVerification.sha256(of: entry.url)
       manifestFiles.append(
         CDNManifestFile(
@@ -89,6 +119,8 @@ actor ManifestGenerator {
           sizeBytes: entry.size
         )
       )
+      completed += 1
+      progress?(completed, total)
     }
     // Deterministic ordering keeps diffs stable and matches how consumers
     // enumerate manifest files.
@@ -119,13 +151,13 @@ actor ManifestGenerator {
       let roundTripManifest = try JSONDecoder().decode(CDNManifest.self, from: roundTripData)
       guard roundTripManifest.verifyChecksum() else {
         try? FileManager.default.removeItem(at: manifestURL)
-        throw AcervoToolError.manifestChecksumMismatch(path: manifestURL.path)
+        throw AcervoError.manifestPostWriteCorrupted(path: manifestURL.path)
       }
-    } catch let error as AcervoToolError {
+    } catch let error as AcervoError {
       throw error
     } catch {
       try? FileManager.default.removeItem(at: manifestURL)
-      throw AcervoToolError.manifestChecksumMismatch(path: manifestURL.path)
+      throw AcervoError.manifestPostWriteCorrupted(path: manifestURL.path)
     }
 
     return manifestURL
@@ -194,19 +226,19 @@ actor ManifestGenerator {
   /// divergence and trailing-slash inconsistencies that can fool a
   /// naïve `String.hasPrefix` comparison on `URL.path`.
   ///
-  /// Throws `AcervoToolError.relativePathOutsideBase` rather than
+  /// Throws `AcervoError.manifestRelativePathOutsideBase` rather than
   /// falling back to `lastPathComponent`. A silent basename fallback
   /// produced ambiguous manifest entries for nested HuggingFace layouts
   /// (multiple `config.json` files collapsed to a single path with
-  /// distinct SHA-256s) — see TODO.md P0 for the failure mode.
-  internal static func relativePath(of fileURL: URL, under baseURL: URL) throws -> String {
+  /// distinct SHA-256s).
+  public static func relativePath(of fileURL: URL, under baseURL: URL) throws -> String {
     let baseComponents = baseURL.resolvingSymlinksInPath().pathComponents
     let fileComponents = fileURL.resolvingSymlinksInPath().pathComponents
 
     guard fileComponents.count > baseComponents.count,
       Array(fileComponents.prefix(baseComponents.count)) == baseComponents
     else {
-      throw AcervoToolError.relativePathOutsideBase(
+      throw AcervoError.manifestRelativePathOutsideBase(
         file: fileURL.path,
         base: baseURL.path
       )
