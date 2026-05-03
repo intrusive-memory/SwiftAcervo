@@ -63,254 +63,266 @@
   @testable import SwiftAcervo
   @testable import acervo
 
-  @Suite("VerifyCommand Tests")
-  struct VerifyCommandTests {
+  extension ProcessEnvironmentSuite {
+    /// Unit tests for `VerifyCommand` argument parsing, CDN-mode staging
+    /// resolution, and the zero-byte / mismatch error surfaces.
+    ///
+    /// The `.serialized` trait is provided by the parent `ProcessEnvironmentSuite`,
+    /// which serializes all tests that mutate process-wide state (STAGING_DIR,
+    /// R2_PUBLIC_URL, etc.). Without this nesting these tests race the other
+    /// env-touching suites (DownloadCommand, ShipCommand, ToolCheck) and the
+    /// CDN-mode staging-absent test fails intermittently in CI because another
+    /// suite flips its env mid-run.
+    @Suite("VerifyCommand Tests")
+    struct VerifyCommandTests {
 
-    // MARK: - Helpers
+      // MARK: - Helpers
 
-    private func makeTempDir() throws -> URL {
-      let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent(
-          "acervo-verify-tests-\(UUID().uuidString)", isDirectory: true)
-      try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-      return base
-    }
+      private func makeTempDir() throws -> URL {
+        let base = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+          .appendingPathComponent(
+            "acervo-verify-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+      }
 
-    private func write(_ string: String, to url: URL) throws {
-      try Data(string.utf8).write(to: url, options: [.atomic])
-    }
+      private func write(_ string: String, to url: URL) throws {
+        try Data(string.utf8).write(to: url, options: [.atomic])
+      }
 
-    /// Redirects fd 2 (stderr) to a Pipe, runs `block`, then restores the
-    /// original stderr and returns everything that was written to it.
-    private func captureStderr(_ block: () async throws -> Void) async rethrows -> String {
-      let originalStderr = dup(fileno(stderr))
-      let pipe = Pipe()
-      dup2(pipe.fileHandleForWriting.fileDescriptor, fileno(stderr))
+      /// Redirects fd 2 (stderr) to a Pipe, runs `block`, then restores the
+      /// original stderr and returns everything that was written to it.
+      private func captureStderr(_ block: () async throws -> Void) async rethrows -> String {
+        let originalStderr = dup(fileno(stderr))
+        let pipe = Pipe()
+        dup2(pipe.fileHandleForWriting.fileDescriptor, fileno(stderr))
 
-      do {
-        try await block()
-      } catch {
-        // Re-throw after restoring stderr.
+        do {
+          try await block()
+        } catch {
+          // Re-throw after restoring stderr.
+          fflush(stderr)
+          dup2(originalStderr, fileno(stderr))
+          close(originalStderr)
+          try? pipe.fileHandleForWriting.close()
+          let data = pipe.fileHandleForReading.readDataToEndOfFile()
+          _ = String(data: data, encoding: .utf8) ?? ""
+          throw error
+        }
+
         fflush(stderr)
         dup2(originalStderr, fileno(stderr))
         close(originalStderr)
         try? pipe.fileHandleForWriting.close()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        _ = String(data: data, encoding: .utf8) ?? ""
-        throw error
+        return String(data: data, encoding: .utf8) ?? ""
       }
 
-      fflush(stderr)
-      dup2(originalStderr, fileno(stderr))
-      close(originalStderr)
-      try? pipe.fileHandleForWriting.close()
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      return String(data: data, encoding: .utf8) ?? ""
-    }
+      /// Like captureStderr but does not re-throw; places any thrown error into
+      /// `thrownError` and returns the captured stderr text.
+      private func captureStderrCapturingError(
+        thrownError: inout Error?,
+        _ block: () async throws -> Void
+      ) async -> String {
+        let originalStderr = dup(fileno(stderr))
+        let pipe = Pipe()
+        dup2(pipe.fileHandleForWriting.fileDescriptor, fileno(stderr))
 
-    /// Like captureStderr but does not re-throw; places any thrown error into
-    /// `thrownError` and returns the captured stderr text.
-    private func captureStderrCapturingError(
-      thrownError: inout Error?,
-      _ block: () async throws -> Void
-    ) async -> String {
-      let originalStderr = dup(fileno(stderr))
-      let pipe = Pipe()
-      dup2(pipe.fileHandleForWriting.fileDescriptor, fileno(stderr))
+        do {
+          try await block()
+        } catch {
+          thrownError = error
+        }
 
-      do {
-        try await block()
-      } catch {
-        thrownError = error
+        fflush(stderr)
+        dup2(originalStderr, fileno(stderr))
+        close(originalStderr)
+        try? pipe.fileHandleForWriting.close()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
       }
 
-      fflush(stderr)
-      dup2(originalStderr, fileno(stderr))
-      close(originalStderr)
-      try? pipe.fileHandleForWriting.close()
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      return String(data: data, encoding: .utf8) ?? ""
-    }
+      // MARK: - Test 1: Happy path
 
-    // MARK: - Test 1: Happy path
+      /// Stages two non-empty files and a valid manifest.json, then invokes
+      /// VerifyCommand in local mode. Expects no throw.
+      @Test("Happy path: valid manifest + all files present exits without throwing")
+      func happyPathLocalModeSucceeds() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
 
-    /// Stages two non-empty files and a valid manifest.json, then invokes
-    /// VerifyCommand in local mode. Expects no throw.
-    @Test("Happy path: valid manifest + all files present exits without throwing")
-    func happyPathLocalModeSucceeds() async throws {
-      let dir = try makeTempDir()
-      defer { try? FileManager.default.removeItem(at: dir) }
+        try write("{\"model\": \"test\"}", to: dir.appendingPathComponent("config.json"))
+        try write("{\"vocab\": [\"a\"]}", to: dir.appendingPathComponent("tokenizer.json"))
 
-      try write("{\"model\": \"test\"}", to: dir.appendingPathComponent("config.json"))
-      try write("{\"vocab\": [\"a\"]}", to: dir.appendingPathComponent("tokenizer.json"))
+        // Pre-generate a manifest so the directory has the expected layout.
+        // VerifyCommand will regenerate it internally, but having it present
+        // ensures the directory is fully formed.
+        let generator = ManifestGenerator(modelId: "org/repo")
+        _ = try await generator.generate(directory: dir)
 
-      // Pre-generate a manifest so the directory has the expected layout.
-      // VerifyCommand will regenerate it internally, but having it present
-      // ensures the directory is fully formed.
-      let generator = ManifestGenerator(modelId: "org/repo")
-      _ = try await generator.generate(directory: dir)
-
-      var cmd = try VerifyCommand.parse(["org/repo", dir.path])
-      // Must not throw for a fully valid staging directory.
-      try await cmd.run()
-    }
-
-    // MARK: - Test 2: Non-existent directory (covers "manifest missing" class)
-    //
-    // When the supplied directory does not exist, ManifestGenerator.scan() throws
-    // a CocoaError(.fileReadNoSuchFile) before writing manifest.json. This error
-    // propagates up through verifyLocalDirectory and run() without being caught.
-    // The thrown error is NOT an ExitCode — it is a filesystem-level error,
-    // demonstrating that the "manifest missing" failure class is distinct from the
-    // "checksum mismatch" ExitCode.failure class.
-
-    @Test("Local mode: non-existent directory causes non-ExitCode filesystem error")
-    func nonExistentDirectoryThrowsFilesystemError() async throws {
-      let missingPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent(
-          "acervo-verify-no-such-dir-\(UUID().uuidString)", isDirectory: true)
-      // Deliberately do NOT create this directory.
-
-      var cmd = try VerifyCommand.parse(["org/repo", missingPath.path])
-
-      var thrownError: Error?
-      _ = await captureStderrCapturingError(thrownError: &thrownError) {
+        var cmd = try VerifyCommand.parse(["org/repo", dir.path])
+        // Must not throw for a fully valid staging directory.
         try await cmd.run()
       }
 
-      // An error must be thrown.
-      #expect(thrownError != nil)
+      // MARK: - Test 2: Non-existent directory (covers "manifest missing" class)
+      //
+      // When the supplied directory does not exist, ManifestGenerator.scan() throws
+      // a CocoaError(.fileReadNoSuchFile) before writing manifest.json. This error
+      // propagates up through verifyLocalDirectory and run() without being caught.
+      // The thrown error is NOT an ExitCode — it is a filesystem-level error,
+      // demonstrating that the "manifest missing" failure class is distinct from the
+      // "checksum mismatch" ExitCode.failure class.
 
-      // Must NOT be an ExitCode: the directory-not-found check is inside
-      // ManifestGenerator.scan() which throws before VerifyCommand's run-time
-      // failure path. This demonstrates the "manifest missing" failure class is
-      // structurally distinct from the ExitCode.failure checksum-mismatch class.
-      #expect(!(thrownError is ExitCode))
-    }
+      @Test("Local mode: non-existent directory causes non-ExitCode filesystem error")
+      func nonExistentDirectoryThrowsFilesystemError() async throws {
+        let missingPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+          .appendingPathComponent(
+            "acervo-verify-no-such-dir-\(UUID().uuidString)", isDirectory: true)
+        // Deliberately do NOT create this directory.
 
-    // MARK: - Test 3: Missing required argument → ArgumentParser parse error
-    //
-    // `modelId` is a required @Argument. Passing an empty argv triggers
-    // ArgumentParser's own parse-time validation — a structurally different error
-    // from ExitCode.failure (which is a run-time throw from the command body).
+        var cmd = try VerifyCommand.parse(["org/repo", missingPath.path])
 
-    @Test("Missing required argument causes ArgumentParser parse error, not ExitCode")
-    func missingModelIdYieldsParserError() {
-      var thrownError: Error?
-      do {
-        _ = try VerifyCommand.parse([])
-      } catch {
-        thrownError = error
+        var thrownError: Error?
+        _ = await captureStderrCapturingError(thrownError: &thrownError) {
+          try await cmd.run()
+        }
+
+        // An error must be thrown.
+        #expect(thrownError != nil)
+
+        // Must NOT be an ExitCode: the directory-not-found check is inside
+        // ManifestGenerator.scan() which throws before VerifyCommand's run-time
+        // failure path. This demonstrates the "manifest missing" failure class is
+        // structurally distinct from the ExitCode.failure checksum-mismatch class.
+        #expect(!(thrownError is ExitCode))
       }
 
-      // An error must be thrown.
-      #expect(thrownError != nil)
+      // MARK: - Test 3: Missing required argument → ArgumentParser parse error
+      //
+      // `modelId` is a required @Argument. Passing an empty argv triggers
+      // ArgumentParser's own parse-time validation — a structurally different error
+      // from ExitCode.failure (which is a run-time throw from the command body).
 
-      // The error must NOT be an ExitCode — it is a parse-level failure,
-      // distinct from every run-level failure class.
-      #expect(!(thrownError is ExitCode))
+      @Test("Missing required argument causes ArgumentParser parse error, not ExitCode")
+      func missingModelIdYieldsParserError() {
+        var thrownError: Error?
+        do {
+          _ = try VerifyCommand.parse([])
+        } catch {
+          thrownError = error
+        }
 
-      // The error description must reference the missing argument concept.
-      if let err = thrownError {
-        let description = String(describing: err).lowercased()
-        let mentionsMissing =
-          description.contains("missing")
-          || description.contains("argument")
-          || description.contains("model")
-        #expect(mentionsMissing)
-      }
-    }
+        // An error must be thrown.
+        #expect(thrownError != nil)
 
-    // MARK: - Test 4: CDN mode — staging directory absent (ExitCode.failure)
-    //
-    // In CDN mode (no directory argument), VerifyCommand checks that the slug
-    // subdirectory exists under STAGING_DIR before attempting any network call.
-    // When the slug directory is absent it throws ExitCode.failure with the
-    // "error: staging directory does not exist" message — a distinct stderr
-    // banner from the local-mode "error: local verification failed" (which would
-    // apply if we could trigger a checksum mismatch in local mode).
+        // The error must NOT be an ExitCode — it is a parse-level failure,
+        // distinct from every run-level failure class.
+        #expect(!(thrownError is ExitCode))
 
-    @Test("CDN mode: absent staging directory yields ExitCode.failure with staging-absent message")
-    func cdnModeMissingStagingDirectoryThrowsFailure() async throws {
-      // Create a staging ROOT that does NOT contain the expected slug subdir.
-      let fakeStagingRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent(
-          "acervo-verify-no-slug-\(UUID().uuidString)", isDirectory: true)
-      try FileManager.default.createDirectory(
-        at: fakeStagingRoot, withIntermediateDirectories: true)
-      defer { try? FileManager.default.removeItem(at: fakeStagingRoot) }
-
-      let originalStagingDir = ProcessInfo.processInfo.environment["STAGING_DIR"]
-      setenv("STAGING_DIR", fakeStagingRoot.path, 1)
-      defer {
-        if let original = originalStagingDir {
-          setenv("STAGING_DIR", original, 1)
-        } else {
-          unsetenv("STAGING_DIR")
+        // The error description must reference the missing argument concept.
+        if let err = thrownError {
+          let description = String(describing: err).lowercased()
+          let mentionsMissing =
+            description.contains("missing")
+            || description.contains("argument")
+            || description.contains("model")
+          #expect(mentionsMissing)
         }
       }
 
-      // No directory argument → CDN mode.
-      var cmd = try VerifyCommand.parse(["test-org/test-repo"])
+      // MARK: - Test 4: CDN mode — staging directory absent (ExitCode.failure)
+      //
+      // In CDN mode (no directory argument), VerifyCommand checks that the slug
+      // subdirectory exists under STAGING_DIR before attempting any network call.
+      // When the slug directory is absent it throws ExitCode.failure with the
+      // "error: staging directory does not exist" message — a distinct stderr
+      // banner from the local-mode "error: local verification failed" (which would
+      // apply if we could trigger a checksum mismatch in local mode).
 
-      var thrownError: Error?
-      let stderrOutput = await captureStderrCapturingError(thrownError: &thrownError) {
-        try await cmd.run()
+      @Test(
+        "CDN mode: absent staging directory yields ExitCode.failure with staging-absent message")
+      func cdnModeMissingStagingDirectoryThrowsFailure() async throws {
+        // Create a staging ROOT that does NOT contain the expected slug subdir.
+        let fakeStagingRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+          .appendingPathComponent(
+            "acervo-verify-no-slug-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+          at: fakeStagingRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fakeStagingRoot) }
+
+        let originalStagingDir = ProcessInfo.processInfo.environment["STAGING_DIR"]
+        setenv("STAGING_DIR", fakeStagingRoot.path, 1)
+        defer {
+          if let original = originalStagingDir {
+            setenv("STAGING_DIR", original, 1)
+          } else {
+            unsetenv("STAGING_DIR")
+          }
+        }
+
+        // No directory argument → CDN mode.
+        var cmd = try VerifyCommand.parse(["test-org/test-repo"])
+
+        var thrownError: Error?
+        let stderrOutput = await captureStderrCapturingError(thrownError: &thrownError) {
+          try await cmd.run()
+        }
+
+        guard let exitCode = thrownError as? ExitCode else {
+          Issue.record(
+            "Expected ExitCode, got \(String(describing: thrownError))")
+          return
+        }
+        #expect(exitCode == ExitCode.failure)
+
+        // Distinct stderr message for this failure class — different from the
+        // "error: local verification failed" banner in local mode.
+        #expect(stderrOutput.contains("error: staging directory does not exist"))
       }
 
-      guard let exitCode = thrownError as? ExitCode else {
-        Issue.record(
-          "Expected ExitCode, got \(String(describing: thrownError))")
-        return
+      // MARK: - Test 5: Zero-byte file → AcervoToolError.zeroByteFile (non-ExitCode)
+      //
+      // When a staged file is zero bytes, ManifestGenerator throws
+      // AcervoToolError.zeroByteFile BEFORE writing manifest.json.
+      // This error propagates through VerifyCommand.verifyLocalDirectory without
+      // being caught — it is a third distinct failure class (alongside ExitCode.failure
+      // from Test 4 and ParserError from Test 3).
+
+      @Test("Local mode: zero-byte file propagates AcervoToolError.zeroByteFile, not ExitCode")
+      func zeroByteStagedFileThrowsAcervoToolError() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // One valid file and one zero-byte file.
+        try write("{\"model\": \"test\"}", to: dir.appendingPathComponent("config.json"))
+        FileManager.default.createFile(
+          atPath: dir.appendingPathComponent("empty.bin").path,
+          contents: nil,
+          attributes: nil
+        )
+
+        var cmd = try VerifyCommand.parse(["org/repo", dir.path])
+
+        var thrownError: Error?
+        _ = await captureStderrCapturingError(thrownError: &thrownError) {
+          try await cmd.run()
+        }
+
+        // An error must be thrown.
+        #expect(thrownError != nil)
+
+        // Must NOT be an ExitCode — this is ManifestGenerator's pre-check.
+        #expect(!(thrownError is ExitCode))
+
+        // Must be the specific zero-byte guard.
+        guard case .some(AcervoError.manifestZeroByteFile(let path)) = thrownError else {
+          Issue.record(
+            "Expected AcervoError.manifestZeroByteFile, got \(String(describing: thrownError))")
+          return
+        }
+        #expect(path == "empty.bin")
       }
-      #expect(exitCode == ExitCode.failure)
-
-      // Distinct stderr message for this failure class — different from the
-      // "error: local verification failed" banner in local mode.
-      #expect(stderrOutput.contains("error: staging directory does not exist"))
-    }
-
-    // MARK: - Test 5: Zero-byte file → AcervoToolError.zeroByteFile (non-ExitCode)
-    //
-    // When a staged file is zero bytes, ManifestGenerator throws
-    // AcervoToolError.zeroByteFile BEFORE writing manifest.json.
-    // This error propagates through VerifyCommand.verifyLocalDirectory without
-    // being caught — it is a third distinct failure class (alongside ExitCode.failure
-    // from Test 4 and ParserError from Test 3).
-
-    @Test("Local mode: zero-byte file propagates AcervoToolError.zeroByteFile, not ExitCode")
-    func zeroByteStagedFileThrowsAcervoToolError() async throws {
-      let dir = try makeTempDir()
-      defer { try? FileManager.default.removeItem(at: dir) }
-
-      // One valid file and one zero-byte file.
-      try write("{\"model\": \"test\"}", to: dir.appendingPathComponent("config.json"))
-      FileManager.default.createFile(
-        atPath: dir.appendingPathComponent("empty.bin").path,
-        contents: nil,
-        attributes: nil
-      )
-
-      var cmd = try VerifyCommand.parse(["org/repo", dir.path])
-
-      var thrownError: Error?
-      _ = await captureStderrCapturingError(thrownError: &thrownError) {
-        try await cmd.run()
-      }
-
-      // An error must be thrown.
-      #expect(thrownError != nil)
-
-      // Must NOT be an ExitCode — this is ManifestGenerator's pre-check.
-      #expect(!(thrownError is ExitCode))
-
-      // Must be the specific zero-byte guard.
-      guard case .some(AcervoToolError.zeroByteFile(let path)) = thrownError else {
-        Issue.record(
-          "Expected AcervoToolError.zeroByteFile, got \(String(describing: thrownError))")
-        return
-      }
-      #expect(path == "empty.bin")
     }
   }
 #endif

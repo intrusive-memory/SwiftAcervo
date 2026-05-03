@@ -1,0 +1,28 @@
+{
+  "configurations" : [
+    {
+      "id" : "2684657A-2059-4D53-99A1-6F5E74698D22",
+      "name" : "iOS",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "ACERVO_APP_GROUP_ID",
+            "value" : "group.acervo.testbundle.default"
+          }
+        ]
+      }
+    }
+  ],
+  "defaultOptions" : {
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SwiftAcervoTests",
+        "name" : "SwiftAcervoTests"
+      }
+    }
+  ],
+  "version" : 1
+}

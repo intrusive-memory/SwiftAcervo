@@ -1,16 +1,19 @@
 ---
-feature_name: OPERATION TRIPWIRE GAUNTLET
-starting_point_commit: 68f5456d351e87746b571fa11177fd3519bfe28a
-mission_branch: mission/tripwire-gauntlet/02
+feature_name: OPERATION VAULT BROOM
+starting_point_commit: 7ef2d6d96c0c8dbfa2d30e335ff8014b1effab2f
+mission_branch: mission/vault-broom/02
 iteration: 2
 ---
 
-# EXECUTION_PLAN.md — SwiftAcervo Testing Hardening (v0.8.0 pre-release)
+# EXECUTION_PLAN.md — SwiftAcervo `delete` and `recache` (v0.9.0)
 
-Source: `TESTING_REQUIREMENTS.md` (v0.8.0, merge commit `4d01c3f`)
-Cross-referenced: `FOLLOW_UP.md` § "Pre-existing Test Flake" and § "Test-Isolation Primitive"
+**Source requirements**: [REQUIREMENTS-delete-and-recache.md](REQUIREMENTS-delete-and-recache.md)
+**Target version**: 0.9.0
+**Owner**: Tom Stovall
 
-Goal: close every P0 and P1 testing gap identified in `TESTING_REQUIREMENTS.md` before cutting the v0.8.0 release tag. P2 items are deferred and not scheduled. Done means CI green on iOS + macOS, zero skipped tests, and `TESTING_REQUIREMENTS.md` reduced to the P2 residual plus a "fixed in <sortie>" log.
+**Refinement status**: Refined 2026-05-02 — atomicity ✓, prioritization ✓, parallelism ✓, open-questions ✓. Ready to execute.
+
+---
 
 ## Terminology
 
@@ -20,412 +23,437 @@ Goal: close every P0 and P1 testing gap identified in `TESTING_REQUIREMENTS.md` 
 
 > **Work Unit** — A grouping of sorties (package, component, phase).
 
+---
+
+## Mission Overview
+
+Add `delete` and `recache` capabilities to SwiftAcervo. Per requirements §5, this is a **single-target architecture** — CDN mutation surface lives in the main `SwiftAcervo` library, with R2 IAM as the security boundary. The `acervo` CLI becomes a thin wrapper.
+
+Three layered API tiers:
+- **Layer 1**: `SigV4Signer` (pure crypto)
+- **Layer 2**: `S3CDNClient` (URLSession + signing, list/put/delete/head, multipart)
+- **Layer 3**: `Acervo.publishModel`, `Acervo.deleteFromCDN`, `Acervo.recache` (orchestration)
+
+CLI side: new `acervo delete` and `acervo recache` subcommands; `ship` and `upload` rewritten on `publishModel`; `CDNUploader` and `aws`-binary shell-out removed; `ToolCheck` shrinks to `hf` only.
+
+---
+
 ## Work Units
 
 | Work Unit | Directory | Sorties | Layer | Dependencies |
-|-----------|-----------|---------|-------|-------------|
-| Testing Hardening | `/Users/stovak/Projects/SwiftAcervo` | 15 | 1–5 | none |
+|-----------|-----------|---------|-------|--------------|
+| WU1: CDN mutation library (SigV4 + S3CDNClient) | `Sources/SwiftAcervo/` | 3 | 1 | none |
+| WU2: Orchestration API (publishModel / deleteFromCDN / recache) | `Sources/SwiftAcervo/` | 3 | 2 | WU1 |
+| WU3: CLI migration (new commands + ship/upload rewrite + cleanup) | `Sources/acervo/` | 3 | 3 | WU2 |
+| WU4: Documentation, version bump, Homebrew formula | repo + `../homebrew-tap/` | 3 | 4 | WU3 |
 
-All sorties execute within a single work unit (the SwiftAcervo repo). The five layers gate dependency order: a sortie in Layer N may not start until every sortie in Layers < N that it lists as a prerequisite is `COMPLETED`. Priority scores below are computed from dependency depth × 3 + foundation × 2 + risk × 1 + complexity × 0.5 and are used to break ties when multiple sorties in a wave are ready at once.
-
-## Parallelism Structure
-
-**Critical Path** (length: 4 sorties): any Layer 1 sortie → any Layer 2 or Layer 3 sortie → any Layer 4 sortie → Sortie 15.
-
-Example: Sortie 1 → Sortie 7 → Sortie 10 → Sortie 15.
-
-**Parallel Execution Waves** (at most 4 sortie agents dispatched concurrently):
-
-- **Wave 1** (Layer 1, no prerequisites): Sorties 1, 2, 3 — dispatch all three in parallel.
-- **Wave 2A** (Layer 2, depends on Sortie 3): Sorties 4, 5, 6 — dispatch as soon as Sortie 3 clears, up to 3 in parallel.
-- **Wave 2B** (Layer 3, depends on Sorties 1 and 2): Sorties 7, 8, 9 — dispatch as soon as both Sortie 1 and Sortie 2 clear, up to 3 in parallel. Waves 2A and 2B may overlap; the 4-agent cap governs actual concurrency.
-- **Wave 3** (Layer 4, depends on all of Layers 1–3): Sorties 10, 11, 12, 13, 14 — dispatch in batches of 4 then 1.
-- **Wave 4** (Layer 5, depends on Sorties 10–14): Sortie 15 alone.
-
-**Agent allocation**:
-- 1 supervising agent (this instance) orchestrates dispatch and aggregates results.
-- Up to 4 sortie sub-agents run concurrently. Each sortie sub-agent performs its own edits, runs `make test`, and reports pass/fail against its exit criteria.
-- **No further decomposition**: individual sortie agents MUST NOT spawn their own sub-agents for parallel work. Each sortie is atomic — a single agent end-to-end.
-
-**Build constraints**: Every sortie's exit criteria include a `make test` run. `make test` is the authoritative build/test gate for this repo (per user's global rule: prefer Makefile targets over raw `xcodebuild`). Running `make test` concurrently across multiple sortie agents is acceptable; SwiftPM and Xcode serialize internally.
-
-**Missed parallelism opportunities**: None. The layer structure already exposes maximum parallelism given the dependency graph. Sortie 15 is unavoidably serial (it audits CI state after Layer 4 completes).
+Within a work unit, sorties are sequential. Across work units, layers gate (Layer N+1 cannot start until Layer N is COMPLETED).
 
 ---
 
-### Sortie 1: Thread `session:` through the file-download path
+## WU1: CDN mutation library (SigV4 + S3CDNClient)
 
-**Layer**: 1
+### Sortie 1: SigV4 signing primitives + canonical AWS test vectors
 
-**Priority**: 14.0 — blocks Sorties 7, 8, 9; foundational for all end-to-end tests that rely on `MockURLProtocol`; moderate risk (refactor across core download path).
+**Priority**: 38 — Foundation crypto layer; 11 downstream sorties depend on signing primitives. New tech (SigV4 from scratch) → highest risk score.
 
 **Entry criteria**:
 - [ ] First sortie — no prerequisites.
-- [ ] `Sources/SwiftAcervo/AcervoDownloader.swift` exists and compiles.
-- [ ] `Tests/SwiftAcervoTests/Support/MockURLProtocol.swift` exists.
 
 **Tasks**:
-1. In `Sources/SwiftAcervo/AcervoDownloader.swift` (definition at line ~292, verify with `grep -n "private static func streamDownloadFile"`), change `streamDownloadFile(...)` to accept `session: URLSession = SecureDownloadSession.shared` and use that session for every `URLSession.shared`/`SecureDownloadSession.shared` reference inside the body.
-2. In `Sources/SwiftAcervo/AcervoDownloader.swift` (definition at line ~452, verify with `grep -n "private static func fallbackDownloadFile"`), apply the same change to `fallbackDownloadFile(...)`.
-3. In `Sources/SwiftAcervo/AcervoDownloader.swift` (line ~674, `downloadFiles(...)`) and in every `downloadFile(...)` overload it calls (see `grep -n "static func downloadFile"`), thread the `session` parameter through. Default must remain `SecureDownloadSession.shared` so no existing call site changes.
-4. Run `make lint` and confirm no formatting diffs remain.
-5. Add a single smoke test in a new `Tests/SwiftAcervoTests/DownloadSessionInjectionTests.swift` that: (a) installs a `MockURLProtocol` responder serving a known body, (b) calls the lowest public entry point that ultimately invokes `streamDownloadFile`, (c) asserts `MockURLProtocol.requestCount >= 1` and the file content matches. Nest the new suite under `MockURLProtocolSuite` so it inherits `.serialized`.
+1. Create `Sources/SwiftAcervo/AcervoCDNCredentials.swift` defining `public struct AcervoCDNCredentials: Sendable` with fields `accessKeyId`, `secretAccessKey`, `region`, `bucket`, `endpoint: URL`, `publicBaseURL: URL`, plus a public memberwise initializer. Default `region` to `"auto"` and `bucket` to `"intrusive-memory-models"` per requirements §6.1.
+2. Create `Sources/SwiftAcervo/SigV4Signer.swift` defining `public struct SigV4Signer: Sendable` and a `public enum PayloadHash { case empty, precomputed(String), unsignedPayload }`. Implement the `sign(_ request: URLRequest, payloadHash: PayloadHash, date: Date = Date()) -> URLRequest` method per requirements §6.2. Use `CryptoKit.HMAC<SHA256>` for the four-step key derivation; produce `Authorization`, `x-amz-date`, and `x-amz-content-sha256` headers. Mutate nothing — return a copy.
+3. Add `Tests/SwiftAcervoTests/SigV4SignerTests.swift` that vendors the **canonical AWS SigV4 test suite vectors** verbatim (per Q12 / Decision Log #12) and asserts the signer produces the documented `Authorization` header for each vector. Cover at least: `get-vanilla`, `get-vanilla-query`, `get-header-key-duplicate`, `post-vanilla`, `post-x-www-form-urlencoded`. If the canonical test suite contains additional vectors relevant to GET/PUT/DELETE on S3-shaped requests, include those.
+4. Add a unit test that signs a synthetic R2-shaped `PUT` request with `payloadHash: .precomputed("…")` and asserts the `x-amz-content-sha256` header equals the supplied hash.
 
 **Exit criteria**:
+- [ ] `make build` succeeds.
+- [ ] `make test` runs `SigV4SignerTests` and all canonical AWS vector cases pass.
+- [ ] `git grep -nE "import (Foundation|CryptoKit)" Sources/SwiftAcervo/SigV4Signer.swift` shows only Foundation + CryptoKit imports (no third-party deps per §5).
+- [ ] No new entries in `Package.swift` `dependencies:` array.
+
+---
+
+### Sortie 2: `S3CDNClient` — list / head / delete / deleteObjects
+
+**Priority**: 35 — Foundation S3 client (non-PUT ops); 10 downstream sorties depend on it. Establishes XML parsing, pagination, and 404-as-success conventions reused by every later operation.
+
+**Entry criteria**:
+- [ ] Sortie 1 COMPLETED (`SigV4Signer` available).
+
+**Tasks**:
+1. Create `Sources/SwiftAcervo/S3CDNClient.swift` defining `public actor S3CDNClient` with the initializer `init(credentials: AcervoCDNCredentials, session: URLSession = .shared)` per requirements §6.3.
+2. Define supporting public types in the same file `Sources/SwiftAcervo/S3CDNClient.swift`: `S3Object` (key, size, etag), `S3ObjectHead` (size, etag, contentType?, lastModified), `S3PutResult` (key, etag, sha256), `S3DeleteResult` (key, success, error?).
+3. Implement `listObjects(prefix:) async throws -> [S3Object]` using S3 `ListObjectsV2`, paginating via `NextContinuationToken` until `IsTruncated=false`. Parse XML response (Foundation `XMLParser` is acceptable; document the parser choice in code comment if non-obvious).
+4. Implement `headObject(key:) async throws -> S3ObjectHead?` that returns `nil` on 404 and throws `AcervoError.cdnAuthorizationFailed(operation: "head")` on 401/403. **Define `case cdnAuthorizationFailed(operation: String)` on `Sources/SwiftAcervo/AcervoError.swift` now** (the remaining three new error cases are added in WU2 Sortie 1). This avoids a TODO/placeholder and keeps the tree compiling cleanly through the layer boundary.
+5. Implement `deleteObject(key:) async throws` — 404 is **not** an error (idempotent per requirements §6.3).
+6. Implement `deleteObjects(keys: [String]) async throws -> [S3DeleteResult]` using S3 `DeleteObjects` POST, batching at the 1000-key limit. For inputs >1000 keys, the actor itself batches and concatenates results.
+7. Add `Tests/SwiftAcervoTests/S3CDNClientTests.swift` covering: list pagination across 2 pages (mock `URLProtocol`), head 200 / 404 / 403, delete 204 / 404 (both succeed), bulk delete with mixed success/failure response. Use a `URLProtocol`-based mock — do not hit a real R2 bucket in unit tests.
+
+**Exit criteria**:
+- [ ] `make build` succeeds.
+- [ ] `make test` runs `S3CDNClientTests`; all cases pass.
+- [ ] `deleteObject` test asserts 404 returns success (no throw).
+- [ ] `listObjects` test asserts second page is fetched and concatenated when `IsTruncated=true` on page 1.
+- [ ] No live network calls in test target (verified by `grep -nE "URLSession\.shared|cloudflarestorage" Tests/SwiftAcervoTests/S3CDNClientTests.swift` returning only mock-related usage).
+
+---
+
+### Sortie 3: `S3CDNClient.putObject` with multipart upload
+
+**Priority**: 32 — Completes the S3 client; 9 downstream sorties depend on it. Multipart streaming is the single most algorithmically dense piece of new code in WU1.
+
+**Entry criteria**:
+- [ ] Sortie 2 COMPLETED (`S3CDNClient` skeleton + non-PUT operations available).
+
+**Tasks**:
+1. In `Sources/SwiftAcervo/S3CDNClient.swift`, implement `putObject(key:bodyURL:) async throws -> S3PutResult`. For files at or below a 100 MiB threshold (constant `singleShotThreshold`), perform a single signed `PUT` with the file body and `x-amz-content-sha256` set to the streaming SHA-256 of the file. For files above the threshold, use the S3 multipart upload protocol per Q13 / Decision Log #13.
+2. Implement multipart helpers (private to the actor): `initiateMultipartUpload(key:) -> uploadId`, `uploadPart(uploadId:partNumber:bodyChunk:) -> ETag`, `completeMultipartUpload(uploadId:parts:) -> S3PutResult`, `abortMultipartUpload(uploadId:)`. Use 16 MiB part size; document the choice inline. Stream chunks from `bodyURL` via `FileHandle` — never load the whole file into memory.
+3. Compute SHA-256 incrementally as bytes are read (use `CryptoKit.SHA256` `update(bufferPointer:)`). The final hash is returned in `S3PutResult.sha256`.
+4. On any uploadPart failure, call `abortMultipartUpload` to clean up R2-side state, then rethrow. Do NOT retry inside the client — let the caller decide.
+5. Add tests in `Tests/SwiftAcervoTests/S3CDNClientTests.swift`: single-shot PUT under threshold (assert one signed PUT request, correct sha256 returned); multipart upload over threshold (assert initiate → N upload-parts → complete sequence via `URLProtocol` mock; assert abort fires when an upload-part returns 500).
+6. Add a streaming-memory test: upload a 200 MiB synthetic file (write to tmp, fill with random bytes) and assert peak resident memory growth stays under, say, 64 MiB during the upload. If the test infrastructure can't measure RSS reliably, instead assert that `FileHandle.read(upToCount:)` is called with chunk-sized buffers (no `Data(contentsOf:)` of the whole file).
+
+**Exit criteria**:
+- [ ] `make build` succeeds.
+- [ ] `make test` runs the new put-object tests; all cases pass.
+- [ ] `git grep -nE "Data\(contentsOf:" Sources/SwiftAcervo/S3CDNClient.swift` returns no matches (no whole-file loads).
+- [ ] Single-shot PUT test asserts `S3PutResult.sha256` matches a known fixture hash.
+- [ ] Multipart test asserts `abortMultipartUpload` is called exactly once when an upload-part fails.
+
+---
+
+## WU2: Orchestration API
+
+### Sortie 1: New `AcervoError` cases + progress types
+
+**Priority**: 27 — Error/progress types reused across all CDN orchestration; required by 8 downstream sorties. Low complexity, high reuse.
+
+**Entry criteria**:
+- [ ] WU1 COMPLETED.
+
+**Tasks**:
+1. In `Sources/SwiftAcervo/AcervoError.swift`, add the **three remaining** new cases per requirements §6.5 (the fourth, `cdnAuthorizationFailed(operation:)`, was already added in WU1 Sortie 2):
+   - `case cdnOperationFailed(operation: String, statusCode: Int, body: String)`
+   - `case publishVerificationFailed(stage: String)`
+   - `case fetchSourceFailed(modelId: String, underlying: any Error)`
+   Update `errorDescription` (or equivalent `LocalizedError` conformance) for each (and also for `cdnAuthorizationFailed` if not already done in WU1.S2).
+2. Update `Sources/SwiftAcervo/S3CDNClient.swift` to throw `AcervoError.cdnOperationFailed` for non-2xx responses other than 401/403 (which already throw `cdnAuthorizationFailed` from WU1.S2). Confirm no remaining TODO markers reference deferred error cases.
+3. Create `Sources/SwiftAcervo/AcervoPublishProgress.swift` with `public enum AcervoPublishProgress: Sendable` mirroring the publish steps from requirements §7 (e.g. `.generatingManifest`, `.verifyingManifest`, `.listingExistingKeys(found: Int)`, `.uploadingFile(name: String, bytesSent: Int64, bytesTotal: Int64)`, `.uploadingManifest`, `.verifyingPublic(stage: String)`, `.pruningOrphans(count: Int)`, `.complete`).
+4. Create `Sources/SwiftAcervo/AcervoDeleteProgress.swift` with `public enum AcervoDeleteProgress: Sendable` (e.g. `.listingPrefix`, `.deletingBatch(count: Int, deletedSoFar: Int)`, `.complete`).
+5. Add `Tests/SwiftAcervoTests/AcervoErrorTests.swift` (or extend an existing error test file if present) asserting each new case produces a non-empty `localizedDescription`.
+
+**Exit criteria**:
+- [ ] `make build` succeeds.
 - [ ] `make test` passes.
-- [ ] `grep -En "^[^/]*\b(SecureDownloadSession|URLSession)\.shared\b" Sources/SwiftAcervo/AcervoDownloader.swift` returns only default-parameter declarations (lines containing `= SecureDownloadSession.shared`) — no bare call-site usages.
-- [ ] The new smoke test runs, asserts the body roundtrip, and passes 3 consecutive `make test` invocations.
+- [ ] `git grep -n "TODO" Sources/SwiftAcervo/S3CDNClient.swift` returns no remaining error-related TODOs.
+- [ ] All four new `AcervoError` cases are reachable via `git grep -n "cdnAuthorizationFailed\|cdnOperationFailed\|publishVerificationFailed\|fetchSourceFailed" Sources/SwiftAcervo/AcervoError.swift` (one added in WU1.S2, three added in this sortie).
 
 ---
 
-### Sortie 2: Test-isolation primitive for `customBaseDirectory` and `ComponentRegistry.shared`
+### Sortie 2: `Acervo.publishModel` (atomic + orphan prune) + tests
 
-**Layer**: 1
-
-**Priority**: 14.25 — blocks Sorties 7, 8, 9; foundational infrastructure reused across every filesystem- or registry-sensitive test; moderate risk (test infrastructure refactor affecting 4+ files).
+**Priority**: 26 — Core 11-step orchestration consumed by `recache`, `ship`, and `upload`. Highest implementation complexity in the plan; lifts `ManifestGenerator` into the library.
 
 **Entry criteria**:
-- [ ] First-layer sortie — no prerequisites.
-- [ ] `FOLLOW_UP.md § "Test-Isolation Primitive"` and `§ "Pre-existing Test Flake"` have been read and their scope confirmed.
+- [ ] WU2 Sortie 1 COMPLETED.
 
 **Tasks**:
-1. Decide the isolation approach and record the decision in the sortie log: either (a) a shared `@Suite(.serialized) struct CustomBaseDirectorySuite {}` parent (mirrors `MockURLProtocolSuite` in `Tests/SwiftAcervoTests/MockURLProtocolTests.swift`) or (b) a per-suite `withIsolatedAcervoState { ... }` helper that snapshots and restores both globals. Preference: (a) plus (b), applied together.
-2. Create `Tests/SwiftAcervoTests/Support/CustomBaseDirectorySuite.swift` exporting `@Suite("Custom Base Directory", .serialized) struct CustomBaseDirectorySuite {}`. If a prior uncommitted copy of this file exists (it does — see `git status`), overwrite it to match this task.
-3. Convert every suite that currently assigns `Acervo.customBaseDirectory` to be nested under `CustomBaseDirectorySuite` via `extension CustomBaseDirectorySuite { @Suite(...) struct X { ... } }`. Audit target: `Tests/SwiftAcervoTests/AcervoPathTests.swift`, `Tests/SwiftAcervoTests/AcervoFilesystemEdgeCaseTests.swift` (two nested suites), and `Tests/SwiftAcervoTests/ModelDownloadManagerTests.swift`.
-4. Add a `Tests/SwiftAcervoTests/Support/ComponentRegistryIsolation.swift` helper that snapshots the current registry contents, yields to a closure, and restores them on exit. Apply it to one representative test that currently relies on `defer { unregisterComponent(...) }` + UUID suffix (e.g., `HydrateComponentTests.uniqueIds`) as a proof-of-use; do not convert every call site in this sortie.
-5. Run `make test` five consecutive times. Zero flakes is the bar.
+1. Create `Sources/SwiftAcervo/Acervo+CDNMutation.swift` (extension on `Acervo` namespace). Implement `public static func publishModel(modelId:directory:credentials:keepOrphans:progress:) async throws -> CDNManifest` per requirements §6.4 and §7.
+2. Implement the **frozen 11-step execution order** from requirements §7:
+   1. Generate manifest from `directory` (reuse `ManifestGenerator` from CLI — or, since the library is gaining mutation, lift `ManifestGenerator` from `Sources/acervo/` into `Sources/SwiftAcervo/`; choose lift-into-library to keep CLI thin per §6.7).
+   2. CHECK 2 — refuse zero-byte files (already in `ManifestGenerator`).
+   3. CHECK 3 — re-read manifest, verify checksum-of-checksums.
+   4. CHECK 4 — re-hash every staged file against the manifest (reuse `IntegrityVerification`).
+   5. List existing keys under `models/<slug>/` via `S3CDNClient.listObjects`.
+   6. PUT every manifest file via `S3CDNClient.putObject`.
+   7. PUT `manifest.json` LAST.
+   8. CHECK 5 — fetch `manifest.json` from `credentials.publicBaseURL` and verify checksum.
+   9. CHECK 6 — fetch one file (`config.json` if present, else first manifest entry) and verify SHA-256.
+   10. Compute orphans = `existing_keys − new_manifest_keys − {manifest.json}`.
+   11. If `keepOrphans == false`, delete orphans via `S3CDNClient.deleteObjects` in batches of 1000.
+3. Emit `AcervoPublishProgress` callbacks at each step boundary and per-file during step 6.
+4. Failure semantics per requirements §7: throws specific `AcervoError.publishVerificationFailed(stage:)` for CHECK failures; partial-prune failure includes the orphan list in the thrown error so the caller can retry.
+5. Lift `ManifestGenerator` from `Sources/acervo/ManifestGenerator.swift` to `Sources/SwiftAcervo/ManifestGenerator.swift`; make it `public` so the library can call it. Update `Sources/acervo/` callers.
+6. Add `Tests/SwiftAcervoTests/PublishModelTests.swift` covering:
+   - Happy path: synthetic 3-file model staging dir → mock `S3CDNClient` (use `URLProtocol`) → assert manifest is the LAST PUT, exit `CDNManifest` matches generated manifest.
+   - Orphan prune: existing keys include 2 stale files not in the new manifest → assert `deleteObjects` is called with exactly those 2 keys.
+   - `keepOrphans: true`: assert `deleteObjects` is NOT called.
+   - CHECK 5 failure: mock public `manifest.json` to return a corrupted body → assert `AcervoError.publishVerificationFailed(stage: "CHECK 5")` is thrown.
+   - CHECK 6 failure: similar.
+   - Partial-prune failure: orphan delete batch returns errors → asserted error contains the failed key list.
 
 **Exit criteria**:
-- [ ] `CustomBaseDirectorySuite` exists and every suite that writes `Acervo.customBaseDirectory` is nested under it.
-- [ ] `make test` passes 5 consecutive times with zero failures in `AcervoPathTests.sharedModelsDirectoryPath`, `AcervoPathTests.sharedModelsDirectoryIsAbsolute`, and the Filesystem Edge Cases suites.
-- [ ] The proof-of-use test for the registry-isolation helper passes and is referenced by file+line in the sortie log.
-- [ ] `FOLLOW_UP.md § "Pre-existing Test Flake"` is updated to note the fix and link to this sortie.
+- [ ] `make build` succeeds.
+- [ ] `make test` passes; all `PublishModelTests` cases pass.
+- [ ] `git grep -n "ManifestGenerator" Sources/acervo/` shows the type is **imported from** `SwiftAcervo`, not redefined locally.
+- [ ] Happy-path test asserts the order of S3 mutations: every file PUT precedes the `manifest.json` PUT (verifiable via mock recorder).
+- [ ] Orphan-prune test asserts `deleteObjects` invocation count is correct (1 batch for ≤1000 orphans).
 
 ---
 
-### Sortie 3: Add `session:` parameter to public `Acervo.fetchManifest(for:)`
+### Sortie 3: `Acervo.deleteFromCDN` + `Acervo.recache` + tests
 
-**Layer**: 1
-
-**Priority**: 12.5 — blocks Sorties 4, 5, 6; foundational for all Layer 2 manifest tests; low risk (additive public API).
+**Priority**: 22 — Completes Layer 3 orchestration. `recache` is a 5-line composition over `publishModel`; `deleteFromCDN` is the lone non-atomic primitive.
 
 **Entry criteria**:
-- [ ] First-layer sortie — no prerequisites.
-- [ ] `Sources/SwiftAcervo/Acervo.swift:1358-1394` (the `fetchManifest` / `fetchManifest(forComponent:)` block introduced on `development`) compiles. **Current shape** (confirmed): the public overloads are `fetchManifest(for:)` and `fetchManifest(forComponent:)`, and each already has an **internal** session-accepting overload (`fetchManifest(for:session:)` and `fetchManifest(forComponent:session:)`). This sortie promotes the `session:`-accepting overloads to `public` (or adds public passthroughs) so tests outside `@testable import` can inject sessions.
+- [ ] WU2 Sortie 2 COMPLETED.
 
 **Tasks**:
-1. Promote the two `session:`-accepting overloads at `Sources/SwiftAcervo/Acervo.swift:1364-1369` and `Sources/SwiftAcervo/Acervo.swift:1387-1395` from internal (default) visibility to `public`. Preserve their existing forwarding behavior.
-2. Ensure the `forComponent:` variant exposes the same public/internal parity so registry-aware lookups are testable from non-`@testable` contexts.
-3. Update any `@testable import` call site in `Tests/SwiftAcervoTests/ManifestFetchTests.swift` that currently reaches the internal overload to prefer the new public overload where possible.
-4. Run `make lint`.
-5. Keep the changes additive — no existing signature may be removed.
+1. In `Sources/SwiftAcervo/Acervo+CDNMutation.swift`, implement `public static func deleteFromCDN(modelId:credentials:progress:) async throws` per requirements §7:
+   1. List `models/<slug>/`.
+   2. Bulk-delete returned keys (1000 at a time).
+   3. Re-list.
+   4. If non-empty, repeat 2–3.
+   Loop terminates when the listing is empty. Idempotent: empty initial listing returns immediately. Emit `AcervoDeleteProgress` callbacks per batch.
+2. Implement `public static func recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:) async throws -> CDNManifest` per requirements §6.4:
+   - Call `fetchSource(modelId, stagingDirectory)`. If it throws, wrap in `AcervoError.fetchSourceFailed`.
+   - Then call `Acervo.publishModel(modelId:directory:credentials:keepOrphans:progress:)` with the same staging directory.
+3. Add `Tests/SwiftAcervoTests/DeleteFromCDNTests.swift`:
+   - Happy path: 3 keys exist → one bulk-delete batch → re-list returns empty → returns successfully.
+   - Multi-page: 1500 keys → assert two batches (1000 + 500) are issued.
+   - Empty prefix: zero keys initially → no bulk-delete called → returns immediately (idempotent).
+   - Batch failure: a batch throws → `deleteFromCDN` rethrows.
+4. Add `Tests/SwiftAcervoTests/RecacheTests.swift`:
+   - Happy path: `fetchSource` populates staging with N files → `publishModel` is invoked with that directory → returns the manifest.
+   - `fetchSource` throws → `AcervoError.fetchSourceFailed` is thrown with the underlying error attached.
 
 **Exit criteria**:
-- [ ] `Acervo.fetchManifest(for:session:)` and `Acervo.fetchManifest(forComponent:session:)` are `public`.
-- [ ] `make build` and `make test` both pass.
-- [ ] `grep -n "public static func fetchManifest" Sources/SwiftAcervo/Acervo.swift` shows four results: both no-session and both session-accepting overloads.
+- [ ] `make build` succeeds.
+- [ ] `make test` passes; all `DeleteFromCDNTests` and `RecacheTests` cases pass.
+- [ ] Multi-page delete test asserts exactly 2 `deleteObjects` invocations for 1500 keys.
+- [ ] Idempotent test asserts zero `deleteObjects` invocations for an empty prefix.
+- [ ] `recache` failure test asserts `AcervoError.fetchSourceFailed.underlying` equals the closure's thrown error.
 
 ---
 
-### Sortie 4: Behavior tests for `Acervo.fetchManifest(for:)` via the public API
+## WU3: CLI migration
 
-**Layer**: 2
+### Sortie 1: Remove `CDNUploader` and `aws` shell-out; shrink `ToolCheck`
 
-**Priority**: 1.75 — leaf sortie (blocks nothing); low risk test-only work.
+**Priority**: 16 — Cleanup pre-rewrite. Required to keep the tree compiling cleanly while WU3 Sorties 2/3 land the new commands.
 
 **Entry criteria**:
-- [ ] Sortie 3 `COMPLETED`.
-- [ ] `Tests/SwiftAcervoTests/ManifestFetchTests.swift` exists.
+- [ ] WU2 COMPLETED.
 
 **Tasks**:
-1. In `Tests/SwiftAcervoTests/ManifestFetchTests.swift`, replace the symbol-existence check `fetchManifestIsCallable` (currently a compile-only stub) with a real behavior test that calls the public `fetchManifest(for:session:)` overload with a `MockURLProtocol`-backed session.
-2. Add an equivalent test for `fetchManifest(forComponent:session:)` that registers a bare descriptor, stubs the manifest response, and asserts the returned `CDNManifest` fields.
-3. Add a negative test asserting `AcervoError.componentNotRegistered` when the component ID is unknown.
-4. Nest the new tests under `MockURLProtocolSuite` so they inherit `.serialized`.
-5. Delete any now-redundant `downloadManifestWithMockSession` coverage that the public-API tests supersede (redundancy = same manifest shape and same response stubs).
+1. Delete `Sources/acervo/CDNUploader.swift`.
+2. In `Sources/acervo/ToolCheck.swift`, remove any `requireAWS()` / `aws`-binary check. Retain only `hf` validation. Update any references in other CLI files.
+3. In `Sources/acervo/ProcessRunner.swift`, leave the type itself but remove any `aws`-specific wrappers/helpers if present.
+4. Update `Sources/acervo/UploadCommand.swift` and `Sources/acervo/ShipCommand.swift` to remove their `CDNUploader` usage and replace each `run()` body with `fatalError("rewritten in WU3 Sortie 3 — do not invoke")`. Keep the `AsyncParsableCommand` declarations and existing flag definitions intact so the binary still parses arguments. The `@available(*, unavailable)` alternative is **not** chosen — runtime fatalError keeps the diff smallest and avoids touching the ArgumentParser registration in `AcervoCLI`.
+5. Audit: `git grep -nE "\baws\b|CDNUploader|requireAWS" Sources/acervo/` should return no matches except possibly in error messages or comments referencing the removal.
+6. Update `Sources/acervo/AcervoCLI.swift` if any registration referenced removed types.
 
 **Exit criteria**:
-- [ ] `ManifestFetchTests` contains at least three new `@Test` cases exercising the public API and one negative case.
-- [ ] `make test` passes.
-- [ ] No test in `ManifestFetchTests` is a compile-only "symbol exists" stub (`grep -n "fetchManifestIsCallable\|#expect(type(of:" Tests/SwiftAcervoTests/ManifestFetchTests.swift` returns no matches).
+- [ ] `make build` succeeds (compile-clean tree, even if `ship`/`upload` commands fatalError at runtime — they'll be rewritten next).
+- [ ] `git grep -nE "\baws\b|CDNUploader|requireAWS" Sources/acervo/` returns no production-code matches.
+- [ ] `git ls-files Sources/acervo/CDNUploader.swift` returns nothing (file is gone).
+- [ ] `make test` for `AcervoToolTests` passes (any tests that depended on `CDNUploader` are deleted or rewritten — note in commit message which tests were touched).
 
 ---
 
-### Sortie 5: Manifest error-mode tests — decoding, integrity, and version
+### Sortie 2: New `acervo delete` command + TTY confirmation utility
 
-**Layer**: 2
-
-**Priority**: 2.0 — leaf sortie; low risk.
+**Priority**: 16 — Adds `delete` plus the TTY confirmation helper, which is also reused by `recache` in WU3.S3.
 
 **Entry criteria**:
-- [ ] Sortie 3 `COMPLETED` (so tests can call through the public `session:`-injected overload).
+- [ ] WU3 Sortie 1 COMPLETED.
 
 **Tasks**:
-1. Add a test in `Tests/SwiftAcervoTests/HydrationTests.swift` (or a new `ManifestErrorModeTests.swift` nested under `MockURLProtocolSuite`) that stubs a 200 response with malformed JSON and asserts `AcervoError.manifestDecodingFailed`.
-2. Add a test that stubs a 200 response with a valid JSON manifest whose `manifestChecksum` does not match the checksum-of-checksums of `files[].sha256`; assert `AcervoError.manifestIntegrityFailed(expected:actual:)` and verify both fields populate.
-3. Add a test that stubs a manifest with `manifestVersion = CDNManifest.supportedVersion + 1` and asserts `AcervoError.manifestVersionUnsupported`.
-4. Add a companion boundary test with `manifestVersion = 0` and assert rejection.
-5. Run `make test` 3 consecutive times.
+1. Create `Sources/acervo/TTYConfirm.swift` with a `func confirmOnTTY(prompt: String, yesBypass: Bool) throws -> Bool` helper per requirements §8 Q4 / Decision Log #4. If `yesBypass == true`, return `true` immediately. If stdin is a TTY (`isatty(STDIN_FILENO) != 0`), prompt and read a line; return `true` for `y`/`yes`. If non-TTY (CI) and `yesBypass == false`, throw a clear error message instructing the user to pass `--yes`.
+2. Create `Sources/acervo/DeleteCommand.swift` defining `struct DeleteCommand: AsyncParsableCommand`. Flags per requirements §6.6:
+   - `<model-id>` positional argument.
+   - `--local` (flag) — implies both `--staging` and `--cache`.
+   - `--staging` (flag) — delete `STAGING_DIR/<slug>` only.
+   - `--cache` (flag) — delete the App Group cache via `Acervo.deleteModel(_:)`.
+   - `--cdn` (flag) — delete from CDN via `Acervo.deleteFromCDN(...)`.
+   - `--dry-run` (flag) — print intended actions, perform none.
+   - `--yes` (flag) — bypass TTY confirmation.
+   - At least one of `--local` / `--staging` / `--cache` / `--cdn` is required (validate; otherwise throw a `ValidationError`).
+3. Implement the command's `run()`:
+   - For `--cdn` (destructive): call `confirmOnTTY` with a clear prompt; if the user declines, exit with code 0 and a "cancelled" message.
+   - Resolve credentials via env vars (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_PUBLIC_BASE_URL`, optional `R2_BUCKET` defaulting to `intrusive-memory-models`). Error clearly if any required env var is missing.
+   - Wire `AcervoDeleteProgress` callback into `ProgressReporter`.
+4. Register `DeleteCommand.self` in `AcervoCLI.subcommands` in `Sources/acervo/AcervoCLI.swift`.
+5. Add `Tests/AcervoToolTests/DeleteCommandTests.swift`: argument-validation tests (missing flags throws; mutually-compatible flag combinations parse), dry-run prints actions without invoking deletes, `--yes` skips the TTY prompt path. Use a mock credentials provider where possible to avoid env-var coupling in tests.
 
 **Exit criteria**:
-- [ ] Four new `@Test` cases exist, one per scenario above.
-- [ ] `make test` passes 3 consecutive times.
-- [ ] Each test references the exact `AcervoError` case by name in its assertion.
+- [ ] `make build` succeeds.
+- [ ] `make install-acervo && bin/acervo delete --help` shows all flags.
+- [ ] `make test` passes; `DeleteCommandTests` covers argument validation, dry-run, and `--yes` paths.
+- [ ] `bin/acervo delete some/model` (no flags) exits non-zero with a clear error stating at least one flag is required.
+- [ ] `bin/acervo delete some/model --cdn` in a non-TTY pipe (e.g. `echo "" | bin/acervo delete some/model --cdn`) exits non-zero instructing the user to pass `--yes`.
 
 ---
 
-### Sortie 6: HydrationCoalescer error-path and re-fetch tests
+### Sortie 3: New `acervo recache` + rewrite `ship` / `upload` on top of `publishModel`
 
-**Layer**: 2
-
-**Priority**: 1.75 — leaf sortie; low risk.
+**Priority**: 11 — Last code-bearing sortie. Three CLI files all rewriting to the same `Acervo.publishModel` call site — coherent concern, mechanical changes.
 
 **Entry criteria**:
-- [ ] Sortie 3 `COMPLETED`.
-- [ ] `Sources/SwiftAcervo/Acervo.swift:1403-1424` (HydrationCoalescer actor and its shared instance) compiles.
+- [ ] WU3 Sortie 2 COMPLETED.
 
 **Tasks**:
-1. Add a test in `Tests/SwiftAcervoTests/HydrationTests.swift` (nested under `MockURLProtocolSuite`) that registers a bare descriptor, configures the responder to return 500 on call 1 and 200 on call 2, invokes `hydrateComponent` twice, asserts the first throws, the second succeeds, and `MockURLProtocol.requestCount == 2`.
-2. Add a second test that configures a 200 responder, invokes `hydrateComponent` twice sequentially (awaiting the first before the second), and asserts `MockURLProtocol.requestCount == 2` — proving re-fetch after completion (distinct from the existing single-flight coalesce test).
-3. Nest both new tests under `MockURLProtocolSuite`.
-4. Confirm the existing `concurrentHydration` single-flight test still passes (no regression).
-5. Run `make test` 3 consecutive times.
+1. Create `Sources/acervo/RecacheCommand.swift` per requirements §6.6:
+   - `<model-id>` positional + optional `[files...]` positional list.
+   - Same env-var-based credential resolution as `DeleteCommand`.
+   - `--keep-orphans` flag (forwarded to `Acervo.recache`).
+   - `--yes` flag — required when running non-TTY because the orphan prune is destructive (per §8 Q4).
+   - The `fetchSource` closure shells out to `hf` (use existing `HuggingFaceClient` or `ProcessRunner` patterns). The library never sees `hf`.
+   - Wire `AcervoPublishProgress` callbacks through `ProgressReporter`.
+2. Rewrite `Sources/acervo/ShipCommand.swift` to call `Acervo.publishModel(...)` directly with `keepOrphans: true` (per Decision Log #11, `ship == recache − orphan prune`). Preserve the existing CLI flags so this is non-breaking from a user's perspective.
+3. Rewrite `Sources/acervo/UploadCommand.swift` to call `Acervo.publishModel(...)` directly. Preserve existing flags.
+4. Register `RecacheCommand.self` in `AcervoCLI.subcommands`.
+5. Verify `Sources/acervo/` no longer contains any direct S3 / CDN code paths — everything goes through `Acervo.publishModel` / `Acervo.deleteFromCDN`. Audit: `git grep -nE "putObject|deleteObject|listObjects|SigV4|S3CDNClient" Sources/acervo/` should return no matches.
+6. Add `Tests/AcervoToolTests/RecacheCommandTests.swift`: argument-validation, `fetchSource` invocation order (fetch before publish), env-var resolution. Update `ShipCommandTests` and `UploadCommandTests` (if they exist) to reflect the new implementation; otherwise add minimal coverage.
 
 **Exit criteria**:
-- [ ] Two new `@Test` cases exist, each with an explicit `MockURLProtocol.requestCount` assertion.
-- [ ] `make test` passes 3 consecutive times.
-- [ ] The existing `concurrentHydration` test still passes unchanged.
+- [ ] `make build` succeeds.
+- [ ] `make install-acervo && bin/acervo recache --help && bin/acervo ship --help && bin/acervo upload --help` all succeed.
+- [ ] `make test` passes; new `RecacheCommandTests` cases pass.
+- [ ] `git grep -nE "putObject|deleteObject|listObjects|SigV4|S3CDNClient" Sources/acervo/` returns zero matches (CLI is a thin wrapper).
+- [ ] `bin/acervo --help` lists `delete`, `recache`, `download`, `manifest`, `ship`, `upload`, `verify` as subcommands.
 
 ---
 
-### Sortie 7: End-to-end `downloadComponent` auto-hydration test
+## WU4: Documentation, version bump, Homebrew formula
 
-**Layer**: 3
+### Sortie 1: Library + CLI documentation update
 
-**Priority**: 3.5 — leaf sortie but highest complexity in Layer 3 (E2E integration across hydration, streaming, and verification).
+**Priority**: 7 — Documentation update across 7 files. Internally parallelizable across sub-agents (see Parallelism Structure below).
 
 **Entry criteria**:
-- [ ] Sortie 1 `COMPLETED` (session injection available on the file-download path).
-- [ ] Sortie 2 `COMPLETED` (`CustomBaseDirectorySuite` + registry isolation available for clean setup/teardown).
+- [ ] WU3 COMPLETED.
 
 **Tasks**:
-1. In a new `Tests/SwiftAcervoTests/DownloadComponentAutoHydrationTests.swift`, register a bare descriptor (via `ComponentDescriptor.init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)`) with `needsHydration == true`.
-2. Stub the manifest response and every file-body response via `MockURLProtocol`.
-3. Call `Acervo.downloadComponent(...)` and assert: (a) hydration ran (descriptor.files is populated post-call), (b) files landed on disk in the expected slug directory, (c) integrity verification passed, (d) the call returns without throwing.
-4. Add an assertion that `MockURLProtocol.requestCount` equals `1 + files.count` (one manifest + one per file).
-5. Nest under `MockURLProtocolSuite`. Use the `customBaseDirectory` isolation from Sortie 2.
-6. Add a source comment at the top of the new test file: `// Mutation check: exercises the auto-hydration branch in Acervo.swift (currently lines 1539-1541, `if initialDescriptor.needsHydration { try await hydrateComponent(...) }`). If this branch is deleted, this test must fail.` The exact line range may drift — update the comment to match whatever line `grep -n "if initialDescriptor.needsHydration" Sources/SwiftAcervo/Acervo.swift | head -1` returns at commit time.
+1. Update `CDN_UPLOAD.md`:
+   - Add an "IAM key scoping" section (per requirements §5 operational guidance): maintainer/CI keys get full RW+delete; runtime keys (if any) get GET/HEAD only; mutation keys must never ship in app bundles.
+   - Add a "Concurrent publishes are not supported in v0.9" warning (per Decision Log #5).
+   - Update the pipeline section to show the new `acervo recache` / `acervo delete` / library `Acervo.publishModel` examples; remove `aws`-binary instructions.
+2. Update `CDN_ARCHITECTURE.md`:
+   - Add a "Mutation layer" section describing the three-layer API (SigV4Signer / S3CDNClient / publishModel-deleteFromCDN-recache).
+   - Note that the runtime read path is unchanged (`SecureDownloadSession` + public CDN URLs, no credentials).
+3. Update `API_REFERENCE.md` to document the new public surface: `AcervoCDNCredentials`, `SigV4Signer`, `S3CDNClient`, `Acervo.publishModel`, `Acervo.deleteFromCDN`, `Acervo.recache`, `AcervoPublishProgress`, `AcervoDeleteProgress`, and the four new `AcervoError` cases.
+4. Update `USAGE.md` with a "Programmatic CDN mutation" example showing a minimal `publishModel` call from a CI script context.
+5. Update `README.md` with a one-paragraph mention of the new mutation API and a link to `CDN_UPLOAD.md`.
+6. Update `CLAUDE.md` and `AGENTS.md` Quick Reference sections: bump version line, add bullets for the three new orchestration calls, mention single-target architecture, mention `aws`-binary removal.
+7. Cross-check: every public API added in WU1/WU2 appears in `API_REFERENCE.md`. Every CLI command added in WU3 appears in `BUILD_AND_TEST.md` (under acervo CLI examples).
 
 **Exit criteria**:
-- [ ] New `@Test` exercising the full hydration → streaming → verify path exists and passes.
-- [ ] `make test` passes 3 consecutive times.
-- [ ] `grep -n "Mutation check: exercises the auto-hydration branch" Tests/SwiftAcervoTests/DownloadComponentAutoHydrationTests.swift` returns exactly one hit, and the line range cited in that comment matches the current output of `grep -n "if initialDescriptor.needsHydration" Sources/SwiftAcervo/Acervo.swift` (first match).
+- [ ] `git diff --stat` shows updates in all of: `CDN_UPLOAD.md`, `CDN_ARCHITECTURE.md`, `API_REFERENCE.md`, `USAGE.md`, `README.md`, `CLAUDE.md`, `AGENTS.md`.
+- [ ] `git grep -n "aws s3\|awscli\|aws binary" *.md` returns no remaining instructions to install or invoke `aws` (only historical/contextual mentions remain, if any).
+- [ ] `git grep -n "publishModel\|deleteFromCDN\|recache(" API_REFERENCE.md` returns matches for all three.
+- [ ] `git grep -n "v0.9\|0.9.0" README.md CLAUDE.md AGENTS.md` returns matches in all three.
 
 ---
 
-### Sortie 8: Registry-level SHA-256 cross-check failure test
+### Sortie 2: Version bump to 0.9.0
 
-**Layer**: 3
-
-**Priority**: 3.0 — leaf sortie; moderate risk (tests an under-covered integrity gate).
+**Priority**: 4 — Mechanical version bump. Smallest sortie in the plan.
 
 **Entry criteria**:
-- [ ] Sortie 1 `COMPLETED`.
-- [ ] Sortie 2 `COMPLETED`.
+- [ ] WU4 Sortie 1 COMPLETED.
 
 **Tasks**:
-1. In `Tests/SwiftAcervoTests/ComponentIntegrationTests.swift` (or a new companion file), construct a scenario per `TESTING_REQUIREMENTS.md` P0 §"Registry-level SHA-256 cross-check": stage a file on disk whose content hashes to `X`, register a hydrated descriptor whose `sha256` is `Y`, call `downloadComponent` with `force: false`.
-2. Assert `AcervoError.integrityCheckFailed(file:expected:actual:)` is thrown with the correct three fields.
-3. Assert the corrupt file was deleted (file does not exist post-throw).
-4. The registry-level second pass is implemented at `Sources/SwiftAcervo/Acervo.swift:1560-1576` (the loop over `descriptor.files` following the manifest-driven download), distinct from the streaming pass at `AcervoDownloader.swift:401-408` (inside `streamDownloadFile`). Add a source comment at the top of the test that cites both line ranges so future readers know which gate this test targets. Update the ranges to whatever `grep -n "Additional registry-level checksum verification" Sources/SwiftAcervo/Acervo.swift` and `grep -n "throw AcervoError.integrityCheckFailed(" Sources/SwiftAcervo/AcervoDownloader.swift` return at commit time.
-5. Nest under `MockURLProtocolSuite`.
+1. Update `Sources/acervo/Version.swift` to `0.9.0`.
+2. Update the Quick Reference version in `CLAUDE.md` (currently `0.8.5-dev` → `0.9.0`). Mirror in `AGENTS.md` if it tracks version.
+3. If a `CHANGELOG.md` exists, add a `## 0.9.0 — <date>` entry summarizing: new `delete`/`recache` commands, new `Acervo.publishModel`/`deleteFromCDN`/`recache` library API, native SigV4 (no `aws`-binary dependency), new error cases, four progress types. Mark breaking change: removal of `CDNUploader` (was internal but documented).
+4. Verify `bin/acervo --version` prints `0.9.0` after `make install-acervo`.
+5. Verify `Package.swift` does not need a version bump (SPM uses tags) and confirm no new entries in `dependencies:`.
 
 **Exit criteria**:
-- [ ] New `@Test` exists and asserts all three fields of `integrityCheckFailed`.
-- [ ] Post-throw file deletion is asserted via `FileManager.default.fileExists(...)`.
-- [ ] `make test` passes 3 consecutive times.
-- [ ] `grep -n "Registry-level second pass:" <new-or-modified-test-file>` returns at least one hit, and the cited line ranges for `Acervo.swift` and `AcervoDownloader.swift` match the current grep output (first match for each).
+- [ ] `bin/acervo --version` prints `0.9.0`.
+- [ ] `git grep -n "0.8.5\|0.8.5-dev" -- ':!*.lock' ':!Tests/'` returns no matches in Sources/ or top-level docs.
+- [ ] `git grep -nE "^### |^## " CHANGELOG.md | head -3` shows the new 0.9.0 entry at the top (if CHANGELOG exists).
+- [ ] `make test` still passes after the bump.
 
 ---
 
-### Sortie 9: `Acervo.ensureAvailable(modelId, files: [])` empty-files behavior tests
+### Sortie 3: Homebrew tap formula update (`../homebrew-tap/Formula/acervo.rb`)
 
-**Layer**: 3
-
-**Priority**: 1.75 — leaf sortie; low risk.
+**Priority**: 2 — External sequencing constraint (waits for v0.9.0 tag + release artifact). Sortie prepares the change on a branch, does not push or merge.
 
 **Entry criteria**:
-- [ ] Sortie 1 `COMPLETED`.
-- [ ] Sortie 2 `COMPLETED`.
+- [ ] WU4 Sortie 2 COMPLETED.
+- [ ] Note: per requirements §6.8 sequencing constraint, the formula PR **must not be merged** until `v0.9.0` is tagged and the release artifact is published. This sortie prepares the formula change on a branch and stops before merge.
 
 **Tasks**:
-1. Add tests in a new `Tests/SwiftAcervoTests/EnsureAvailableEmptyFilesTests.swift` (nested under `MockURLProtocolSuite`).
-2. Stub a manifest response with three file entries. Call `Acervo.ensureAvailable(modelId: ..., files: [])`. Assert all three files land on disk.
-3. Add a regression test: `files: ["config.json"]` must download only the named file.
-4. Add a test that asserts `AcervoError.fileNotInManifest` fires for a non-empty `files:` array containing a name the manifest does not list.
-5. Confirm `ModelDownloadManager.ensureModelsAvailable` (which funnels to the same path) still passes.
-6. Add a source comment: `// Exercises the requestedFiles.isEmpty branch in AcervoDownloader.swift (currently line ~686, "if requestedFiles.isEmpty { filesToDownload = manifest.files }").` Update the line number to match `grep -n "if requestedFiles.isEmpty" Sources/SwiftAcervo/AcervoDownloader.swift` at commit time.
+1. Open `../homebrew-tap/Formula/acervo.rb`. Remove `depends_on "awscli"` (line 11 per requirements §6.8). Confirm `depends_on "hf"` (or equivalent) remains.
+2. Update the `caveats` block: drop the "AWS CLI v2 for R2 CDN uploads" line. The list of automatically-installed dependencies should show only `hf`.
+3. Bump `url`, `sha256`, and `version` to the new release tag (`v0.9.0`). If the release artifact is not yet published at sortie execution time, leave a clearly-marked placeholder with a TODO and stop — do not commit incorrect SHA values. The supervisor reports back so the human can complete the bump after tagging.
+4. Run the formula's test block (`brew test acervo`) if the release artifact exists; otherwise skip and document.
+5. Audit sibling formulae in `../homebrew-tap/Formula/` for transitive `awscli` assumptions: `ls ../homebrew-tap/Formula/ && grep -l "awscli" ../homebrew-tap/Formula/*.rb`. If any other formula still depends on `acervo` indirectly and needs `awscli` for an unrelated reason, report it; do not modify those files in this sortie.
+6. Commit the formula change on a branch named `acervo-v0.9.0` in `../homebrew-tap/`. **Do NOT push or merge** — exit reporting that the PR is ready for human review and pending the v0.9.0 tag publication.
 
 **Exit criteria**:
-- [ ] Three new `@Test` cases exist covering empty, named subset, and not-in-manifest.
-- [ ] `make test` passes 3 consecutive times.
-- [ ] `grep -n "requestedFiles.isEmpty branch" Tests/SwiftAcervoTests/EnsureAvailableEmptyFilesTests.swift` returns at least one hit, and the cited line number matches the current output of `grep -n "if requestedFiles.isEmpty" Sources/SwiftAcervo/AcervoDownloader.swift`.
+- [ ] `../homebrew-tap/Formula/acervo.rb` no longer contains `depends_on "awscli"`.
+- [ ] The `caveats` block no longer mentions AWS CLI.
+- [ ] `git -C ../homebrew-tap status` shows the formula on a branch named `acervo-v0.9.0`, committed, **not pushed**.
+- [ ] `git -C ../homebrew-tap log --oneline -1` shows a commit message referencing the v0.9.0 bump and `awscli` removal.
+- [ ] Sortie report includes: (a) any sibling-formula `awscli` matches found, (b) whether `sha256` was filled in or left as a TODO pending the release tag.
 
 ---
 
-### Sortie 10: `ShipCommand.swift` unit tests
+## Parallelism Structure
 
-**Layer**: 4
+**Critical path** (12 sorties, fully serial across work units):
 
-**Priority**: 5.0 — blocks Sortie 15; moderate complexity (argument parsing + pipeline stubbing).
+```
+WU1.S1 → WU1.S2 → WU1.S3 → WU2.S1 → WU2.S2 → WU2.S3 → WU3.S1 → WU3.S2 → WU3.S3 → WU4.S1 → WU4.S2 → WU4.S3
+```
 
-**Entry criteria**:
-- [ ] Every Layer 1–3 sortie (Sorties 1–9) `COMPLETED`.
-- [ ] `Sources/acervo/ShipCommand.swift` compiles.
+**Why mostly serial:** strict layering is intentional (signer → client → put-with-multipart; errors → publish → delete/recache; cleanup → new commands → ship/upload rewrite; docs → version → formula). Each layer depends on the prior layer's API surface.
 
-**Tasks**:
-1. Create `Tests/AcervoToolTests/ShipCommandTests.swift`.
-2. Happy-path: parse a valid argv, assert each flag (`--force`, `--skip-upload`, `--model-id`) is captured with the expected value.
-3. Missing required argument: assert the command exits non-zero with the canonical "missing --model-id" error.
-4. Error surfacing: stub one pipeline step (manifest, upload, verify) to throw; assert the corresponding exit code.
-5. Step sequencing: assert steps run in the documented order when every step is stubbed to succeed.
+**Parallel execution groups** (only one cluster benefits from sub-agents):
 
-**Exit criteria**:
-- [ ] At least five `@Test` cases exist (happy-path, one per error stub, plus one sequencing assertion).
-- [ ] `make test` passes.
-- [ ] No test relies on live R2 or HF credentials (`grep -En "R2_(ACCESS|SECRET)|HF_TOKEN" Tests/AcervoToolTests/ShipCommandTests.swift` returns no real reads from `ProcessInfo.processInfo.environment`).
+- **WU4.S1 — Documentation update (4 sub-agents possible):**
+  Eight unrelated docs files can be updated concurrently because they share no file dependencies. Supervising agent runs the final cross-check audit (last task in the sortie) sequentially.
+  - **Sub-agent A (no build):** `CDN_UPLOAD.md`, `CDN_ARCHITECTURE.md`
+  - **Sub-agent B (no build):** `API_REFERENCE.md`, `USAGE.md`
+  - **Sub-agent C (no build):** `README.md`
+  - **Sub-agent D (no build):** `CLAUDE.md`, `AGENTS.md`
+  - **Supervising agent (sequential after sub-agents):** cross-check audit (Task #7) verifying every public API added in WU1/WU2 appears in `API_REFERENCE.md` and every CLI command added in WU3 appears in `BUILD_AND_TEST.md`.
 
----
+**Agent constraints:**
 
-### Sortie 11: `DownloadCommand.swift` unit tests
+- **Supervising agent**: handles all sorties with `make build` / `make test` / `make install-acervo` / `bin/acervo --version` / `git grep` audit steps — i.e. every sortie except WU4.S1 sub-agents A–D.
+- **Sub-agents (up to 4)**: only WU4.S1 doc-cluster work. **No build operations.** All other sorties are supervising-agent-only because every one has a build/test gate in its exit criteria.
 
-**Layer**: 4
+**Missed opportunities considered and rejected:**
 
-**Priority**: 4.75 — blocks Sortie 15; moderate complexity.
+- WU2.S1 (errors + progress types) could in principle split into two parallel sub-agents (errors vs progress types), but both are tiny (~30 LoC each) and the build gate must run after both. Not worth the orchestration overhead.
+- WU3.S2 + WU3.S3 cannot run in parallel: WU3.S3's `RecacheCommand` calls the `confirmOnTTY` helper that WU3.S2 creates.
+- WU4.S2 + WU4.S3 cannot run in parallel: the formula update consumes the version string the version-bump sortie writes.
 
-**Entry criteria**:
-- [ ] Every Layer 1–3 sortie `COMPLETED`.
-- [ ] `Sources/acervo/DownloadCommand.swift` compiles.
+**Metrics:**
 
-**Tasks**:
-1. Create `Tests/AcervoToolTests/DownloadCommandTests.swift`.
-2. Happy-path argument parsing test.
-3. HuggingFace-only path smoke test (HF client stubbed).
-4. Missing required argument test.
-5. Exit-code mapping for at least one failure mode.
-
-**Exit criteria**:
-- [ ] At least three `@Test` cases exist.
-- [ ] `make test` passes.
-- [ ] No live HF calls (the HF client is invoked only through a stubbed protocol or injected test double).
-
----
-
-### Sortie 12: `UploadCommand.swift` unit tests
-
-**Layer**: 4
-
-**Priority**: 5.0 — blocks Sortie 15; moderate complexity.
-
-**Entry criteria**:
-- [ ] Every Layer 1–3 sortie `COMPLETED`.
-- [ ] `Sources/acervo/UploadCommand.swift` compiles.
-
-**Tasks**:
-1. Create `Tests/AcervoToolTests/UploadCommandTests.swift`.
-2. Happy-path argument parsing.
-3. Missing R2 credentials test: assert the command exits non-zero with a clear error message.
-4. Upload-only path with stubbed R2 client: assert correct bucket/key arguments.
-5. Missing required argument test.
-
-**Exit criteria**:
-- [ ] At least three `@Test` cases exist.
-- [ ] `make test` passes.
-- [ ] Credential validation path is exercised without actual credentials (tests set a sentinel or unset env var and assert the CLI's error, not a real upload).
-
----
-
-### Sortie 13: `VerifyCommand.swift` unit tests
-
-**Layer**: 4
-
-**Priority**: 5.0 — blocks Sortie 15; moderate complexity.
-
-**Entry criteria**:
-- [ ] Every Layer 1–3 sortie `COMPLETED`.
-- [ ] `Sources/acervo/VerifyCommand.swift` compiles.
-
-**Tasks**:
-1. Create `Tests/AcervoToolTests/VerifyCommandTests.swift`.
-2. Happy-path: all integrity checks pass → exit 0.
-3. Corrupted manifest: at least one check fails → non-zero exit code.
-4. Missing required argument test.
-5. Exit-code mapping for each distinct failure class (manifest missing, file missing, checksum mismatch).
-
-**Exit criteria**:
-- [ ] At least four `@Test` cases exist.
-- [ ] `make test` passes.
-
----
-
-### Sortie 14: `ManifestCommand.swift` unit tests
-
-**Layer**: 4
-
-**Priority**: 5.0 — blocks Sortie 15; includes a determinism test that is a foundational guarantee for downstream CDN roundtrip tests.
-
-**Entry criteria**:
-- [ ] Every Layer 1–3 sortie `COMPLETED`.
-- [ ] `Sources/acervo/ManifestCommand.swift` compiles.
-
-**Tasks**:
-1. Create `Tests/AcervoToolTests/ManifestCommandTests.swift`.
-2. Happy-path: generate a manifest from a fixture directory; assert expected JSON shape and checksum-of-checksums.
-3. Missing required argument test.
-4. Empty directory test: assert meaningful error (no files to manifest).
-5. File-ordering determinism test: regenerating a manifest from the same directory produces byte-identical output (compare via `Data` equality or SHA-256 of each output).
-
-**Exit criteria**:
-- [ ] At least four `@Test` cases exist.
-- [ ] `make test` passes.
-- [ ] Manifest output is byte-identical across two generations of the same input (determinism test asserts `Data` equality).
-
----
-
-### Sortie 15: Audit and document CI gating for `AcervoToolIntegrationTests`
-
-**Layer**: 5
-
-**Priority**: 0.5 — docs-only leaf, no downstream dependents.
-
-**Entry criteria**:
-- [ ] Sorties 10–14 `COMPLETED` (so any gaps surfaced there feed into this audit).
-
-**Tasks**:
-1. Read every file under `.github/workflows/` (currently: `mirror_model.yml`, `release.yml`, `tests.yml`) and enumerate which jobs run `Tests/AcervoToolIntegrationTests/` (`CDNRoundtripTests.swift`, `HuggingFaceDownloadTests.swift`, `ManifestRoundtripTests.swift`, `ShipCommandTests.swift`).
-2. For each integration test, determine whether `R2_*` and `HF_TOKEN` secrets are provided by the job environment (look for `env:` blocks and `secrets.*` references).
-3. Write a new subsection under `TESTING_REQUIREMENTS.md` § "CLI command coverage" titled **"CI integration test gating"**, listing each integration test as a row with four columns: workflow file, job name, required secrets, behavior when secrets are absent (skip vs. fail).
-4. If any integration test is currently unreachable in CI (no job runs it, or secrets are never provided), file it as a new P1 gap in `TESTING_REQUIREMENTS.md` with `[ ]` checkbox and explicit action item.
-5. No code changes — documentation only.
-
-**Exit criteria**:
-- [ ] `TESTING_REQUIREMENTS.md` contains a new subsection titled exactly `CI integration test gating` under `CLI command coverage` (verify with `grep -n "^#### CI integration test gating\|^### CI integration test gating" TESTING_REQUIREMENTS.md`).
-- [ ] The new subsection contains one row per integration test file listed in Task 1.
-- [ ] Any currently-unreachable integration test is surfaced as a new P1 gap in the same document.
-- [ ] `make test` still passes (no regression).
+- Maximum parallelism: 4 sub-agents (WU4.S1 only)
+- Effective parallelism for the rest of the plan: 1
+- Build-restricted sorties (supervising agent only): 11 of 12
 
 ---
 
 ## Open Questions & Missing Documentation
 
-Pass 4 scan of the refined plan surfaced no blocking open questions. All referenced files, workflows, and sections exist in the repo. Two residual items are worth flagging as soft-yellows; neither blocks execution:
+### Items resolved during refinement (auto-fixed)
 
-| Sortie | Issue Type | Description | Disposition |
-|--------|-----------|-------------|-------------|
-| Sortie 2 | Ambiguity | Task 1 offers options (a) and (b) but states the preference is both applied together. | Accepted as-is — preference is explicit; sortie log records the choice. |
-| Sortie 4 | Soft criterion | Task 5: "Delete any now-redundant `downloadManifestWithMockSession` coverage" relies on the agent's judgment of redundancy. | Tightened during Pass 4: redundancy is defined as "same manifest shape AND same response stubs" as one of the new public-API tests. |
+| Sortie | Issue Type | Original | Resolution |
+|--------|-----------|----------|------------|
+| WU1.S2 Task #4 | Open question | "throw a `URLError` with a TODO until WU2 lands; alternatively, define the error case here in advance" — two options, no decision | Define `cdnAuthorizationFailed(operation: String)` in `AcervoError.swift` now (in WU1.S2). WU2.S1 adds the remaining three error cases. Avoids a TODO/placeholder altogether. |
+| WU1.S2 Task #2 | Vague criterion | "in the same file (or a sibling file `S3CDNTypes.swift` if cleaner)" — flexibility without decision | Locked to `Sources/SwiftAcervo/S3CDNClient.swift`. One file, deterministic agent action. |
+| WU3.S1 Task #4 | Open question | "Pick whichever leaves the tree compiling cleanly with the smallest diff" — two options (`fatalError` vs `@available(*, unavailable)`) | Locked to `fatalError("rewritten in WU3 Sortie 3 — do not invoke")`. Rationale: avoids touching `AcervoCLI` registration; `AsyncParsableCommand` declarations stay intact. |
+| WU2.S1 Task #1 | Cross-sortie consistency | Originally instructed adding 4 error cases including `cdnAuthorizationFailed`, which now lives in WU1.S2 | Updated to add only 3 cases; exit-criteria grep reworded accordingly. |
 
-No other open questions, missing documents, or external dependencies remain.
+### Items requiring human attention (none blocking)
+
+- **WU4.S3 Task #3** — sortie may discover the v0.9.0 release artifact has not yet been tagged at execution time. Sortie has well-defined fallback (leave SHA placeholder, stop). This is **expected behavior**, not a blocker. The supervisor should treat WU4.S3 as a "deferred sortie" waiting on the external tag-and-release event.
+- **Forward-reference in WU2.S2 Task #1** — chooses to lift `ManifestGenerator` from `Sources/acervo/` into `Sources/SwiftAcervo/`. This is the final answer per requirements §6.7; the alternative ("reuse from CLI") is documented as discarded.
+
+### Verification
+
+- No remaining "TBD", "TODO", "decide later", or "either-or" markers in the plan.
+- Every sortie has at least one machine-verifiable exit criterion (build, test, file-exists, or git-grep check).
+- Every entry criterion names a specific predecessor sortie or "first sortie".
 
 ---
 
@@ -433,34 +461,23 @@ No other open questions, missing documents, or external dependencies remain.
 
 | Metric | Value |
 |--------|-------|
-| Work units | 1 |
-| Total sorties | 15 |
-| Dependency structure | 5 layers; within a layer sorties are independent and can run in parallel |
-| Layer 1 (foundations) | Sorties 1, 2, 3 |
-| Layer 2 (hydration + manifest tests, depends on Sortie 3) | Sorties 4, 5, 6 |
-| Layer 3 (end-to-end tests, depends on Sorties 1 and 2) | Sorties 7, 8, 9 |
-| Layer 4 (CLI unit tests, depends on all of Layers 1–3) | Sorties 10, 11, 12, 13, 14 |
-| Layer 5 (CI audit) | Sortie 15 |
-| Critical path length | 4 sorties (e.g., 1 → 7 → 10 → 15) |
-| Max concurrent agents per wave | 4 |
-| Average sortie estimated size | ~18 turns (budget: 50 turns/sortie) |
+| Work units | 4 |
+| Total sorties | 12 |
+| Dependency structure | Layered (WU1 → WU2 → WU3 → WU4); sequential within each work unit |
+| Critical path length | 12 sorties (no parallelism reduces it) |
+| Maximum parallelism | 4 sub-agents (WU4.S1 docs only) |
+| New public types | `AcervoCDNCredentials`, `SigV4Signer`, `PayloadHash`, `S3CDNClient`, `S3Object`, `S3ObjectHead`, `S3PutResult`, `S3DeleteResult`, `AcervoPublishProgress`, `AcervoDeleteProgress` |
+| New public functions | `Acervo.publishModel`, `Acervo.deleteFromCDN`, `Acervo.recache` |
+| New CLI subcommands | `acervo delete`, `acervo recache` |
+| Removed | `CDNUploader`, `aws`-binary dependency, `ToolCheck.requireAWS()`, `awscli` Homebrew dep |
+| Target release | v0.9.0 |
 
-Blocking dependencies across all sorties:
-- 4 blocked by 3
-- 5 blocked by 3
-- 6 blocked by 3
-- 7 blocked by 1, 2
-- 8 blocked by 1, 2
-- 9 blocked by 1, 2
-- 10, 11, 12, 13, 14 each blocked by the entire union of 1–9
-- 15 blocked by 10, 11, 12, 13, 14
+---
 
-Priority ordering within each layer (higher score = dispatched first when slot contention arises):
+## Notes for the Supervisor
 
-- Layer 1: Sortie 2 (14.25) > Sortie 1 (14.0) > Sortie 3 (12.5)
-- Layer 2: Sortie 5 (2.0) > Sortie 4 (1.75) = Sortie 6 (1.75)
-- Layer 3: Sortie 7 (3.5) > Sortie 8 (3.0) > Sortie 9 (1.75)
-- Layer 4: Sorties 10, 12, 13, 14 (5.0) > Sortie 11 (4.75)
-- Layer 5: Sortie 15 (0.5)
-
-Priority differences within each layer are within noise; no physical renumbering was applied. The priority score is an advisory signal for the supervisor when choosing which of N ready sorties to dispatch first into a free slot.
+- **Strict layering**: WU1 must be COMPLETED before WU2 starts (S3CDNClient is consumed by publishModel). WU2 before WU3 (CLI imports the library). WU3 before WU4 (docs reflect the final API).
+- **Within a work unit, sorties are sequential** because each builds on the prior (signer → client → put-with-multipart; errors → publish → delete/recache; cleanup → new commands → ship/upload rewrite).
+- **The only parallelism opportunity** is WU4.S1's docs cluster — see "Parallelism Structure" above. Up to 4 sub-agents can update independent doc files concurrently; the supervising agent runs the cross-check audit. Every other sortie is supervising-agent-only because each has a build/test gate.
+- **Sortie WU4.S3 (Homebrew) has an external sequencing constraint**: cannot merge until v0.9.0 is tagged. The sortie prepares the change and stops; the human owns the tag-then-merge handoff. Treat as a "deferred sortie" if the release artifact is not yet published — do **not** escalate to FATAL.
+- **Cross-sortie error-case dependency**: `cdnAuthorizationFailed` is added in WU1.S2; the other three new `AcervoError` cases are added in WU2.S1. This was decided during refinement to avoid TODO placeholders.

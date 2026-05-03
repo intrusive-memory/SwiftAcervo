@@ -167,6 +167,13 @@ actor CDNUploader {
   /// Fetches `<publicBaseURL>/models/<slug>/manifest.json`, asserts
   /// HTTP 200, decodes it, and runs `verifyChecksum()` (CHECK 5).
   ///
+  /// The fetch is hardened with `URLRequest.cacheBypassing(...)` so we
+  /// never pick up a stale `manifest.json` from a process-local
+  /// `URLCache`, an intermediate proxy, or a CDN edge cache. This matches
+  /// the library `Acervo.publishModel` behaviour. The cache-buster is
+  /// per-call (UUID) because the function has no knowledge of an expected
+  /// manifest checksum until after the body has been decoded.
+  ///
   /// - Returns: The decoded, verified `CDNManifest`.
   /// - Throws:
   ///   - `AcervoToolError.cdnHTTPStatus` if the status code is not 200.
@@ -179,7 +186,11 @@ actor CDNUploader {
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent("manifest.json")
-    let (data, response) = try await URLSession.shared.data(from: manifestURL)
+    let request = URLRequest.cacheBypassing(
+      url: manifestURL,
+      cacheBuster: UUID().uuidString
+    )
+    let (data, response) = try await URLSession.shared.data(for: request)
     guard let http = response as? HTTPURLResponse else {
       throw AcervoToolError.cdnHTTPStatus(url: manifestURL.absoluteString, statusCode: -1)
     }
@@ -200,6 +211,12 @@ actor CDNUploader {
   /// the SHA-256 of the response body, and compares it to
   /// `expectedSHA256` (CHECK 6).
   ///
+  /// Uses the same cache-bypass strategy as `verifyManifestOnCDN`. The
+  /// cache-buster is keyed on `expectedSHA256`, so a republish of the
+  /// same path with new content produces a different request URL and
+  /// cannot be satisfied by an edge-cached entry from the previous
+  /// publish.
+  ///
   /// - Throws:
   ///   - `AcervoToolError.cdnHTTPStatus` if the status code is not 200.
   ///   - `AcervoToolError.cdnChecksumMismatch` on hash mismatch.
@@ -214,7 +231,11 @@ actor CDNUploader {
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent(filename)
-    let (data, response) = try await URLSession.shared.data(from: fileURL)
+    let request = URLRequest.cacheBypassing(
+      url: fileURL,
+      cacheBuster: expectedSHA256
+    )
+    let (data, response) = try await URLSession.shared.data(for: request)
     guard let http = response as? HTTPURLResponse else {
       throw AcervoToolError.cdnHTTPStatus(url: fileURL.absoluteString, statusCode: -1)
     }

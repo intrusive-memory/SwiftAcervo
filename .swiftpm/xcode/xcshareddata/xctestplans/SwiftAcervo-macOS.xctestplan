@@ -1,0 +1,35 @@
+{
+  "configurations" : [
+    {
+      "id" : "0EB319F8-5D84-47F7-BA12-1167DF05D3F2",
+      "name" : "macOS",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "ACERVO_APP_GROUP_ID",
+            "value" : "group.acervo.testbundle.default"
+          }
+        ]
+      }
+    }
+  ],
+  "defaultOptions" : {
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SwiftAcervoTests",
+        "name" : "SwiftAcervoTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "AcervoToolTests",
+        "name" : "AcervoToolTests"
+      }
+    }
+  ],
+  "version" : 1
+}

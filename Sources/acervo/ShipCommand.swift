@@ -232,8 +232,13 @@ struct ShipCommand: AsyncParsableCommand {
 
     // CHECK 2+3: generate manifest, refuse zero-byte files, verify on re-read.
     let generator = ManifestGenerator(modelId: modelId)
+    let reporterBox = ManifestProgressReporterBox(quiet: progressOptions.quiet)
     let manifestURL = try await generator.generate(
-      directory: stagingURL, quiet: progressOptions.quiet)
+      directory: stagingURL,
+      progress: { completed, total in
+        reporterBox.handle(completed: completed, total: total)
+      }
+    )
     FileHandle.standardOutput.write(
       Data("manifest written to \(manifestURL.path)\n".utf8)
     )

@@ -50,14 +50,16 @@ jobs:
             -scheme SwiftAcervo \
             -destination 'platform=macOS,arch=arm64'
 
-      # ACERVO_APP_GROUP_ID comes from the checked-in scheme
-      # .swiftpm/xcode/xcshareddata/xcschemes/SwiftAcervo-Package.xcscheme.
-      # Shell env does not propagate through xcodebuild test to the xctest
-      # runner; the scheme is the canonical channel.
+      # ACERVO_APP_GROUP_ID is supplied by the SwiftAcervo-macOS test plan
+      # under .swiftpm/xcode/xcshareddata/xctestplans/. The macOS plan
+      # bundles SwiftAcervoTests + AcervoToolTests; the iOS plan bundles
+      # only SwiftAcervoTests because the acervo CLI target uses
+      # Foundation.Process, which is unavailable on iOS.
       - name: Test
         run: |
           xcodebuild test \
             -scheme SwiftAcervo-Package \
+            -testPlan SwiftAcervo-macOS \
             -destination 'platform=macOS,arch=arm64' \
             -skipPackagePluginValidation \
             ARCHS=arm64 \
@@ -75,6 +77,7 @@ jobs:
         run: |
           xcodebuild test \
             -scheme SwiftAcervo-Package \
+            -testPlan SwiftAcervo-macOS \
             -destination 'platform=macOS,arch=arm64' \
             -only-testing:AcervoToolTests/CDNManifestFetchTests \
             -skipPackagePluginValidation \
@@ -97,17 +100,21 @@ jobs:
         run: |
           xcodebuild build-for-testing \
             -scheme SwiftAcervo-Package \
+            -testPlan SwiftAcervo-iOS \
             -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.1' \
             -skipPackagePluginValidation \
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
 
-      # ACERVO_APP_GROUP_ID is supplied by the scheme's <EnvironmentVariables>
-      # block, which xcodebuild forwards into the iOS Simulator test runner.
+      # ACERVO_APP_GROUP_ID is supplied by the SwiftAcervo-iOS test plan,
+      # which xcodebuild forwards into the iOS Simulator test runner. The
+      # iOS plan deliberately excludes AcervoToolTests because the acervo
+      # CLI target uses Foundation.Process, which is unavailable on iOS.
       - name: Test on iOS
         run: |
           xcodebuild test-without-building \
             -scheme SwiftAcervo-Package \
+            -testPlan SwiftAcervo-iOS \
             -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.1' \
             -skipPackagePluginValidation \
             ONLY_ACTIVE_ARCH=YES \

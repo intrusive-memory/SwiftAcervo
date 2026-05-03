@@ -7,6 +7,27 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.10.0] - 2026-05-03
+
+### Added
+
+- **CDN mutation library** — internal SigV4-signing primitives plus `S3CDNClient` providing `list`, `head`, `delete`, `deleteObjects`, and multipart `putObject` against the private R2 bucket. Foundation-only (no `aws` CLI on the path), with canonical AWS test vectors covering every signing edge case.
+- **`Acervo.publishModel(modelId:directory:credentials:keepOrphans:progress:)`** — orchestrator that walks the frozen 11-step ship sequence (verify-tree → upload-files → re-list → optional orphan-prune → upload-manifest LAST → public read-back). `manifest.json` is always the final PUT, so a publish that aborts mid-way leaves the CDN with no fresh manifest pointing at half-uploaded files.
+- **`AcervoPublishProgress` / `AcervoDeleteProgress`** — typed progress streams emitted by `publishModel` / `deleteFromCDN` with per-file status, totals, and final summary.
+- **New `AcervoError` cases** for CDN mutation failures: `manifestNotLast`, `corruptManifestUploaded`, `sampleFileMismatch`, `cdnSigningFailed`, `cdnPutObjectFailed`, `cdnListObjectsFailed`, `cdnDeleteObjectsFailed`, `partialPrune`, plus a `keepOrphans` opt-out for catalog migrations that intentionally leak files.
+- **`ManifestGenerator`** lifted from `Sources/acervo/` into the public `SwiftAcervo` module so consumers can reuse manifest synthesis without depending on the CLI binary.
+
+### Changed
+
+- **Per-platform xctestplans** — `SwiftAcervo-macOS.xctestplan` runs `SwiftAcervoTests` + `AcervoToolTests`; `SwiftAcervo-iOS.xctestplan` runs `SwiftAcervoTests` only (the `acervo` CLI target uses `Foundation.Process`, which is unavailable on iOS). Each plan owns the `ACERVO_APP_GROUP_ID` env var. CI passes `-testPlan` per job.
+- **Cross-platform manifest coverage** — `ManifestGeneratorTests` and the integrity invariants previously gated to macOS now run inside `SwiftAcervoTests`, exercising the lifted `ManifestGenerator` directly on iOS as well.
+
+### Fixed
+
+- **Cache-harden post-upload public-readback verification** — the final `publishModel` step that re-fetches the just-uploaded manifest from the public CDN now defeats edge caches that briefly served the prior generation, eliminating spurious `sampleFileMismatch` failures on tight publish loops.
+
+---
+
 ## [0.9.0] - 2026-05-02
 
 ### Changed (Breaking)

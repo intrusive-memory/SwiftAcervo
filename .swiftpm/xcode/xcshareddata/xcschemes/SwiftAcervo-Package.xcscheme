@@ -70,42 +70,28 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "NO">
       <!--
-        ACERVO_APP_GROUP_ID supplies the App Group identifier to
-        Acervo.sharedModelsDirectory. SwiftAcervo refuses to invent a
-        per-process fallback path; tests use a dedicated bundle ID so they
-        never write into a developer's real shared-models directory.
-        Individual tests that need stricter isolation override this value
-        per-test via the withIsolatedAcervoState helper.
+        Per-platform test plans live under
+        .swiftpm/xcode/xcshareddata/xctestplans/. Each plan owns the
+        ACERVO_APP_GROUP_ID environment variable that
+        Acervo.sharedModelsDirectory requires, so SwiftAcervoTests and
+        AcervoToolTests never write into a developer's real shared-models
+        directory. Individual tests that need stricter isolation override
+        the value per-test via the withIsolatedAcervoState helper.
+
+        SwiftAcervo-macOS  → SwiftAcervoTests + AcervoToolTests
+        SwiftAcervo-iOS    → SwiftAcervoTests only (acervo CLI uses
+                             Foundation.Process, which is unavailable
+                             on iOS)
       -->
-      <EnvironmentVariables>
-         <EnvironmentVariable
-            key = "ACERVO_APP_GROUP_ID"
-            value = "group.acervo.testbundle.default"
-            isEnabled = "YES">
-         </EnvironmentVariable>
-      </EnvironmentVariables>
-      <Testables>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "SwiftAcervoTests"
-               BuildableName = "SwiftAcervoTests"
-               BlueprintName = "SwiftAcervoTests"
-               ReferencedContainer = "container:">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "AcervoToolTests"
-               BuildableName = "AcervoToolTests"
-               BlueprintName = "AcervoToolTests"
-               ReferencedContainer = "container:">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
+      <TestPlans>
+         <TestPlanReference
+            reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-macOS.xctestplan"
+            default = "YES">
+         </TestPlanReference>
+         <TestPlanReference
+            reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-iOS.xctestplan">
+         </TestPlanReference>
+      </TestPlans>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
