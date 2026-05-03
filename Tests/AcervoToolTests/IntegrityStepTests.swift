@@ -5,9 +5,17 @@
   @testable import SwiftAcervo
   @testable import acervo
 
-  /// End-to-end-ish unit tests for CHECK 2, CHECK 3, and CHECK 4 that do
-  /// not require any network or external process to exercise the integrity
-  /// pipeline.
+  /// Legacy CHECK 4 coverage for `CDNUploader.verifyBeforeUpload`. The
+  /// CHECK 2 / CHECK 3 cases this file used to host were lifted into
+  /// `Tests/SwiftAcervoTests/ManifestIntegrityTests.swift` so iOS gets
+  /// coverage of the library invariants.
+  ///
+  /// TODO(WU3.S1): Delete this file when WU3 Sortie 1 removes the legacy
+  /// `CDNUploader` and the `aws` shell-out path. CHECK 4 of the new
+  /// orchestrator (`Acervo.publishModel`) is exercised end-to-end on every
+  /// supported platform by `Tests/SwiftAcervoTests/PublishModelTests.swift`,
+  /// so removing this macOS-only suite leaves no coverage gap once the
+  /// legacy uploader is gone.
   @Suite("Integrity Step Tests")
   struct IntegrityStepTests {
 
@@ -21,76 +29,6 @@
     private func write(_ string: String, to url: URL) throws {
       try Data(string.utf8).write(to: url, options: [.atomic])
     }
-
-    // MARK: - CHECK 2
-
-    @Test("CHECK 2: zero-byte file causes throw before manifest.json is written")
-    func check2ZeroByteFileThrowsBeforeWrite() async throws {
-      let dir = try makeTempDir()
-      defer { try? FileManager.default.removeItem(at: dir) }
-
-      try write("some content", to: dir.appendingPathComponent("config.json"))
-      // A second non-empty file so the scan has a mix.
-      try write("tokenizer data", to: dir.appendingPathComponent("tokenizer.json"))
-      // And the offender.
-      #expect(
-        FileManager.default.createFile(
-          atPath: dir.appendingPathComponent("empty.bin").path,
-          contents: nil,
-          attributes: nil
-        )
-      )
-
-      let manifestURL = dir.appendingPathComponent("manifest.json")
-      #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
-
-      let generator = ManifestGenerator(modelId: "org/repo")
-      var thrown: Error?
-      do {
-        _ = try await generator.generate(directory: dir)
-      } catch {
-        thrown = error
-      }
-
-      guard case .some(AcervoToolError.zeroByteFile) = thrown else {
-        Issue.record("Expected AcervoToolError.zeroByteFile, got \(String(describing: thrown))")
-        return
-      }
-
-      // The manifest MUST NOT exist after a CHECK 2 failure.
-      #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
-    }
-
-    // MARK: - CHECK 3
-
-    @Test("CHECK 3: corrupting manifestChecksum causes verifyChecksum() to return false")
-    func check3CorruptedManifestFailsVerifyChecksum() async throws {
-      let dir = try makeTempDir()
-      defer { try? FileManager.default.removeItem(at: dir) }
-
-      try write("{\"k\": 1}", to: dir.appendingPathComponent("config.json"))
-      try write("abcdef", to: dir.appendingPathComponent("tokenizer.json"))
-
-      let generator = ManifestGenerator(modelId: "org/repo")
-      let manifestURL = try await generator.generate(directory: dir)
-
-      // Decode, corrupt the manifestChecksum, re-encode, rewrite.
-      let originalData = try Data(contentsOf: manifestURL)
-      var json = try JSONSerialization.jsonObject(with: originalData) as! [String: Any]
-      json["manifestChecksum"] = String(repeating: "0", count: 64)
-      let corruptedData = try JSONSerialization.data(
-        withJSONObject: json,
-        options: [.sortedKeys, .prettyPrinted]
-      )
-      try corruptedData.write(to: manifestURL, options: [.atomic])
-
-      // Re-read and call verifyChecksum() directly.
-      let roundTrip = try JSONDecoder().decode(
-        CDNManifest.self, from: Data(contentsOf: manifestURL))
-      #expect(roundTrip.verifyChecksum() == false)
-    }
-
-    // MARK: - CHECK 4
 
     @Test("CHECK 4: staging mutation throws stagingMutation without spawning aws")
     func check4StagingMutationThrows() async throws {

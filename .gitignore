@@ -1,5 +1,17 @@
 .build/
 .swiftpm/
+# Track the shared SPM scheme + per-platform test plans so the
+# checked-in macOS / iOS test plans (which carry the
+# ACERVO_APP_GROUP_ID environment variable required by
+# Acervo.sharedModelsDirectory) survive xcodebuild's
+# auto-generation. Everything else under .swiftpm/ stays local.
+!.swiftpm/
+!.swiftpm/xcode/
+!.swiftpm/xcode/xcshareddata/
+!.swiftpm/xcode/xcshareddata/xcschemes/
+!.swiftpm/xcode/xcshareddata/xcschemes/*.xcscheme
+!.swiftpm/xcode/xcshareddata/xctestplans/
+!.swiftpm/xcode/xcshareddata/xctestplans/*.xctestplan
 Package.resolved
 *.xcodeproj
 *.xcworkspace
