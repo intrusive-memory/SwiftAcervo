@@ -7,6 +7,19 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.10.1] - 2026-05-03
+
+### Added
+
+- **`Acervo.deleteFromCDN(modelId:credentials:progress:)`** — purges every object under `models/<slug>/` from the CDN. Iterative list/bulk-delete loop; idempotent on an empty prefix; non-atomic by design (nothing to be consistent with after a delete). Emits `AcervoDeleteProgress.listingPrefix` / `.deletingBatch` / `.complete`.
+- **`Acervo.recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:)`** — composes a caller-supplied `fetchSource` closure with `Acervo.publishModel` so a script can re-pull a model from any source (the CLI shells out to `hf`, but a future caller could substitute git, S3, a tarball, etc.) and atomically republish it. A throwing `fetchSource` surfaces as `AcervoError.fetchSourceFailed(modelId:underlying:)`.
+
+### Migration
+
+Non-breaking. Both functions are additive. Consumers that already call `Acervo.publishModel` directly are unaffected.
+
+---
+
 ## [0.10.0] - 2026-05-03
 
 ### Added
