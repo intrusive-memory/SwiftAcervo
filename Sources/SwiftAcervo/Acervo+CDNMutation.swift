@@ -3,8 +3,8 @@
 //
 // Layer 3 of the CDN-mutation surface (per requirements §6.4): orchestration
 // APIs that compose `S3CDNClient` (Layer 2) and `SigV4Signer` (Layer 1) into
-// the high-level operations consumers actually want — `publishModel` here,
-// `deleteFromCDN` and `recache` in WU2 Sortie 3.
+// the high-level operations consumers actually want — `publishModel`,
+// `deleteFromCDN`, and `recache`.
 //
 // The publish pipeline is the workhorse. It is **atomic from the consumer's
 // perspective**: the manifest swaps last, so partial failure leaves the
@@ -354,5 +354,162 @@ extension Acervo {
     guard actual == entry.sha256 else {
       throw AcervoError.publishVerificationFailed(stage: "CHECK 6")
     }
+  }
+
+  // MARK: - deleteFromCDN
+
+  /// Removes every object under `models/<slug>/` from the CDN.
+  ///
+  /// Non-atomic by design (see requirements §7): there is nothing to be
+  /// consistent with after a delete, so the implementation simply lists,
+  /// bulk-deletes, re-lists, and exits when the prefix is empty. Any single
+  /// batch failure throws and lets the caller retry.
+  ///
+  /// Idempotent: if the prefix is already empty on the first listing, the
+  /// call returns without issuing any `DeleteObjects` requests.
+  ///
+  /// - Parameters:
+  ///   - modelId: `org/repo` identifier for the model. Used to compute the
+  ///     CDN slug (`org_repo`).
+  ///   - credentials: S3 credentials and addressing for the CDN bucket.
+  ///   - progress: Optional callback invoked at each pass through the
+  ///     list/delete loop and once for the terminal `.complete` event.
+  /// - Throws: `AcervoError.invalidModelId` if the model ID is malformed,
+  ///   plus any underlying error from `S3CDNClient.listObjects` /
+  ///   `S3CDNClient.deleteObjects`.
+  public static func deleteFromCDN(
+    modelId: String,
+    credentials: AcervoCDNCredentials,
+    progress: (@Sendable (AcervoDeleteProgress) -> Void)? = nil
+  ) async throws {
+    let client = S3CDNClient(credentials: credentials)
+    try await _deleteFromCDN(
+      modelId: modelId,
+      client: client,
+      progress: progress
+    )
+  }
+
+  /// Test-facing delete. Public callers go through `deleteFromCDN(...)`
+  /// which builds the live `S3CDNClient`. Tests inject an `S3CDNClient`
+  /// configured against `MockURLProtocol.session()`.
+  static func _deleteFromCDN(
+    modelId: String,
+    client: S3CDNClient,
+    progress: (@Sendable (AcervoDeleteProgress) -> Void)?
+  ) async throws {
+    let slashCount = modelId.filter { $0 == "/" }.count
+    guard slashCount == 1 else {
+      throw AcervoError.invalidModelId(modelId)
+    }
+
+    let slug = slugify(modelId)
+    let prefix = "models/\(slug)/"
+
+    var deletedSoFar = 0
+    while true {
+      progress?(.listingPrefix)
+      let objects = try await client.listObjects(prefix: prefix)
+      if objects.isEmpty {
+        progress?(.complete)
+        return
+      }
+      let keys = objects.map(\.key)
+      // S3CDNClient.deleteObjects already batches at the 1000-key limit
+      // internally. We split here too so each emitted progress event
+      // corresponds to exactly one DeleteObjects request, keeping the
+      // event stream meaningful for callers that wire it to a UI.
+      let batchSize = 1000
+      var index = 0
+      while index < keys.count {
+        let end = Swift.min(index + batchSize, keys.count)
+        let batch = Array(keys[index..<end])
+        let results = try await client.deleteObjects(keys: batch)
+        deletedSoFar += results.filter(\.success).count
+        progress?(.deletingBatch(count: batch.count, deletedSoFar: deletedSoFar))
+        index = end
+      }
+      // Loop and re-list. Some implementations are eventually-consistent
+      // about list-after-delete; the loop terminates the moment the
+      // listing comes back empty.
+    }
+  }
+
+  // MARK: - recache
+
+  /// Re-fetches a model from a caller-supplied source and republishes it to
+  /// the CDN.
+  ///
+  /// This is a thin convenience over `publishModel`: the closure populates
+  /// `stagingDirectory` with the files for `modelId`, and then the
+  /// directory is handed to `publishModel` for the atomic publish + orphan
+  /// prune. The library is agnostic to where bytes come from — the CLI's
+  /// closure shells out to `hf`, but a future caller could substitute git,
+  /// S3, a tarball download, etc.
+  ///
+  /// - Parameters:
+  ///   - modelId: `org/repo` identifier for the model.
+  ///   - stagingDirectory: Directory the closure should populate with
+  ///     model files. Existing contents are not cleaned up; the caller is
+  ///     responsible for handing in a clean directory if desired.
+  ///   - credentials: S3 credentials and addressing for the CDN bucket
+  ///     plus the public base URL used by CHECK 5 / CHECK 6.
+  ///   - fetchSource: Caller-supplied async closure that downloads or
+  ///     otherwise materializes the model into `stagingDirectory`.
+  ///   - keepOrphans: When `true`, the orphan-prune step is skipped.
+  ///     Default `false`.
+  ///   - progress: Optional callback forwarded to `publishModel`.
+  /// - Returns: The `CDNManifest` produced by `publishModel`.
+  /// - Throws: `AcervoError.fetchSourceFailed(modelId:underlying:)` if the
+  ///   fetch closure throws, plus any error `publishModel` can raise.
+  @discardableResult
+  public static func recache(
+    modelId: String,
+    stagingDirectory: URL,
+    credentials: AcervoCDNCredentials,
+    fetchSource: @Sendable (_ modelId: String, _ into: URL) async throws -> Void,
+    keepOrphans: Bool = false,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil
+  ) async throws -> CDNManifest {
+    let client = S3CDNClient(credentials: credentials)
+    return try await _recache(
+      modelId: modelId,
+      stagingDirectory: stagingDirectory,
+      credentials: credentials,
+      client: client,
+      publicSession: .shared,
+      fetchSource: fetchSource,
+      keepOrphans: keepOrphans,
+      progress: progress
+    )
+  }
+
+  /// Test-facing recache. Public callers go through `recache(...)` which
+  /// builds the live `S3CDNClient` and uses `URLSession.shared` for public
+  /// readback. Tests inject mocked sessions/clients here.
+  static func _recache(
+    modelId: String,
+    stagingDirectory: URL,
+    credentials: AcervoCDNCredentials,
+    client: S3CDNClient,
+    publicSession: URLSession,
+    fetchSource: @Sendable (_ modelId: String, _ into: URL) async throws -> Void,
+    keepOrphans: Bool,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)?
+  ) async throws -> CDNManifest {
+    do {
+      try await fetchSource(modelId, stagingDirectory)
+    } catch {
+      throw AcervoError.fetchSourceFailed(modelId: modelId, underlying: error)
+    }
+    return try await _publishModel(
+      modelId: modelId,
+      directory: stagingDirectory,
+      credentials: credentials,
+      client: client,
+      publicSession: publicSession,
+      keepOrphans: keepOrphans,
+      progress: progress
+    )
   }
 }
