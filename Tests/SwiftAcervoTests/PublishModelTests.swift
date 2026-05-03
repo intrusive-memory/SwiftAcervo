@@ -714,6 +714,104 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       // semantics with the prune-failed warning.
       #expect(publishedManifest.modelId == "org/repo")
     }
+
+    // MARK: - Test 7: CHECK 5/6 readback bypasses caches
+
+    /// Regression coverage for the post-upload public-readback cache
+    /// hardening (PR #35 review). Without these guards, an edge or local
+    /// `URLCache` entry from a prior publish could satisfy verification
+    /// with stale bytes — a deployment-correctness false negative or
+    /// false positive depending on topology.
+    @Test("CHECK 5/6 readbacks set cb=, Cache-Control: no-cache, and reloadIgnoringLocalCacheData")
+    func publicReadbackBypassesCaches() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      let (dir, _) = try Self.makeStagingDir(files: [
+        ("config.json", "{\"k\":1}"),
+      ])
+      defer { try? FileManager.default.removeItem(at: dir) }
+
+      let log = S3RequestLog()
+      let publishedSnapshot = ManifestSnapshotBox(directory: dir)
+
+      // Capture every public-host request the responder sees so we can
+      // assert on URL, headers, and cachePolicy after the publish completes.
+      let publicRequests = PublicRequestLog()
+
+      let baseResponder = Self.makeResponder(
+        bucket: Self.testCredentials().bucket,
+        slug: "org_repo",
+        log: log,
+        existingKeys: [],
+        publishedFiles: { publishedSnapshot.snapshot() },
+        deleteOutcome: { keys in
+          keys.map { (key: $0, success: true, error: nil) }
+        }
+      )
+
+      MockURLProtocol.responder = { request in
+        if request.url?.host == Self.publicHost {
+          publicRequests.record(request)
+        }
+        return baseResponder(request)
+      }
+
+      let (client, session) = Self.makeClientAndSession()
+      _ = try await Acervo._publishModel(
+        modelId: "org/repo",
+        directory: dir,
+        credentials: Self.testCredentials(),
+        client: client,
+        publicSession: session,
+        keepOrphans: false,
+        progress: nil
+      )
+
+      let captured = publicRequests.snapshot()
+      // Both CHECK 5 (manifest.json) and CHECK 6 (sample file) must run
+      // with cache-bypass. config.json doubles as the sample-file pick.
+      let manifestReqs = captured.filter {
+        ($0.url?.path ?? "").hasSuffix("/manifest.json")
+      }
+      let sampleReqs = captured.filter {
+        ($0.url?.path ?? "").hasSuffix("/config.json")
+      }
+      #expect(!manifestReqs.isEmpty, "CHECK 5 manifest fetch must occur")
+      #expect(!sampleReqs.isEmpty, "CHECK 6 sample-file fetch must occur")
+
+      for request in manifestReqs + sampleReqs {
+        // 1. cache-buster query parameter present
+        let query = request.url?.query ?? ""
+        #expect(query.contains("cb="),
+          "public readback must carry a cb= cache-buster, got query=\(query)")
+        // 2. Cache-Control: no-cache header set
+        #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache",
+          "public readback must set Cache-Control: no-cache")
+        // 3. .reloadIgnoringLocalCacheData on the request itself
+        #expect(request.cachePolicy == .reloadIgnoringLocalCacheData,
+          "public readback must use .reloadIgnoringLocalCacheData")
+      }
+    }
+  }
+}
+
+// MARK: - PublicRequestLog
+
+/// Captures every public-host request the publish step issues so the
+/// cache-bypass test can assert on URL, headers, and cachePolicy.
+final class PublicRequestLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var entries: [URLRequest] = []
+
+  func record(_ request: URLRequest) {
+    lock.lock(); defer { lock.unlock() }
+    entries.append(request)
+  }
+
+  func snapshot() -> [URLRequest] {
+    lock.lock(); defer { lock.unlock() }
+    return entries
   }
 }
 

@@ -264,6 +264,12 @@ extension Acervo {
   /// `manifestChecksum` matches the local manifest's. Any mismatch (HTTP
   /// status, JSON decode, checksum) throws
   /// `AcervoError.publishVerificationFailed(stage: "CHECK 5")`.
+  ///
+  /// The fetch is cache-hardened via `URLRequest.cacheBypassing(...)`: a
+  /// content-derived `?cb=` query parameter, `Cache-Control: no-cache`, and
+  /// `.reloadIgnoringLocalCacheData` together push past `URLCache`, edge
+  /// caches, and any intermediate proxy that might still be serving the
+  /// previous deployment's manifest.
   private static func verifyPublicManifest(
     session: URLSession,
     publicBaseURL: URL,
@@ -275,10 +281,14 @@ extension Acervo {
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent("manifest.json")
+    let request = URLRequest.cacheBypassing(
+      url: url,
+      cacheBuster: expectedManifest.manifestChecksum
+    )
 
     let (data, response): (Data, URLResponse)
     do {
-      (data, response) = try await session.data(from: url)
+      (data, response) = try await session.data(for: request)
     } catch {
       throw AcervoError.publishVerificationFailed(stage: "CHECK 5")
     }
@@ -307,7 +317,9 @@ extension Acervo {
   /// Downloads one file from the public CDN and confirms its SHA-256
   /// matches the manifest entry. The file picked is the first one that
   /// exists in the manifest as `config.json`, falling back to the first
-  /// entry in lexicographic order.
+  /// entry in lexicographic order. Uses the same cache-bypass strategy as
+  /// CHECK 5, keyed on the entry's SHA-256 so a republish of the same path
+  /// with new content produces a different request URL.
   private static func verifyPublicSampleFile(
     session: URLSession,
     publicBaseURL: URL,
@@ -319,10 +331,14 @@ extension Acervo {
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent(slug, isDirectory: true)
       .appendingPathComponent(entry.path)
+    let request = URLRequest.cacheBypassing(
+      url: url,
+      cacheBuster: entry.sha256
+    )
 
     let (data, response): (Data, URLResponse)
     do {
-      (data, response) = try await session.data(from: url)
+      (data, response) = try await session.data(for: request)
     } catch {
       throw AcervoError.publishVerificationFailed(stage: "CHECK 6")
     }
