@@ -61,7 +61,7 @@ nohup bash -c '
     echo "==ACERVO_EXIT=$ec=="
     echo "==ACERVO_END=$(date -u +%Y-%m-%dT%H:%M:%SZ)=="
   } > "$LOG" 2>&1
-' _ "$MODEL_ID" "$LOG" "${EXTRA_ARGS[@]}" >/dev/null 2>&1 &
+' _ "$MODEL_ID" "$LOG" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} >/dev/null 2>&1 &
 PID=$!
 disown
 
