@@ -46,6 +46,20 @@ final class ComponentRegistry: @unchecked Sendable {
     defer { lock.unlock() }
 
     if let existing = descriptors[descriptor.id] {
+      // Skip the merge entirely if the new descriptor would produce no observable
+      // change. Acervo.register is called from many init paths; identical re-registration
+      // is common and should be free.
+      if existing.type == descriptor.type
+        && existing.displayName == descriptor.displayName
+        && existing.repoId == descriptor.repoId
+        && existing.isHydrated == descriptor.isHydrated
+        && existing.files == descriptor.files
+        && existing.estimatedSizeBytes == descriptor.estimatedSizeBytes
+        && existing.minimumMemoryBytes == descriptor.minimumMemoryBytes
+        && existing.metadata == descriptor.metadata
+      {
+        return
+      }
       // Check if this is a conflict (different repo or files)
       let sameRepo = existing.repoId == descriptor.repoId
       let sameFiles = existing.files == descriptor.files
