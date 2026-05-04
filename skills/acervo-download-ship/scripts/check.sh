@@ -48,7 +48,7 @@ if kill -0 "$PID" 2>/dev/null; then
   echo "START=${START:-unknown}"
   [ -n "$ELAPSED_S" ] && echo "ELAPSED_SECONDS=$ELAPSED_S"
   echo "---LOG_TAIL---"
-  tail -n "$TAIL_LINES" "$LOG" 2>/dev/null || echo "(log unreadable: $LOG)"
+  tr '\r' '\n' < "$LOG" 2>/dev/null | tail -n "$TAIL_LINES" || echo "(log unreadable: $LOG)"
   exit 0
 fi
 
@@ -61,7 +61,7 @@ if [ -z "$exit_line" ]; then
   echo "PID=$PID"
   echo "note=process exited without writing exit sentinel (crashed, killed, or out-of-memory)"
   echo "---LOG_TAIL---"
-  tail -n "$TAIL_LINES" "$LOG" 2>/dev/null || echo "(log unreadable: $LOG)"
+  tr '\r' '\n' < "$LOG" 2>/dev/null | tail -n "$TAIL_LINES" || echo "(log unreadable: $LOG)"
   exit 0
 fi
 
@@ -77,4 +77,4 @@ echo "LOG=$LOG"
 echo "PID=$PID"
 echo "START=${START:-unknown}"
 echo "---LOG_TAIL---"
-tail -n "$TAIL_LINES" "$LOG" 2>/dev/null || echo "(log unreadable: $LOG)"
+tr '\r' '\n' < "$LOG" 2>/dev/null | tail -n "$TAIL_LINES" || echo "(log unreadable: $LOG)"

@@ -46,6 +46,18 @@ TS=$(date -u +%Y%m%d-%H%M%SZ)
 SLUG=$(echo "$MODEL_ID" | tr '/' '_')
 LOG="/tmp/acervo-ship-${SLUG}-${TS}.log"
 
+# Release any stale lock files in the staging tree for this model. The
+# single-instance gate above guarantees no other acervo ship is currently
+# running, so any *.lock left behind is from a prior crashed/killed run
+# (HuggingFace's filelock and aws's transfer manager both create lock files
+# whose holders may have died without cleanup). Only *.lock files are removed,
+# never any actual model data.
+STAGING_ROOT="${STAGING_DIR:-/tmp/acervo-staging}"
+STAGING_DIR_FOR_MODEL="${STAGING_ROOT}/${SLUG}"
+if [ -d "$STAGING_DIR_FOR_MODEL" ]; then
+  find "$STAGING_DIR_FOR_MODEL" -type f -name "*.lock" -delete 2>/dev/null || true
+fi
+
 # Launch the download in a detached subshell. The wrapping bash captures the
 # acervo exit code and emits an end-sentinel so check.sh can distinguish
 # success/failure from a crashed process that never wrote an exit line.
