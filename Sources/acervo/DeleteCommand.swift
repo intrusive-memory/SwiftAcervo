@@ -176,7 +176,8 @@ struct DeleteCommand: AsyncParsableCommand {
     }
 
     let proceed = try TTYConfirm.confirm(
-      prompt: "About to delete every object under models/\(slug)/ from \(credentials.bucket). Continue? [y/N] ",
+      prompt:
+        "About to delete every object under models/\(slug)/ from \(credentials.bucket). Continue? [y/N] ",
       yesBypass: yes
     )
     guard proceed else {

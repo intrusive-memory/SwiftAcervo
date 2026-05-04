@@ -138,11 +138,13 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         let lock = NSLock()
         private var _entries: [String] = []
         func append(_ s: String) {
-          lock.lock(); defer { lock.unlock() }
+          lock.lock()
+          defer { lock.unlock() }
           _entries.append(s)
         }
         var entries: [String] {
-          lock.lock(); defer { lock.unlock() }
+          lock.lock()
+          defer { lock.unlock() }
           return _entries
         }
       }
