@@ -306,11 +306,13 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         let lock = NSLock()
         var events: [AcervoDeleteProgress] = []
         func append(_ e: AcervoDeleteProgress) {
-          lock.lock(); defer { lock.unlock() }
+          lock.lock()
+          defer { lock.unlock() }
           events.append(e)
         }
         func snapshot() -> [AcervoDeleteProgress] {
-          lock.lock(); defer { lock.unlock() }
+          lock.lock()
+          defer { lock.unlock() }
           return events
         }
       }
@@ -326,15 +328,21 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       // Expected order: listingPrefix, deletingBatch(2, 2),
       //                 listingPrefix (re-list, returns empty), complete
       #expect(events.count == 4)
-      if case .listingPrefix = events[0] { } else { Issue.record("first event should be listingPrefix") }
+      if case .listingPrefix = events[0] {
+      } else {
+        Issue.record("first event should be listingPrefix")
+      }
       if case .deletingBatch(let count, let total) = events[1] {
         #expect(count == 2)
         #expect(total == 2)
       } else {
         Issue.record("second event should be deletingBatch")
       }
-      if case .listingPrefix = events[2] { } else { Issue.record("third event should be listingPrefix (re-list)") }
-      if case .complete = events[3] { } else { Issue.record("last event should be complete") }
+      if case .listingPrefix = events[2] {
+      } else {
+        Issue.record("third event should be listingPrefix (re-list)")
+      }
+      if case .complete = events[3] {} else { Issue.record("last event should be complete") }
     }
 
     // MARK: - Test 6: invalid model ID
