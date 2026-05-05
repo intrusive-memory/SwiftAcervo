@@ -20,3 +20,4 @@ DerivedData/
 .DS_Store
 bin/
 *.profraw
+.claude/worktrees/
