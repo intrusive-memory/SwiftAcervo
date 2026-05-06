@@ -68,6 +68,123 @@ Stateless namespace for model discovery and downloading. Safe to call from any t
 | `hydrateComponent(_:)` | `Void` | Fetches CDN manifest for a registered component and populates its `files`, per-file sizes, SHA-256 hashes, and `estimatedSizeBytes`. Idempotent. Concurrent calls for the same ID coalesce into one network fetch. Throws `AcervoError.componentNotRegistered` if the component is not in the registry. |
 | `fetchManifest(for:)` | `CDNManifest` | Returns the CDN manifest for the given component without hydrating the registry. Use this for custom catalogs, cache warmers, or CI verification tools that need manifest data but don't want to trigger downloads. |
 
+---
+
+## Bundle Components
+
+A **bundle component** is any `ComponentDescriptor` whose `repoId` points to a CDN manifest that also covers files belonging to other components. The canonical example is `black-forest-labs/FLUX.2-klein-4B`, which ships a transformer, text encoder, and VAE inside a single HuggingFace/CDN repository under distinct subfolders — one manifest, many logical components.
+
+SwiftAcervo treats this as a first-class supported shape. The registry keys on `id`, not `repoId`, so N distinct component IDs can all point at the same `repoId` without conflict.
+
+### When to use the bundle pattern
+
+Use bundle components when:
+
+- A single CDN repo bundles multiple logical model components (transformer, encoder, VAE, tokenizer, etc.) inside subfolders.
+- You want to download, verify, or delete each component independently — for example, to skip the VAE on devices with limited storage, or to replace only the text encoder without re-downloading the full repo.
+- You are integrating a third-party bundled repo (e.g., from HuggingFace) where the upstream author chose one repo for all weights.
+
+Stick with the per-component-manifest shape when each component lives in its own CDN repo. The PixArt components (`t5-xxl-encoder-int4`, `sdxl-vae-decoder-fp16`, `pixart-sigma-xl-dit-int4`) are a good example: three CDN repos, three independent manifests, three components. Either shape works with the same `register` / `ensureComponentReady` / `withComponentAccess` API — no special flag or type is needed.
+
+### How to declare bundle descriptors
+
+Register one `ComponentDescriptor` per logical component. Give each a unique `id`, share the same `repoId`, and declare the exact files each component needs.
+
+**Important**: Bundle descriptors MUST use the explicit-files initializer `init(id:type:displayName:repoId:files:estimatedSizeBytes:minimumMemoryBytes:metadata:)`. Do NOT register a bundle component with the bare un-hydrated initializer — calling `hydrateComponent` on a bare bundle descriptor overwrites `files` with the full manifest, breaking the per-component file scope (**R1**).
+
+```swift
+// Three components, one repo, distinct file subsets
+let transformer = ComponentDescriptor(
+    id: "flux2-klein-4b-transformer",
+    type: .backbone,
+    displayName: "FLUX.2-klein-4B Transformer",
+    repoId: "black-forest-labs/FLUX.2-klein-4B",
+    files: [
+        ComponentFile(relativePath: "transformer/model.safetensors",
+                      expectedSizeBytes: 8_200_000_000,
+                      sha256: "<sha256>"),
+        ComponentFile(relativePath: "transformer/config.json",
+                      expectedSizeBytes: 2_048,
+                      sha256: "<sha256>"),
+    ],
+    estimatedSizeBytes: 8_200_002_048,
+    minimumMemoryBytes: 8_000_000_000
+)
+
+let textEncoder = ComponentDescriptor(
+    id: "flux2-klein-4b-text-encoder",
+    type: .encoder,
+    displayName: "FLUX.2-klein-4B Text Encoder",
+    repoId: "black-forest-labs/FLUX.2-klein-4B",
+    files: [
+        ComponentFile(relativePath: "text_encoder/config.json",
+                      expectedSizeBytes: 1_024,
+                      sha256: "<sha256>"),
+        ComponentFile(relativePath: "text_encoder/model.safetensors",
+                      expectedSizeBytes: 1_340_000_000,
+                      sha256: "<sha256>"),
+    ],
+    estimatedSizeBytes: 1_340_001_024,
+    minimumMemoryBytes: 1_400_000_000
+)
+
+let vae = ComponentDescriptor(
+    id: "flux2-klein-4b-vae",
+    type: .decoder,
+    displayName: "FLUX.2-klein-4B VAE",
+    repoId: "black-forest-labs/FLUX.2-klein-4B",
+    files: [
+        ComponentFile(relativePath: "vae/config.json",
+                      expectedSizeBytes: 512,
+                      sha256: "<sha256>"),
+        ComponentFile(relativePath: "vae/diffusion_pytorch_model.safetensors",
+                      expectedSizeBytes: 335_000_000,
+                      sha256: "<sha256>"),
+    ],
+    estimatedSizeBytes: 335_000_512,
+    minimumMemoryBytes: 340_000_000
+)
+
+Acervo.register([transformer, textEncoder, vae])
+```
+
+All three components land on disk under the same slug directory:
+
+```
+<sharedModelsDirectory>/black-forest-labs_FLUX.2-klein-4B/
+├── transformer/
+│   ├── config.json
+│   └── model.safetensors
+├── text_encoder/
+│   ├── config.json
+│   └── model.safetensors
+└── vae/
+    ├── config.json
+    └── diffusion_pytorch_model.safetensors
+```
+
+### Contract guarantees (R1–R6)
+
+These guarantees hold for any bundle component `D` with an explicit `files` list, where `D.repoId` resolves to a CDN manifest covering a superset of those files:
+
+**R1 (download scope)**: `ensureComponentReady("flux2-klein-4b-transformer")` downloads only the transformer's declared files. The text encoder and VAE files are never fetched unless their own components are ensured.
+
+**R2 (access scope)**: `withComponentAccess("flux2-klein-4b-transformer") { handle in ... }` exposes only the transformer's declared files. `handle.availableFiles()` lists only `transformer/config.json` and `transformer/model.safetensors`. Subfolder structure is preserved — `handle.url(for: "transformer/model.safetensors")` resolves to the correct on-disk path. The sibling text encoder and VAE files are on disk but are not accessible through this handle.
+
+**R3 (readiness scope)**: `isComponentReady("flux2-klein-4b-transformer")` returns `true` if and only if every file in the transformer's `files` list is present on disk with the expected size. Whether the text encoder or VAE files exist on disk is irrelevant — sibling readiness does not affect this component's readiness check.
+
+**R4 (sibling-safe deletion)**: Calling `deleteComponent("flux2-klein-4b-transformer")` removes only the transformer's declared files. The text encoder and VAE files are untouched. If only one component has been deleted, `isComponentReady("flux2-klein-4b-text-encoder")` and `isComponentReady("flux2-klein-4b-vae")` continue to return `true`. The shared slug directory (`black-forest-labs_FLUX.2-klein-4B/`) is removed only after all bundle components have been deleted and it is empty.
+
+**R5 (full manifest)**: `Acervo.fetchManifest(forComponent: "flux2-klein-4b-transformer")` returns the complete CDN manifest — including files for the text encoder, VAE, and any other components in the bundle. This is intentional: the manifest is the authoritative catalog; component file scoping is a consumer-side concern.
+
+**R6 (registry canary)**: Registering `flux2-klein-4b-transformer`, `flux2-klein-4b-text-encoder`, and `flux2-klein-4b-vae` — all with the same `repoId` but different `id`s — never fires the re-register canary. The canary fires only when the same `id` is registered a second time with a different file list or repo, which signals a genuine descriptor conflict. Registering sibling bundle components is always silent.
+
+### Caveats
+
+- **Shared slug directory**: Components A, B, and C can all see each other's files on disk by navigating the slug directory directly. The `ComponentHandle` API enforces file scope for safe access; the `rootDirectoryURL` property on `ComponentHandle` exposes the raw shared directory and should be avoided in bundle scenarios unless you explicitly need cross-component paths.
+- **No hydration for bundle descriptors**: The bare un-hydrated `ComponentDescriptor` initializer is not compatible with the bundle pattern (see note above). Always supply an explicit `files:` list.
+- **`config.json` validity marker**: If none of the bundle components declare `config.json` at the repo root, `isModelAvailable` (the non-component API) will return `false` for the `repoId`. This is expected — `isModelAvailable` is for the non-component download path. Use `isComponentReady` for component-keyed checks.
+
 ### Migration
 
 | Method | Returns | Description |
