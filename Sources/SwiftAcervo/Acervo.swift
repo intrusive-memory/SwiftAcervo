@@ -1608,6 +1608,12 @@ extension Acervo {
       FileHandle.standardError.write(Data((message + "\n").utf8))
     }
 
+    // NOTE: Hydration replaces `files` with the full manifest. Bundle descriptors
+    // (multiple components sharing one repoId, each owning a file subset) MUST be
+    // registered pre-hydrated using the explicit `files:` initializer; calling
+    // hydrateComponent on a bundle descriptor will overwrite the declared file
+    // subset with the full manifest, breaking per-component file scope (R1).
+    // See ComponentDescriptor.init(id:type:displayName:repoId:files:...) for details.
     let hydratedFiles = manifest.files.map { entry in
       ComponentFile(
         relativePath: entry.path,
@@ -1838,7 +1844,35 @@ extension Acervo {
       return
     }
 
-    // Remove the entire component directory
-    try FileManager.default.removeItem(at: componentDir)
+    // R4: Remove only the files declared in this descriptor — never the entire
+    // slug directory. Multiple components may share the same repoId (bundle shape),
+    // each owning a distinct subset of files in the same slug directory. Removing
+    // the whole directory would silently destroy sibling components' files.
+    let fm = FileManager.default
+    for file in descriptor.files {
+      let fileURL = componentDir.appendingPathComponent(file.relativePath)
+      // Use try? — a missing file (never downloaded, or already removed) is fine.
+      try? fm.removeItem(at: fileURL)
+
+      // Best-effort: prune the immediate parent directory if it is now empty,
+      // walking up to (but not including) componentDir itself. This handles the
+      // case where a file lives in a subfolder (e.g., "transformer/model.safetensors")
+      // whose folder becomes empty after the last file in it is deleted.
+      var parent = fileURL.deletingLastPathComponent()
+      while parent.standardizedFileURL != componentDir.standardizedFileURL {
+        guard let contents = try? fm.contentsOfDirectory(atPath: parent.path),
+          contents.isEmpty
+        else { break }
+        try? fm.removeItem(at: parent)
+        parent = parent.deletingLastPathComponent()
+      }
+    }
+
+    // Remove the slug directory itself if it is now empty (all components deleted).
+    if let contents = try? fm.contentsOfDirectory(atPath: componentDir.path),
+      contents.isEmpty
+    {
+      try? fm.removeItem(at: componentDir)
+    }
   }
 }

@@ -119,6 +119,16 @@ public struct ComponentDescriptor: Sendable, Identifiable {
   ///   - estimatedSizeBytes: Total expected download size in bytes.
   ///   - minimumMemoryBytes: Minimum RAM needed to load this component.
   ///   - metadata: Model-specific key-value pairs. Defaults to empty.
+  ///
+  /// **Bundle pattern**: When multiple components share a `repoId` (a single CDN
+  /// manifest covering many components), every bundle component MUST be registered
+  /// using this initializer with an explicit `files:` array. Bundle descriptors
+  /// MUST NOT be left un-hydrated; calling `Acervo.hydrateComponent(_:)` on a
+  /// bundle descriptor will overwrite `files` with the full manifest, breaking
+  /// the per-component file scope (R1). The un-hydrated initializer
+  /// `init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)` is correct
+  /// only for single-component manifests where all manifest files belong to
+  /// exactly one component.
   public init(
     id: String,
     type: ComponentType,
