@@ -858,11 +858,12 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         // This passes trivially with current source (whole dir removed on first delete)
         // but the sibling tests above will have already failed, making this moot.
         #expect(
-          !slugExists || {
-            let contents =
-              (try? FileManager.default.contentsOfDirectory(atPath: slugDir.path)) ?? []
-            return contents.isEmpty
-          }(),
+          !slugExists
+            || {
+              let contents =
+                (try? FileManager.default.contentsOfDirectory(atPath: slugDir.path)) ?? []
+              return contents.isEmpty
+            }(),
           "R4: slug directory must not exist (or be empty) after deleting all bundle components"
         )
       }

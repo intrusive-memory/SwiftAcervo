@@ -53,7 +53,8 @@ enum BundleFixtures {
     let slug = Acervo.slugify(repoId)
 
     // Build manifest file entries with precomputed SHA-256 digests.
-    let manifestFiles: [CDNManifestFile] = fileContents
+    let manifestFiles: [CDNManifestFile] =
+      fileContents
       .sorted(by: { $0.key < $1.key })
       .map { path, data in
         CDNManifestFile(
@@ -148,14 +149,16 @@ enum BundleFixtures {
   /// - Returns: A tuple `(transformer, textEncoder, vae)` of pre-hydrated descriptors.
   static func bundleDescriptors(
     repoId: String = "test-bundle-org/flux-style-bundle"
-  ) -> (transformer: ComponentDescriptor, textEncoder: ComponentDescriptor, vae: ComponentDescriptor) {
+  ) -> (
+    transformer: ComponentDescriptor, textEncoder: ComponentDescriptor, vae: ComponentDescriptor
+  ) {
     let transformer = ComponentDescriptor(
       id: "bundle-transformer",
       type: .backbone,
       displayName: "Bundle Transformer",
       repoId: repoId,
       files: [
-        ComponentFile(relativePath: "transformer/model.safetensors"),
+        ComponentFile(relativePath: "transformer/model.safetensors")
       ],
       estimatedSizeBytes: 100,
       minimumMemoryBytes: 0
