@@ -7,6 +7,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.12.0] - Unreleased
+
+### Added
+
+- **Bundle component pattern** — multiple `ComponentDescriptor`s can now share a `repoId` (a single CDN manifest covering many logical components) as a documented, first-class supported shape. Registering N distinct component IDs against the same `repoId` never fires the re-register canary; the canary continues to fire only for genuine `id`-collisions. See [API_REFERENCE.md — Bundle Components](API_REFERENCE.md#bundle-components) for declaration examples and the full R1–R6 contract guarantees.
+
+### Fixed
+
+- **`deleteComponent` is now sibling-safe for bundle components** — previously, calling `deleteComponent` on any component removed the entire `org_repo/` slug directory, destroying all sibling components that shared the same `repoId`. The new implementation iterates the component's declared `files` and removes only those files, then prunes empty subdirectories up to (but not including) the slug directory. The slug directory itself is removed only when it is completely empty (all bundle components deleted). This behavioral change is **additive**: consumers using the existing 1:1 per-component-manifest pattern see identical results (their slug directory becomes empty after the single component is deleted, so it is removed exactly as before).
+
+### Migration
+
+Non-breaking. All existing consumers continue to work without changes. Plugin authors targeting bundled repos (such as `black-forest-labs/FLUX.2-klein-4B`) can now declare one `ComponentDescriptor` per logical component using the explicit-files initializer — see [API_REFERENCE.md](API_REFERENCE.md#bundle-components) for a worked example.
+
+---
+
 ## [0.11.0] - 2026-05-03
 
 ### Added

@@ -77,7 +77,7 @@ signal, mirroring the client-side `config.json` convention.
 
 Convenience pipeline: `download` → HF integrity check → `upload` in one command.
 Accepts the union of all `download` and `upload` options. This is the primary day-to-day
-command and the one invoked by the `mirror_model.yml` GitHub Actions workflow.
+command, run manually by maintainers when mirroring a model to the CDN.
 
 ### `acervo manifest <model-id> <directory>`
 
@@ -318,80 +318,7 @@ test-acervo-cdn          # Fetch manifest for a known model, verify checksum (ne
 
 ---
 
-## 11. GitHub Actions: `mirror_model.yml` Reusable Workflow
-
-### Location
-
-`.github/workflows/mirror_model.yml` within the SwiftAcervo repository.
-
-### Purpose
-
-A reusable workflow (`workflow_call`) that any org project can call with two lines to
-ensure a given model is mirrored on the CDN. The calling project needs no knowledge of
-CDN credentials, bucket names, or endpoint URLs — all of that flows from org secrets
-via `secrets: inherit`.
-
-### Inputs
-
-| Input | Required | Description |
-|---|---|---|
-| `model_id` | yes | HuggingFace model ID in `org/repo` format |
-| `files` | no | Space-separated file subset; omit to mirror all files |
-| `acervo_version` | no | Homebrew formula version; default `latest` |
-
-### Org Secrets Consumed
-
-All consumed via `secrets: inherit`. No per-project secret configuration needed.
-
-| Secret | Environment variable in job |
-|---|---|
-| `R2_ACCESS_KEY_ID` | `R2_ACCESS_KEY_ID` |
-| `R2_SECRET_ACCESS_KEY` | `R2_SECRET_ACCESS_KEY` |
-| `R2_ENDPOINT` | `R2_ENDPOINT` |
-| `R2_BUCKET` | `R2_BUCKET` |
-| `HF_TOKEN` | `HF_TOKEN` |
-
-Note: `CLOUDFLARE_ACCOUNT_ID` is NOT consumed. `R2_ENDPOINT` is the full URL; no account
-ID derivation needed in CI.
-
-### Workflow Steps
-
-1. Install `huggingface-cli` (`brew install huggingface-hub`)
-2. Install `acervo` (`brew install intrusive-memory/tap/acervo`)
-3. Run `acervo ship "${{ inputs.model_id }}"` (or with `files` subset if provided)
-
-`aws` CLI requires no install step — pre-installed on `macos-26` runners.
-
-### Calling It From Any Project
-
-The entire workflow file a downstream project needs:
-
-```yaml
-name: Mirror Model to CDN
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-
-jobs:
-  mirror:
-    uses: intrusive-memory/SwiftAcervo/.github/workflows/mirror_model.yml@main
-    with:
-      model_id: mlx-community/Qwen2.5-7B-Instruct-4bit
-    secrets: inherit
-```
-
-The org secrets flow automatically. The calling project stores no credentials.
-
-### Idempotency
-
-`acervo ship` is safe to re-run. `aws s3 sync` skips files already on the CDN with
-matching content. CHECK 1 (HF validation) runs on every invocation — if HuggingFace
-updates a file, the new version is detected and re-uploaded.
-
----
-
-## 12. Homebrew Formula
+## 11. Homebrew Formula
 
 A formula `Formula/acervo.rb` must be added to `intrusive-memory/homebrew-tap` when the
 first binary is released. The existing formulas (`proyecto.rb`, `diga.rb`, etc.) in that
@@ -404,20 +331,12 @@ The release process for SwiftAcervo:
 4. Update `Formula/acervo.rb` in `intrusive-memory/homebrew-tap` with the new SHA-256 and
    download URL
 
-Until the formula is published, the `mirror_model.yml` workflow can build `acervo` from
-source as a stopgap:
-
-```yaml
-- uses: actions/checkout@v4
-  with:
-    repository: intrusive-memory/SwiftAcervo
-- run: make install-acervo
-- run: ./bin/acervo ship "${{ inputs.model_id }}"
-```
+Until the formula is published, maintainers build `acervo` from source locally
+(`make install-acervo`) and run `./bin/acervo ship <model-id>` manually.
 
 ---
 
-## 13. Files Superseded by This Effort
+## 12. Files Superseded by This Effort
 
 Once `acervo` is released and the Homebrew formula is published, the following files
 should be archived or deleted:
@@ -429,7 +348,7 @@ should be archived or deleted:
 
 ---
 
-## 14. Implementation Order
+## 13. Implementation Order
 
 1. `Package.swift` — add `swift-argument-parser` dependency and `acervo` executable target
 2. `Makefile` — add `build-acervo`, `install-acervo`, `release-acervo`, test targets
@@ -441,5 +360,4 @@ should be archived or deleted:
 8. `DownloadCommand.swift`, `UploadCommand.swift`, `ManifestCommand.swift`, `VerifyCommand.swift`
 9. `ShipCommand.swift` — pipeline orchestration with all six integrity checks
 10. `AcervoToolTests` — unit test suite
-11. `.github/workflows/mirror_model.yml` — reusable CI workflow
-12. `Formula/acervo.rb` in `intrusive-memory/homebrew-tap` — on first release
+11. `Formula/acervo.rb` in `intrusive-memory/homebrew-tap` — on first release

@@ -370,6 +370,43 @@ let components = Acervo.registeredComponents()
 
 **Consistency**: All plugins follow the same registration pattern.
 
+### Two registration shapes
+
+The registry supports two component-to-manifest mapping shapes. Plugin authors choose the right one at registration time:
+
+**1:1 — per-component manifest** (the PixArt pattern): Each component lives in its own CDN repo and has its own `manifest.json`. `t5-xxl-encoder-int4`, `sdxl-vae-decoder-fp16`, and `pixart-sigma-xl-dit-int4` are independent repos; registering all three triggers three separate manifest fetches on first use. This is the default pattern for models that were published one-component-per-repo.
+
+**N:1 — bundle components** (the Flux2 / FLUX.2-klein-4B pattern): Multiple logical components — transformer, text encoder, VAE — ship inside a single CDN repo under distinct subfolders. You register one `ComponentDescriptor` per logical component, each with the same `repoId` but a different `id` and a different `files` list. The registry keys on `id`, so N bundle components sharing a `repoId` never trigger the re-register canary. Each component is downloaded, verified, and deleted independently, even though they share one on-disk slug directory.
+
+```swift
+// Bundle pattern: N components, one repoId
+Acervo.register([
+    ComponentDescriptor(
+        id: "flux2-klein-4b-transformer",
+        type: .backbone,
+        repoId: "black-forest-labs/FLUX.2-klein-4B",
+        files: [ ComponentFile(relativePath: "transformer/model.safetensors", ...) ],
+        ...
+    ),
+    ComponentDescriptor(
+        id: "flux2-klein-4b-text-encoder",
+        type: .encoder,
+        repoId: "black-forest-labs/FLUX.2-klein-4B",
+        files: [ ComponentFile(relativePath: "text_encoder/model.safetensors", ...) ],
+        ...
+    ),
+    ComponentDescriptor(
+        id: "flux2-klein-4b-vae",
+        type: .decoder,
+        repoId: "black-forest-labs/FLUX.2-klein-4B",
+        files: [ ComponentFile(relativePath: "vae/diffusion_pytorch_model.safetensors", ...) ],
+        ...
+    ),
+])
+```
+
+Bundle descriptors MUST use the explicit-files initializer. The bare un-hydrated initializer is not compatible with the bundle pattern — hydration replaces `files` with the full manifest, which loses the per-component file scope. See [API_REFERENCE.md — Bundle Components](API_REFERENCE.md#bundle-components) for the full contract guarantees and a worked example.
+
 ---
 
 ## Why These Patterns?
@@ -389,6 +426,7 @@ let components = Acervo.registeredComponents()
 | Redirect rejection | Man-in-the-middle protection |
 | Local path access | LoRA / user-supplied weights support |
 | Component registry | Plugin coordination + discovery |
+| Bundle components | Many components, one CDN manifest |
 
 ---
 

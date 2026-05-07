@@ -101,6 +101,10 @@ public enum MyComponents {
 - `metadata` merged (newer overwrites on conflict)
 - `estimatedSizeBytes` / `minimumMemoryBytes` → max of both values
 
+### Component-to-manifest mapping
+
+The registry supports both **1:1** (one component, one CDN manifest) and **N:1** (many components, one CDN manifest) mappings. In the N:1 bundle shape, multiple components share a `repoId` — each with a unique `id` and a distinct `files` subset — and all land in the same on-disk slug directory. Every component-keyed API (`ensureComponentReady`, `isComponentReady`, `withComponentAccess`, `deleteComponent`) is scoped to the component's declared `files`, not to the full manifest. This means deleting one bundle component does not affect sibling components that share the same directory. See [API_REFERENCE.md — Bundle Components](API_REFERENCE.md#bundle-components) for the full contract.
+
 ---
 
 ## Error Types (new in v2)
