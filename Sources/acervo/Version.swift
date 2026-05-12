@@ -1,3 +1,3 @@
 import Foundation
 
-let acervoVersion = "0.13.0"
+let acervoVersion = "0.13.0-dev"
