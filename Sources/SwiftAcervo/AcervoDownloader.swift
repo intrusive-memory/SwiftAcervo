@@ -564,7 +564,7 @@ extension AcervoDownloader {
     try fm.moveItem(at: tempFileURL, to: destination)
 
     // Verify integrity: size then SHA-256
-    try IntegrityVerification.verifyAgainstManifest(
+    try await IntegrityVerification.verifyAgainstManifest(
       fileURL: destination,
       manifestFile: manifestFile,
       telemetry: telemetry
@@ -818,10 +818,61 @@ extension AcervoDownloader {
 
         let fileDestination = destination.appendingPathComponent(manifestFile.path)
 
-        // Skip if file already exists with the correct size (and force is off).
-        if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
+        // Cache decision: emit cacheHit/cacheMiss BEFORE any network I/O so
+        // observers see the verdict before HTTP traffic. Payload construction
+        // is skipped when no reporter is attached. The current cache check is
+        // size-only (no on-disk SHA recomputation), so we can definitively
+        // emit `.notPresent`, `.sizeChangedRemote`, or `.forcedRefresh`. The
+        // `.corrupted` and `.shaChangedRemote` reasons are reserved for
+        // future verify-on-read paths that recompute the on-disk SHA before
+        // network I/O — currently unreachable from this code path (see
+        // CacheMissReason references near `modelLoadComplete` below).
+        let fm = FileManager.default
+        if force {
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .forcedRefresh
+              )
+            )
+          }
+          // Fall through to download (force overrides cache).
+        } else if !fm.fileExists(atPath: fileDestination.path) {
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .notPresent
+              )
+            )
+          }
+          // Fall through to download.
+        } else {
           let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
           if existingSize == manifestFile.sizeBytes {
+            // Cache hit: file exists with the correct size. Emit before
+            // crediting progress so observers see the cache decision first.
+            if let telemetry {
+              let ageSeconds: Double
+              if let attrs = try? fm.attributesOfItem(atPath: fileDestination.path),
+                 let mtime = attrs[.modificationDate] as? Date
+              {
+                ageSeconds = Date().timeIntervalSince(mtime)
+              } else {
+                ageSeconds = 0
+              }
+              await telemetry.capture(
+                .cacheHit(
+                  modelID: modelId,
+                  fileName: manifestFile.path,
+                  onDiskBytes: existingSize,
+                  ageSeconds: ageSeconds
+                )
+              )
+            }
             // Credit this file's full byte count so overall progress is accurate.
             let overallFraction = byteTracker.update(
               fileIndex: index,
@@ -838,7 +889,20 @@ extension AcervoDownloader {
               ))
             continue
           }
-          // Size mismatch -- file is corrupt or stale, re-download.
+          // Size mismatch -- file is corrupt or stale, re-download. The
+          // existing code can't distinguish "size changed at the remote"
+          // from "local corruption" without recomputing the on-disk SHA, so
+          // we report `.sizeChangedRemote` (the literal observation: the
+          // on-disk byte count differs from the CDN's current manifest).
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .sizeChangedRemote
+              )
+            )
+          }
         }
 
         let url = buildURL(modelId: modelId, fileName: manifestFile.path)
@@ -940,6 +1004,35 @@ extension AcervoDownloader {
       // Drain any remaining in-flight tasks.  If any of them threw, the
       // error propagates here and the task group cancels the remaining ones.
       try await group.waitForAll()
+    }
+
+    // Boundary memory event: emit once per model after the last component
+    // is verified (downloaded OR cache-hit). This is the choke-point where
+    // all per-file paths (download + integrity verify, or cache-hit skip)
+    // have converged; the host adapter wraps this single emission with a
+    // memory snapshot to characterize boundary-memory state at the end of
+    // model materialization.
+    //
+    // Adapter routes this event through captureWithMemorySnapshot; library emits normally.
+    //
+    // CacheMissReason coverage note: only `.notPresent`, `.sizeChangedRemote`,
+    // and `.forcedRefresh` fire from the current code path. The two reasons
+    // `.shaChangedRemote` and `.corrupted` are reserved for a future
+    // verify-on-read path that recomputes the on-disk SHA before any network
+    // I/O — they are unreachable from the present cache check, which is
+    // size-only. Symbol references retained for enum coverage:
+    // AcervoTelemetryEvent.CacheMissReason.shaChangedRemote (reserved),
+    // AcervoTelemetryEvent.CacheMissReason.corrupted (reserved).
+    if let telemetry {
+      let totalSizeMB = Double(totalAllBytes) / 1_048_576.0
+      let componentCount = filesToDownload.count
+      await telemetry.capture(
+        .modelLoadComplete(
+          modelID: modelId,
+          totalSizeMB: totalSizeMB,
+          componentCount: componentCount
+        )
+      )
     }
   }
 }

@@ -57,6 +57,15 @@ public struct IntegrityVerification: Sendable {
   ///   - directory: The base directory containing the file.
   /// - Returns: `true` if the checksum matches or is not declared; `false` if it mismatches.
   /// - Throws: Errors from reading the file data.
+  ///
+  /// NOTE (Sortie 5a): Telemetry is intentionally NOT emitted here. This
+  /// method is called from the synchronous public API chain
+  /// `Acervo.verifyComponent` → `verify`. Making `verify` async would
+  /// cascade to `verifyComponent` (a public API) and break callers. The
+  /// telemetry surface for verify-on-read is wired at
+  /// `verifyAgainstManifest`, which is the manifest-driven path actually
+  /// used during downloads. Telemetry parameter is retained for future
+  /// async-bridge wiring.
   static func verify(
     file: ComponentFile,
     in directory: URL,
@@ -92,14 +101,54 @@ public struct IntegrityVerification: Sendable {
   ///   - fileURL: The local file to verify.
   ///   - manifestFile: The manifest entry with expected size and hash.
   /// - Throws: `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`.
+  ///
+  /// NOTE (Sortie 5a): The method is `async` to allow telemetry emission of
+  /// `integrityVerifyStart`/`integrityVerifyComplete`. On the failure paths
+  /// the complete event (with `passed: false`) is emitted IMMEDIATELY before
+  /// the throw so observers see the verdict before the exception propagates.
+  /// `modelID` is not in scope here (the manifestFile carries only the
+  /// relative path); empty string is used and consumers correlate via
+  /// `fileName`.
   static func verifyAgainstManifest(
     fileURL: URL,
     manifestFile: CDNManifestFile,
     telemetry: (any AcervoTelemetryReporter)? = nil
-  ) throws {
+  ) async throws {
+    // Integrity start: emit before any I/O so observers see the verification
+    // begin even if the file read fails. Payload construction is skipped when
+    // no reporter is attached.
+    let verifyStart = Date()
+    if let telemetry {
+      await telemetry.capture(
+        .integrityVerifyStart(
+          modelID: "",  // not threaded through verifyAgainstManifest signature
+          fileName: manifestFile.path,
+          expectedSHA: manifestFile.sha256,
+          declaredBytes: manifestFile.sizeBytes
+        )
+      )
+    }
+
     // Fast check: file size
     let actualSize = try fileSize(at: fileURL)
     if actualSize != manifestFile.sizeBytes {
+      // Emit integrity-complete with passed:false BEFORE removing the file
+      // and throwing — this ordering is consumed by Sortie 5b adjacency.
+      // `actualSHA` is unavailable on the size-mismatch path; empty string
+      // signals "not computed".
+      if let telemetry {
+        let durationSeconds = Date().timeIntervalSince(verifyStart)
+        await telemetry.capture(
+          .integrityVerifyComplete(
+            modelID: "",
+            fileName: manifestFile.path,
+            actualSHA: "",
+            actualBytes: actualSize,
+            passed: false,
+            durationSeconds: durationSeconds
+          )
+        )
+      }
       try? FileManager.default.removeItem(at: fileURL)
       throw AcervoError.downloadSizeMismatch(
         fileName: manifestFile.path,
@@ -111,11 +160,40 @@ public struct IntegrityVerification: Sendable {
     // Definitive check: SHA-256
     let actualHash = try sha256(of: fileURL)
     if actualHash != manifestFile.sha256 {
+      // Emit integrity-complete with passed:false BEFORE the throw.
+      if let telemetry {
+        let durationSeconds = Date().timeIntervalSince(verifyStart)
+        await telemetry.capture(
+          .integrityVerifyComplete(
+            modelID: "",
+            fileName: manifestFile.path,
+            actualSHA: actualHash,
+            actualBytes: actualSize,
+            passed: false,
+            durationSeconds: durationSeconds
+          )
+        )
+      }
       try? FileManager.default.removeItem(at: fileURL)
       throw AcervoError.integrityCheckFailed(
         file: manifestFile.path,
         expected: manifestFile.sha256,
         actual: actualHash
+      )
+    }
+
+    // Success path: emit passed:true completion.
+    if let telemetry {
+      let durationSeconds = Date().timeIntervalSince(verifyStart)
+      await telemetry.capture(
+        .integrityVerifyComplete(
+          modelID: "",
+          fileName: manifestFile.path,
+          actualSHA: actualHash,
+          actualBytes: actualSize,
+          passed: true,
+          durationSeconds: durationSeconds
+        )
       )
     }
   }
