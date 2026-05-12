@@ -127,8 +127,21 @@ public actor ModelDownloadManager {
     category: "ModelDownloadManager"
   )
 
+  /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
+  private var telemetry: (any AcervoTelemetryReporter)? = nil
+
   /// Private initializer to enforce singleton usage.
   private init() {}
+
+  /// Attaches or removes a telemetry reporter.
+  ///
+  /// Pass `nil` to stop telemetry. The reporter is called from within actor
+  /// isolation, so callers must `await` this setter.
+  ///
+  /// - Parameter reporter: The reporter to use, or `nil` to disable telemetry.
+  public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
+    self.telemetry = reporter
+  }
 }
 
 // MARK: - Disk Space Validation
@@ -175,11 +188,23 @@ extension ModelDownloadManager {
     for modelId in modelIds {
       let manifest: CDNManifest
       do {
-        manifest = try await AcervoDownloader.downloadManifest(for: modelId)
+        manifest = try await AcervoDownloader.downloadManifest(
+          for: modelId,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "validateCanDownload: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .manifestDownload,
+              errorDescription: error.localizedDescription,
+              modelID: modelId,
+              fileName: nil
+            ))
+        }
         throw error
       }
 
@@ -264,11 +289,23 @@ extension ModelDownloadManager {
     for modelId in modelIds {
       let manifest: CDNManifest
       do {
-        manifest = try await AcervoDownloader.downloadManifest(for: modelId)
+        manifest = try await AcervoDownloader.downloadManifest(
+          for: modelId,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "ensureModelsAvailable: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .manifestDownload,
+              errorDescription: error.localizedDescription,
+              modelID: modelId,
+              fileName: nil
+            ))
+        }
         throw error
       }
 
@@ -320,11 +357,25 @@ extension ModelDownloadManager {
 
       do {
         // Empty files array -> download all files in the manifest.
-        try await Acervo.ensureAvailable(modelId, files: [], progress: bridged)
+        try await Acervo.ensureAvailable(
+          modelId,
+          files: [],
+          progress: bridged,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "ensureModelsAvailable: download failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .other,
+              errorDescription: error.localizedDescription,
+              modelID: modelId,
+              fileName: nil
+            ))
+        }
         throw error
       }
 

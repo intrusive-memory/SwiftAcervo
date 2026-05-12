@@ -157,7 +157,10 @@ extension AcervoDownloader {
   /// - Parameter url: The directory URL to ensure exists.
   /// - Throws: `AcervoError.directoryCreationFailed` if the directory
   ///   cannot be created.
-  static func ensureDirectory(at url: URL) throws {
+  static func ensureDirectory(
+    at url: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) throws {
     let fm = FileManager.default
 
     // Skip if directory already exists
@@ -175,6 +178,20 @@ extension AcervoDownloader {
         attributes: nil
       )
     } catch {
+      // NOTE: ensureDirectory is synchronous; telemetry emit is fire-and-forget via Task.
+      // Ordering relative to the throw is not guaranteed, but the event will be captured.
+      // ErrorPhase.s3Request handled in S3CDNClient.swift (not reachable from this module).
+      if let telemetry {
+        Task {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .directoryCreation,
+              errorDescription: "Directory creation failed at \(url.path)",
+              modelID: nil,
+              fileName: nil
+            ))
+        }
+      }
       throw AcervoError.directoryCreationFailed(url.path)
     }
   }
@@ -210,17 +227,36 @@ extension AcervoDownloader {
   /// - Throws: `AcervoError` for download, decoding, or validation failures.
   public static func downloadManifest(
     for modelId: String,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws -> CDNManifest {
     // Refuse the fetch up front when offline mode is active. This must run
     // BEFORE any URLSession call so callers can rely on the gate to keep the
     // process completely offline (no DNS, no socket, no proxy).
     if Acervo.isOfflineModeActive {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "Manifest download blocked: offline mode is active",
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.offlineModeActive
     }
 
     let url = buildManifestURL(modelId: modelId)
     let request = buildRequest(from: url)
+
+    // Emit manifest-fetch start before URLSession dispatch. URL string
+    // materialization is skipped when no reporter is attached.
+    if let telemetry {
+      let urlString = url.absoluteString
+      await telemetry.capture(
+        .manifestFetchStart(modelID: modelId, manifestURL: urlString)
+      )
+    }
 
     // Download manifest using the provided session
     let data: Data
@@ -228,6 +264,15 @@ extension AcervoDownloader {
     do {
       (data, response) = try await session.data(for: request)
     } catch {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.networkError(error)
     }
 
@@ -235,6 +280,15 @@ extension AcervoDownloader {
     if let httpResponse = response as? HTTPURLResponse,
       httpResponse.statusCode != 200
     {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: "Manifest download failed with HTTP \(httpResponse.statusCode)",
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.manifestDownloadFailed(statusCode: httpResponse.statusCode)
     }
 
@@ -243,18 +297,55 @@ extension AcervoDownloader {
     do {
       manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
     } catch let error as AcervoError {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDecode,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw error
     } catch {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDecode,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.manifestDecodingFailed(error)
     }
 
     // Validate version
     guard manifest.manifestVersion == CDNManifest.supportedVersion else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestVersionUnsupported,
+            errorDescription: "Unsupported manifest version: \(manifest.manifestVersion)",
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.manifestVersionUnsupported(manifest.manifestVersion)
     }
 
     // Validate model ID matches
     guard manifest.modelId == modelId else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestIntegrity,
+            errorDescription:
+              "Manifest model ID mismatch: expected \(modelId), got \(manifest.modelId)",
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.manifestModelIdMismatch(
         expected: modelId,
         actual: manifest.modelId
@@ -264,9 +355,33 @@ extension AcervoDownloader {
     // Verify manifest integrity (checksum-of-checksums)
     let computedChecksum = CDNManifest.computeChecksum(from: manifest.files.map(\.sha256))
     guard manifest.manifestChecksum == computedChecksum else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestIntegrity,
+            errorDescription: "Manifest integrity check failed: checksum mismatch",
+            modelID: modelId,
+            fileName: nil
+          ))
+      }
       throw AcervoError.manifestIntegrityFailed(
         expected: manifest.manifestChecksum,
         actual: computedChecksum
+      )
+    }
+
+    // Emit manifest-fetch complete after the manifest has been fully
+    // validated. `manifestVersion` is stringified because the event signature
+    // carries it as a String (the underlying field is an Int).
+    if let telemetry {
+      let totalDeclared = manifest.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
+      await telemetry.capture(
+        .manifestFetchComplete(
+          modelID: modelId,
+          manifestVersion: String(manifest.manifestVersion),
+          fileCount: manifest.files.count,
+          totalDeclaredBytes: totalDeclared
+        )
       )
     }
 
@@ -309,13 +424,23 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Refuse the fetch up front when offline mode is active. This runs
     // BEFORE the URLSession streaming call so the gate is unconditional
     // for every file download, regardless of which public entry point
     // (downloadFile, downloadFiles, hydrateComponent, etc.) routed here.
     if Acervo.isOfflineModeActive {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "File download blocked: offline mode is active",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw AcervoError.offlineModeActive
     }
 
@@ -326,6 +451,15 @@ extension AcervoDownloader {
     if let httpResponse = response as? HTTPURLResponse,
       httpResponse.statusCode != 200
     {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "File download failed with HTTP \(httpResponse.statusCode)",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw AcervoError.downloadFailed(
         fileName: fileName,
         statusCode: httpResponse.statusCode
@@ -364,6 +498,15 @@ extension AcervoDownloader {
       fileHandle = try FileHandle(forWritingTo: tempFileURL)
     } catch {
       try? fm.removeItem(at: tempFileURL)
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .other,
+            errorDescription: "Failed to open temp file for writing: \(error.localizedDescription)",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw error
     }
 
@@ -403,12 +546,31 @@ extension AcervoDownloader {
       // Stream interrupted or write failed -- clean up temp file
       try? fileHandle.close()
       try? fm.removeItem(at: tempFileURL)
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "Stream interrupted or write failed: \(error.localizedDescription)",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw error
     }
 
     // Verify size
     if bytesWritten != manifestFile.sizeBytes {
       try? fm.removeItem(at: tempFileURL)
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownloadSize,
+            errorDescription:
+              "Size mismatch for \(manifestFile.path): expected \(manifestFile.sizeBytes), got \(bytesWritten)",
+            modelID: nil,
+            fileName: manifestFile.path
+          ))
+      }
       throw AcervoError.downloadSizeMismatch(
         fileName: manifestFile.path,
         expected: manifestFile.sizeBytes,
@@ -421,6 +583,15 @@ extension AcervoDownloader {
     let actualHash = digest.map { String(format: "%02x", $0) }.joined()
     if actualHash != manifestFile.sha256 {
       try? fm.removeItem(at: tempFileURL)
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownloadIntegrity,
+            errorDescription: "SHA-256 mismatch for \(manifestFile.path)",
+            modelID: nil,
+            fileName: manifestFile.path
+          ))
+      }
       throw AcervoError.integrityCheckFailed(
         file: manifestFile.path,
         expected: manifestFile.sha256,
@@ -430,7 +601,7 @@ extension AcervoDownloader {
 
     // Ensure destination's parent directory exists
     let parentDirectory = destination.deletingLastPathComponent()
-    try ensureDirectory(at: parentDirectory)
+    try ensureDirectory(at: parentDirectory, telemetry: telemetry)
 
     // Remove any existing file at destination
     if fm.fileExists(atPath: destination.path) {
@@ -481,13 +652,23 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Refuse the fetch up front when offline mode is active. The streaming
     // path checks the gate too, but `streamDownloadFile` may delegate here
     // on its own initiative when bytes(for:) is unavailable, so we re-check
     // before the legacy URLSession.download call.
     if Acervo.isOfflineModeActive {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "Fallback file download blocked: offline mode is active",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw AcervoError.offlineModeActive
     }
 
@@ -497,6 +678,15 @@ extension AcervoDownloader {
     do {
       (tempFileURL, response) = try await session.download(for: request)
     } catch {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: error.localizedDescription,
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw AcervoError.networkError(error)
     }
 
@@ -505,6 +695,15 @@ extension AcervoDownloader {
       httpResponse.statusCode != 200
     {
       try? FileManager.default.removeItem(at: tempFileURL)
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "Fallback file download failed with HTTP \(httpResponse.statusCode)",
+            modelID: nil,
+            fileName: fileName
+          ))
+      }
       throw AcervoError.downloadFailed(
         fileName: fileName,
         statusCode: httpResponse.statusCode
@@ -525,7 +724,7 @@ extension AcervoDownloader {
 
     // Ensure destination's parent directory exists
     let parentDirectory = destination.deletingLastPathComponent()
-    try ensureDirectory(at: parentDirectory)
+    try ensureDirectory(at: parentDirectory, telemetry: telemetry)
 
     // Remove any existing file at destination
     let fm = FileManager.default
@@ -537,9 +736,10 @@ extension AcervoDownloader {
     try fm.moveItem(at: tempFileURL, to: destination)
 
     // Verify integrity: size then SHA-256
-    try IntegrityVerification.verifyAgainstManifest(
+    try await IntegrityVerification.verifyAgainstManifest(
       fileURL: destination,
-      manifestFile: manifestFile
+      manifestFile: manifestFile,
+      telemetry: telemetry
     )
 
     // Report completion
@@ -584,7 +784,8 @@ extension AcervoDownloader {
     from url: URL,
     to destination: URL,
     manifestFile: CDNManifestFile,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -597,12 +798,22 @@ extension AcervoDownloader {
         fileIndex: 0,
         totalFiles: 1,
         progress: nil,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
       // (no point falling back -- the data was already bad)
       if streamError is AcervoError {
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: streamError.localizedDescription,
+              modelID: nil,
+              fileName: manifestFile.path
+            ))
+        }
         throw streamError
       }
 
@@ -619,7 +830,8 @@ extension AcervoDownloader {
         fileIndex: 0,
         totalFiles: 1,
         progress: nil,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     }
   }
@@ -650,7 +862,8 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -663,11 +876,21 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles,
         progress: progress,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
       if streamError is AcervoError {
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: streamError.localizedDescription,
+              modelID: nil,
+              fileName: fileName
+            ))
+        }
         throw streamError
       }
 
@@ -684,7 +907,8 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles,
         progress: progress,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     }
   }
@@ -725,10 +949,11 @@ extension AcervoDownloader {
     destination: URL,
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Step 1: Fetch and validate the manifest
-    let manifest = try await downloadManifest(for: modelId, session: session)
+    let manifest = try await downloadManifest(for: modelId, session: session, telemetry: telemetry)
 
     // Step 2: Determine which files to download
     let filesToDownload: [CDNManifestFile]
@@ -739,6 +964,19 @@ extension AcervoDownloader {
       // Download only requested files, validated against manifest
       filesToDownload = try requestedFiles.map { fileName in
         guard let entry = manifest.file(at: fileName) else {
+          // NOTE: This throw is inside a sync map closure; telemetry is fire-and-forget via Task.
+          // Ordering relative to the throw is not guaranteed, but the event will be captured.
+          if let tel = telemetry {
+            Task {
+              await tel.capture(
+                .errorThrown(
+                  phase: .other,
+                  errorDescription: "Requested file not found in manifest: \(fileName)",
+                  modelID: modelId,
+                  fileName: fileName
+                ))
+            }
+          }
           throw AcervoError.fileNotInManifest(
             fileName: fileName,
             modelId: modelId
@@ -749,7 +987,7 @@ extension AcervoDownloader {
     }
 
     // Step 3: Ensure the top-level destination directory exists
-    try ensureDirectory(at: destination)
+    try ensureDirectory(at: destination, telemetry: telemetry)
 
     let totalFiles = filesToDownload.count
 
@@ -783,10 +1021,61 @@ extension AcervoDownloader {
 
         let fileDestination = destination.appendingPathComponent(manifestFile.path)
 
-        // Skip if file already exists with the correct size (and force is off).
-        if !force && FileManager.default.fileExists(atPath: fileDestination.path) {
+        // Cache decision: emit cacheHit/cacheMiss BEFORE any network I/O so
+        // observers see the verdict before HTTP traffic. Payload construction
+        // is skipped when no reporter is attached. The current cache check is
+        // size-only (no on-disk SHA recomputation), so we can definitively
+        // emit `.notPresent`, `.sizeChangedRemote`, or `.forcedRefresh`. The
+        // `.corrupted` and `.shaChangedRemote` reasons are reserved for
+        // future verify-on-read paths that recompute the on-disk SHA before
+        // network I/O — currently unreachable from this code path (see
+        // CacheMissReason references near `modelLoadComplete` below).
+        let fm = FileManager.default
+        if force {
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .forcedRefresh
+              )
+            )
+          }
+          // Fall through to download (force overrides cache).
+        } else if !fm.fileExists(atPath: fileDestination.path) {
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .notPresent
+              )
+            )
+          }
+          // Fall through to download.
+        } else {
           let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
           if existingSize == manifestFile.sizeBytes {
+            // Cache hit: file exists with the correct size. Emit before
+            // crediting progress so observers see the cache decision first.
+            if let telemetry {
+              let ageSeconds: Double
+              if let attrs = try? fm.attributesOfItem(atPath: fileDestination.path),
+                let mtime = attrs[.modificationDate] as? Date
+              {
+                ageSeconds = Date().timeIntervalSince(mtime)
+              } else {
+                ageSeconds = 0
+              }
+              await telemetry.capture(
+                .cacheHit(
+                  modelID: modelId,
+                  fileName: manifestFile.path,
+                  onDiskBytes: existingSize,
+                  ageSeconds: ageSeconds
+                )
+              )
+            }
             // Credit this file's full byte count so overall progress is accurate.
             let overallFraction = byteTracker.update(
               fileIndex: index,
@@ -803,7 +1092,20 @@ extension AcervoDownloader {
               ))
             continue
           }
-          // Size mismatch -- file is corrupt or stale, re-download.
+          // Size mismatch -- file is corrupt or stale, re-download. The
+          // existing code can't distinguish "size changed at the remote"
+          // from "local corruption" without recomputing the on-disk SHA, so
+          // we report `.sizeChangedRemote` (the literal observation: the
+          // on-disk byte count differs from the CDN's current manifest).
+          if let telemetry {
+            await telemetry.capture(
+              .cacheMiss(
+                modelID: modelId,
+                fileName: manifestFile.path,
+                reason: .sizeChangedRemote
+              )
+            )
+          }
         }
 
         let url = buildURL(modelId: modelId, fileName: manifestFile.path)
@@ -836,10 +1138,31 @@ extension AcervoDownloader {
         }
 
         let capturedSession = session
+        let capturedTelemetry = telemetry
+        let capturedModelId = modelId
 
         group.addTask {
           // Cooperative cancellation inside the child task.
           try Task.checkCancellation()
+
+          // Per-component start. Payload construction (URL string, expected
+          // bytes) is skipped when no reporter is attached. Duration is
+          // measured from this point — slightly before body-read (the TCP
+          // handshake is included). True start-of-body-read would require
+          // passing telemetry farther down into `streamDownloadFile`, which
+          // doesn't carry the modelID needed for the event payload.
+          let bodyReadStart = Date()
+          if let telemetry = capturedTelemetry {
+            let sourceURLString = capturedURL.absoluteString
+            await telemetry.capture(
+              .componentDownloadStart(
+                modelID: capturedModelId,
+                fileName: capturedManifestFile.path,
+                expectedBytes: capturedManifestFile.sizeBytes,
+                sourceURL: sourceURLString
+              )
+            )
+          }
 
           try await downloadFile(
             from: capturedURL,
@@ -849,8 +1172,33 @@ extension AcervoDownloader {
             fileIndex: capturedIndex,
             totalFiles: totalFiles,
             progress: wrappedProgress,
-            session: capturedSession
+            session: capturedSession,
+            telemetry: capturedTelemetry
           )
+
+          // Per-component complete. Throughput is reported in megabytes per
+          // second using the base-1024 (MiB/s) convention: bytes / seconds /
+          // 1_048_576. Skipped when no reporter is attached.
+          if let telemetry = capturedTelemetry {
+            let durationSeconds = Date().timeIntervalSince(bodyReadStart)
+            let actualBytes = capturedManifestFile.sizeBytes
+            let throughputMBps: Double
+            if durationSeconds > 0 {
+              throughputMBps =
+                Double(actualBytes) / durationSeconds / 1_048_576.0
+            } else {
+              throughputMBps = 0
+            }
+            await telemetry.capture(
+              .componentDownloadComplete(
+                modelID: capturedModelId,
+                fileName: capturedManifestFile.path,
+                actualBytes: actualBytes,
+                durationSeconds: durationSeconds,
+                throughputMBps: throughputMBps
+              )
+            )
+          }
         }
 
         inFlight += 1
@@ -859,6 +1207,35 @@ extension AcervoDownloader {
       // Drain any remaining in-flight tasks.  If any of them threw, the
       // error propagates here and the task group cancels the remaining ones.
       try await group.waitForAll()
+    }
+
+    // Boundary memory event: emit once per model after the last component
+    // is verified (downloaded OR cache-hit). This is the choke-point where
+    // all per-file paths (download + integrity verify, or cache-hit skip)
+    // have converged; the host adapter wraps this single emission with a
+    // memory snapshot to characterize boundary-memory state at the end of
+    // model materialization.
+    //
+    // Adapter routes this event through captureWithMemorySnapshot; library emits normally.
+    //
+    // CacheMissReason coverage note: only `.notPresent`, `.sizeChangedRemote`,
+    // and `.forcedRefresh` fire from the current code path. The two reasons
+    // `.shaChangedRemote` and `.corrupted` are reserved for a future
+    // verify-on-read path that recomputes the on-disk SHA before any network
+    // I/O — they are unreachable from the present cache check, which is
+    // size-only. Symbol references retained for enum coverage:
+    // AcervoTelemetryEvent.CacheMissReason.shaChangedRemote (reserved),
+    // AcervoTelemetryEvent.CacheMissReason.corrupted (reserved).
+    if let telemetry {
+      let totalSizeMB = Double(totalAllBytes) / 1_048_576.0
+      let componentCount = filesToDownload.count
+      await telemetry.capture(
+        .modelLoadComplete(
+          modelID: modelId,
+          totalSizeMB: totalSizeMB,
+          componentCount: componentCount
+        )
+      )
     }
   }
 }

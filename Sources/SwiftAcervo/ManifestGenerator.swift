@@ -55,6 +55,9 @@ public actor ManifestGenerator {
   /// for `/` so the file stays valid even for ad-hoc directories.
   private let modelId: String?
 
+  /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
+  private var telemetry: (any AcervoTelemetryReporter)? = nil
+
   /// File names that must never appear inside the generated manifest
   /// (the manifest itself, and hidden macOS cruft).
   private static let excludedFileNames: Set<String> = [
@@ -72,6 +75,16 @@ public actor ManifestGenerator {
   public init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {
     self.modelId = modelId
     self.manifestVersion = manifestVersion
+  }
+
+  /// Attaches or removes a telemetry reporter.
+  ///
+  /// Pass `nil` to stop telemetry. The reporter is called from within actor
+  /// isolation, so callers must `await` this setter.
+  ///
+  /// - Parameter reporter: The reporter to use, or `nil` to disable telemetry.
+  public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
+    self.telemetry = reporter
   }
 
   /// Scans `directory`, verifies every file is non-empty (CHECK 2), writes

@@ -55,8 +55,21 @@ public actor AcervoManager {
   /// Access counts per model ID for statistics tracking.
   private var accessCount: [String: Int] = [:]
 
+  /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
+  private var telemetry: (any AcervoTelemetryReporter)? = nil
+
   /// Private initializer to enforce singleton usage.
   private init() {}
+
+  /// Attaches or removes a telemetry reporter.
+  ///
+  /// Pass `nil` to stop telemetry. The reporter is called from within actor
+  /// isolation, so callers must `await` this setter.
+  ///
+  /// - Parameter reporter: The reporter to use, or `nil` to disable telemetry.
+  public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
+    self.telemetry = reporter
+  }
 }
 
 // MARK: - Per-Model Locking
@@ -327,16 +340,49 @@ extension AcervoManager {
 
     trackDownload(for: modelId)
 
+    // Lifecycle: snapshot start time and emit at the AcervoManager surface
+    // before delegating. The underlying Acervo.download also emits its own
+    // lifecycle pair, so hosts that wire telemetry at both layers will see
+    // duplicated start/complete events — typical practice is to attach the
+    // reporter to one layer (manager OR static surface), not both. Payload
+    // construction is skipped when no reporter is attached.
+    let startTime = Date()
+    if let telemetry {
+      let offlineSnapshot = Acervo.isOfflineModeActive
+      let requestedSnapshot = files
+      await telemetry.capture(
+        .downloadOperationStart(
+          modelID: modelId,
+          requestedFiles: requestedSnapshot,
+          offlineMode: offlineSnapshot
+        )
+      )
+    }
+
     try await Acervo.download(
       modelId,
       files: files,
       force: force,
-      progress: progress
+      progress: progress,
+      telemetry: self.telemetry
     )
 
     // Cache the model directory URL after successful download
     if let modelDir = try? Acervo.modelDirectory(for: modelId) {
       cacheURL(modelDir, for: modelId)
+    }
+
+    // Lifecycle completion — see note on `downloadOperationComplete` in
+    // Acervo.download for why `totalBytes` is 0 at this layer.
+    if let telemetry {
+      let durationSeconds = Date().timeIntervalSince(startTime)
+      await telemetry.capture(
+        .downloadOperationComplete(
+          modelID: modelId,
+          totalBytes: 0,
+          durationSeconds: durationSeconds
+        )
+      )
     }
   }
 }

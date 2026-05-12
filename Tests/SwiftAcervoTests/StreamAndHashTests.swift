@@ -111,7 +111,7 @@ struct StreamAndHashTests {
   // MARK: - Hash Mismatch Detection and Temp Cleanup
 
   @Test("Hash mismatch deletes temp file and throws integrityCheckFailed")
-  func hashMismatchDeletesTempAndThrows() throws {
+  func hashMismatchDeletesTempAndThrows() async throws {
     let tempDir = try makeTempDirectory()
     defer { cleanupTempDirectory(tempDir) }
 
@@ -142,7 +142,7 @@ struct StreamAndHashTests {
     try content.write(to: destination)
 
     do {
-      try IntegrityVerification.verifyAgainstManifest(
+      try await IntegrityVerification.verifyAgainstManifest(
         fileURL: destination,
         manifestFile: manifestFile
       )
@@ -163,7 +163,7 @@ struct StreamAndHashTests {
   // MARK: - Size Mismatch Detection
 
   @Test("Size mismatch throws downloadSizeMismatch")
-  func sizeMismatchThrows() throws {
+  func sizeMismatchThrows() async throws {
     let tempDir = try makeTempDirectory()
     defer { cleanupTempDirectory(tempDir) }
 
@@ -181,7 +181,7 @@ struct StreamAndHashTests {
     )
 
     do {
-      try IntegrityVerification.verifyAgainstManifest(
+      try await IntegrityVerification.verifyAgainstManifest(
         fileURL: fileURL,
         manifestFile: manifestFile
       )
