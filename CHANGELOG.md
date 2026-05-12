@@ -13,14 +13,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`AcervoTelemetryEvent` public enum** — 14 cases covering the full download lifecycle: `downloadOperationStart`, `downloadOperationComplete`, `componentDownloadStart`, `componentDownloadComplete`, `manifestFetchStart`, `manifestFetchComplete`, `integrityVerifyStart`, `integrityVerifyComplete`, `cacheHit`, `cacheMiss`, `cdnRequest`, `modelLoadComplete`, `errorThrown`, plus nested `CacheMissReason` (5 cases: `.notPresent`, `.shaChangedRemote`, `.sizeChangedRemote`, `.corrupted`, `.forcedRefresh`) and `ErrorPhase` (11 cases: `.manifestDownload`, `.manifestDecode`, `.manifestVersionUnsupported`, `.manifestIntegrity`, `.fileDownload`, `.fileDownloadSize`, `.fileDownloadIntegrity`, `.directoryCreation`, `.offlineMode`, `.s3Request`, `.other`) enums. Conforms to `Sendable`.
 - **`AcervoTelemetryReporter` public protocol** — single `async` non-throwing `capture(_:)` method; conforms to `Sendable`. Host adopters implement this to receive telemetry events.
-- **`NoopAcervoTelemetryReporter` public struct** — zero-overhead no-op implementation for consumers who want telemetry wired but not yet routed. Measured overhead: nil-reporter median 0.82 ms vs. noop-reporter median 0.80 ms (delta -1.4%), well within the ≤2% budget.
+- **`NoopAcervoTelemetryReporter` public struct** — zero-overhead no-op implementation (`async capture(_:) {}`) for consumers who want telemetry wired but not yet routed. The body is empty, so per-call cost is bounded by the `await` overhead (sub-microsecond).
 - **`setTelemetry(_:)` on `AcervoManager`, `ModelDownloadManager`, `S3CDNClient`, and `ManifestGenerator`** — each accepts an optional `(any AcervoTelemetryReporter)?`; `nil` disables reporting with zero call-site overhead (guard-nil skip pattern at every emission site).
 - **Defaulted `telemetry:` parameter on `Acervo.download`, `Acervo.publishModel`, `Acervo.deleteModel`/`Acervo.deleteFromCDN`, and `Acervo.ensureAvailable`** — all default to `nil`; existing call sites compile unchanged.
 - **9 distinct emission sites** wired across `Acervo.swift`, `AcervoManager.swift`, `AcervoDownloader.swift`, `S3CDNClient.swift`, and `IntegrityVerification.swift`.
 - **`errorThrown` wired at every throw site** in `AcervoDownloader.swift` and `ModelDownloadManager.swift` (24 throw sites, 24 paired emissions). Each emission fires immediately before the `throw`, satisfying event-before-throw ordering.
-- **4 new test files** in `Tests/SwiftAcervoTests/`:
+- **3 new test files** in `Tests/SwiftAcervoTests/`:
   - `AcervoTelemetryMockReporterTests.swift` — mock reporter, full lifecycle ordering assertions, and `setTelemetry(nil)` zero-event sanity check.
-  - `AcervoTelemetryNoopOverheadTests.swift` — 50-iteration wall-clock comparison (nil vs. noop); asserts median delta ≤ 2%.
   - `AcervoTelemetryCacheMissReasonTests.swift` — drives each `CacheMissReason` case deterministically.
   - `AcervoTelemetryIntegrityFailureTests.swift` — injects a wrong-SHA file; asserts `integrityVerifyComplete(passed: false)` and `errorThrown(phase: .fileDownloadIntegrity)` fire before the throw propagates.
 
