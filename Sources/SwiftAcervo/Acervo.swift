@@ -998,6 +998,23 @@ extension Acervo {
       throw AcervoError.invalidModelId(modelId)
     }
 
+    // Lifecycle: snapshot wall-clock start and offline mode so the duration
+    // measurement reflects the entire download operation including manifest
+    // fetch and integrity verification. Payload construction is skipped when
+    // no reporter is attached (hot-path discipline per requirements §5).
+    let startTime = Date()
+    if let telemetry {
+      let offlineSnapshot = Acervo.isOfflineModeActive
+      let requestedSnapshot = files
+      await telemetry.capture(
+        .downloadOperationStart(
+          modelID: modelId,
+          requestedFiles: requestedSnapshot,
+          offlineMode: offlineSnapshot
+        )
+      )
+    }
+
     // Compute destination directory
     let destination = baseDirectory.appendingPathComponent(slugify(modelId))
 
@@ -1018,6 +1035,21 @@ extension Acervo {
       progress: progress,
       telemetry: telemetry
     )
+
+    // Lifecycle: emit completion on the success path. `totalBytes` is reported
+    // as 0 at this layer; consumers needing an exact byte total should sum
+    // `componentDownloadComplete.actualBytes` events (those carry the
+    // per-file ground truth from the integrity-verified stream).
+    if let telemetry {
+      let durationSeconds = Date().timeIntervalSince(startTime)
+      await telemetry.capture(
+        .downloadOperationComplete(
+          modelID: modelId,
+          totalBytes: 0,
+          durationSeconds: durationSeconds
+        )
+      )
+    }
   }
 }
 

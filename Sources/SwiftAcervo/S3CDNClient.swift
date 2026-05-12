@@ -892,13 +892,40 @@ public actor S3CDNClient {
   // MARK: - Networking helper
 
   private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+    // One `cdnRequest` event per HTTP request including 4xx/5xx responses.
+    // Per requirements §5 hot-path discipline, URL/header materialization
+    // is skipped when no reporter is attached. Latency is measured from
+    // here to first byte of the response (URLSession returns once the
+    // full body has been read, so this captures end-to-end including TCP
+    // handshake, TLS, signing-cost-free server time, and body transfer).
+    let requestStart = Date()
+    let result: (Data, URLResponse)
     do {
-      return try await session.data(for: request)
+      result = try await session.data(for: request)
     } catch let error as AcervoError {
       throw error
     } catch {
       throw error
     }
+
+    if let telemetry {
+      let latencyMS = Date().timeIntervalSince(requestStart) * 1000.0
+      let method = request.httpMethod ?? "GET"
+      let urlString = request.url?.absoluteString ?? ""
+      let statusCode = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+      let byteCount: Int64? = Int64(result.0.count)
+      await telemetry.capture(
+        .cdnRequest(
+          method: method,
+          url: urlString,
+          statusCode: statusCode,
+          latencyMS: latencyMS,
+          byteCount: byteCount
+        )
+      )
+    }
+
+    return result
   }
 
   // MARK: - URL construction

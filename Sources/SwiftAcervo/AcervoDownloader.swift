@@ -223,6 +223,15 @@ extension AcervoDownloader {
     let url = buildManifestURL(modelId: modelId)
     let request = buildRequest(from: url)
 
+    // Emit manifest-fetch start before URLSession dispatch. URL string
+    // materialization is skipped when no reporter is attached.
+    if let telemetry {
+      let urlString = url.absoluteString
+      await telemetry.capture(
+        .manifestFetchStart(modelID: modelId, manifestURL: urlString)
+      )
+    }
+
     // Download manifest using the provided session
     let data: Data
     let response: URLResponse
@@ -268,6 +277,21 @@ extension AcervoDownloader {
       throw AcervoError.manifestIntegrityFailed(
         expected: manifest.manifestChecksum,
         actual: computedChecksum
+      )
+    }
+
+    // Emit manifest-fetch complete after the manifest has been fully
+    // validated. `manifestVersion` is stringified because the event signature
+    // carries it as a String (the underlying field is an Int).
+    if let telemetry {
+      let totalDeclared = manifest.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
+      await telemetry.capture(
+        .manifestFetchComplete(
+          modelID: modelId,
+          manifestVersion: String(manifest.manifestVersion),
+          fileCount: manifest.files.count,
+          totalDeclaredBytes: totalDeclared
+        )
       )
     }
 
@@ -848,10 +872,30 @@ extension AcervoDownloader {
 
         let capturedSession = session
         let capturedTelemetry = telemetry
+        let capturedModelId = modelId
 
         group.addTask {
           // Cooperative cancellation inside the child task.
           try Task.checkCancellation()
+
+          // Per-component start. Payload construction (URL string, expected
+          // bytes) is skipped when no reporter is attached. Duration is
+          // measured from this point — slightly before body-read (the TCP
+          // handshake is included). True start-of-body-read would require
+          // passing telemetry farther down into `streamDownloadFile`, which
+          // doesn't carry the modelID needed for the event payload.
+          let bodyReadStart = Date()
+          if let telemetry = capturedTelemetry {
+            let sourceURLString = capturedURL.absoluteString
+            await telemetry.capture(
+              .componentDownloadStart(
+                modelID: capturedModelId,
+                fileName: capturedManifestFile.path,
+                expectedBytes: capturedManifestFile.sizeBytes,
+                sourceURL: sourceURLString
+              )
+            )
+          }
 
           try await downloadFile(
             from: capturedURL,
@@ -864,6 +908,30 @@ extension AcervoDownloader {
             session: capturedSession,
             telemetry: capturedTelemetry
           )
+
+          // Per-component complete. Throughput is reported in megabytes per
+          // second using the base-1024 (MiB/s) convention: bytes / seconds /
+          // 1_048_576. Skipped when no reporter is attached.
+          if let telemetry = capturedTelemetry {
+            let durationSeconds = Date().timeIntervalSince(bodyReadStart)
+            let actualBytes = capturedManifestFile.sizeBytes
+            let throughputMBps: Double
+            if durationSeconds > 0 {
+              throughputMBps =
+                Double(actualBytes) / durationSeconds / 1_048_576.0
+            } else {
+              throughputMBps = 0
+            }
+            await telemetry.capture(
+              .componentDownloadComplete(
+                modelID: capturedModelId,
+                fileName: capturedManifestFile.path,
+                actualBytes: actualBytes,
+                durationSeconds: durationSeconds,
+                throughputMBps: throughputMBps
+              )
+            )
+          }
         }
 
         inFlight += 1

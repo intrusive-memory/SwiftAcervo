@@ -340,6 +340,25 @@ extension AcervoManager {
 
     trackDownload(for: modelId)
 
+    // Lifecycle: snapshot start time and emit at the AcervoManager surface
+    // before delegating. The underlying Acervo.download also emits its own
+    // lifecycle pair, so hosts that wire telemetry at both layers will see
+    // duplicated start/complete events — typical practice is to attach the
+    // reporter to one layer (manager OR static surface), not both. Payload
+    // construction is skipped when no reporter is attached.
+    let startTime = Date()
+    if let telemetry {
+      let offlineSnapshot = Acervo.isOfflineModeActive
+      let requestedSnapshot = files
+      await telemetry.capture(
+        .downloadOperationStart(
+          modelID: modelId,
+          requestedFiles: requestedSnapshot,
+          offlineMode: offlineSnapshot
+        )
+      )
+    }
+
     try await Acervo.download(
       modelId,
       files: files,
@@ -351,6 +370,19 @@ extension AcervoManager {
     // Cache the model directory URL after successful download
     if let modelDir = try? Acervo.modelDirectory(for: modelId) {
       cacheURL(modelDir, for: modelId)
+    }
+
+    // Lifecycle completion — see note on `downloadOperationComplete` in
+    // Acervo.download for why `totalBytes` is 0 at this layer.
+    if let telemetry {
+      let durationSeconds = Date().timeIntervalSince(startTime)
+      await telemetry.capture(
+        .downloadOperationComplete(
+          modelID: modelId,
+          totalBytes: 0,
+          durationSeconds: durationSeconds
+        )
+      )
     }
   }
 }
