@@ -1,10 +1,14 @@
+---
+updated: 2026-05-12
+---
+
 # AGENTS.md — Documentation Hub for AI Agents
 
 This file serves as a navigation hub for AI agents working with the SwiftAcervo codebase.
 
 **Current Version**: 0.12.0-dev (May 2026)
 
-**For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](USAGE.md)**.
+**For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](Docs/USAGE.md)**.
 
 ---
 
@@ -35,7 +39,7 @@ A consuming library does not know what files exist inside a model until the CDN 
 2. **`Acervo.ensureAvailable(_, files: [], progress:)`** — single model with empty `files:` array, which means "download whatever the manifest lists."
 3. **`Acervo.ensureComponentReady(_, progress:)`** on a bare `ComponentDescriptor`** — registered components auto-hydrate from the manifest on first call.
 
-Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre-release models, explicit subset downloads) but should not be the default. See [USAGE.md](USAGE.md) for details and runnable examples.
+Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre-release models, explicit subset downloads) but should not be the default. See [USAGE.md](Docs/USAGE.md) for details and runnable examples.
 
 ---
 
@@ -43,7 +47,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 🎯 For Consuming Libraries (**Start Here**)
 
-- **[USAGE.md](USAGE.md)** — Integration guide, quick start, examples, FAQ
+- **[USAGE.md](Docs/USAGE.md)** — Integration guide, quick start, examples, FAQ
   - How to add SwiftAcervo to your project
   - Common patterns and best practices
   - Error handling
@@ -51,7 +55,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 📚 Complete API Reference
 
-- **[API_REFERENCE.md](API_REFERENCE.md)** — All methods, types, and error cases
+- **[API_REFERENCE.md](Docs/API_REFERENCE.md)** — All methods, types, and error cases
   - `Acervo` static API
   - `AcervoManager` actor API
   - `ModelDownloadManager` for batch downloads
@@ -59,7 +63,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 🌐 Model Storage and Discovery
 
-- **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** — Where models live
+- **[SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md)** — Where models live
   - Canonical path: `~/Library/Group Containers/<app-group-id>/SharedModels/`
   - Directory structure and naming conventions
   - Validity marker (`config.json`)
@@ -68,7 +72,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 🛠️ Building, Testing, and CLI
 
-- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** — Build commands and acervo CLI
+- **[BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md)** — Build commands and acervo CLI
   - Make targets (build, test, lint, clean)
   - `acervo` CLI tool for CDN operations
   - Unit tests (no network) vs integration tests
@@ -77,13 +81,13 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 🌐 CDN Operations
 
-- **[CDN_UPLOAD.md](CDN_UPLOAD.md)** — How to upload models to the CDN
+- **[CDN_UPLOAD.md](Docs/CDN_UPLOAD.md)** — How to upload models to the CDN
   - Full pipeline: `acervo ship --model-id "org/repo"`
   - Step-by-step commands (download, manifest, verify, upload)
   - Environment variables and credentials
   - Troubleshooting and best practices
 
-- **[CDN_ARCHITECTURE.md](CDN_ARCHITECTURE.md)** — How downloads work internally
+- **[CDN_ARCHITECTURE.md](Docs/CDN_ARCHITECTURE.md)** — How downloads work internally
   - 7-step download flow with verification
   - Manifest format and manifest checksum
   - Security properties (integrity, authenticity, non-repudiation)
@@ -91,7 +95,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
 
 ### 🏗️ Architecture and Design
 
-- **[DESIGN_PATTERNS.md](DESIGN_PATTERNS.md)** — Why SwiftAcervo is designed this way
+- **[DESIGN_PATTERNS.md](Docs/DESIGN_PATTERNS.md)** — Why SwiftAcervo is designed this way
   - Static API + Actor pattern
   - CDN-only downloads
   - Per-file manifest verification
@@ -100,18 +104,13 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
   - Atomic downloads
   - Zero external dependencies
 
-- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** — How the code is organized
+- **[PROJECT_STRUCTURE.md](Docs/PROJECT_STRUCTURE.md)** — How the code is organized
   - File layout (Sources/, Tests/, Tools/)
   - Module purposes and dependencies
   - Library vs CLI vs tests
   - Package configuration
 
-- **[REQUIREMENTS.md](REQUIREMENTS.md)** — Component registry specification (draft)
-  - v2 design for declarative model registration
-  - ComponentDescriptor types
-  - Deduplication across plugins
-
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Ecosystem dependency map
+- **[ARCHITECTURE.md](Docs/ARCHITECTURE.md)** — Ecosystem dependency map
   - Where SwiftAcervo fits
   - What other packages depend on it
   - Interface contracts for plugins
@@ -124,7 +123,7 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
   - Thread safety guarantees
   - Design principles
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Development guidelines
+- **[CONTRIBUTING.md](Docs/CONTRIBUTING.md)** — Development guidelines
   - How to contribute
   - Code conventions
   - PR process
@@ -164,7 +163,7 @@ let models = try Acervo.listModels()
 let matches = try Acervo.findModels(matching: "Qwen")
 ```
 
-**Full reference**: [API_REFERENCE.md](API_REFERENCE.md)
+**Full reference**: [API_REFERENCE.md](Docs/API_REFERENCE.md)
 
 ### Actor API: `AcervoManager`
 
@@ -178,7 +177,7 @@ let config = try await AcervoManager.shared.withModelAccess(modelId) { dir in
 }
 ```
 
-**Full reference**: [API_REFERENCE.md](API_REFERENCE.md)
+**Full reference**: [API_REFERENCE.md](Docs/API_REFERENCE.md)
 
 ### Multi-Model Downloads: `ModelDownloadManager`
 
@@ -192,7 +191,7 @@ try await ModelDownloadManager.shared.ensureModelsAvailable([
 }
 ```
 
-**Full reference**: [API_REFERENCE.md](API_REFERENCE.md)
+**Full reference**: [API_REFERENCE.md](Docs/API_REFERENCE.md)
 
 ### CLI Progress Bars in Consumer Tools
 
@@ -237,25 +236,25 @@ print()
 ## Common Questions
 
 **Q: How do I integrate SwiftAcervo into my app?**
-→ Start with [USAGE.md](USAGE.md)
+→ Start with [USAGE.md](Docs/USAGE.md)
 
 **Q: What methods are available?**
-→ See [API_REFERENCE.md](API_REFERENCE.md)
+→ See [API_REFERENCE.md](Docs/API_REFERENCE.md)
 
 **Q: Where are models stored?**
-→ See [SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)
+→ See [SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md)
 
 **Q: How do I upload a model to the CDN?**
-→ See [CDN_UPLOAD.md](CDN_UPLOAD.md)
+→ See [CDN_UPLOAD.md](Docs/CDN_UPLOAD.md)
 
 **Q: How do downloads work internally?**
-→ See [CDN_ARCHITECTURE.md](CDN_ARCHITECTURE.md)
+→ See [CDN_ARCHITECTURE.md](Docs/CDN_ARCHITECTURE.md)
 
 **Q: Why is SwiftAcervo designed this way?**
-→ See [DESIGN_PATTERNS.md](DESIGN_PATTERNS.md)
+→ See [DESIGN_PATTERNS.md](Docs/DESIGN_PATTERNS.md)
 
 **Q: How do I build and test SwiftAcervo?**
-→ See [BUILD_AND_TEST.md](BUILD_AND_TEST.md)
+→ See [BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md)
 
 ---
 
@@ -275,4 +274,4 @@ print()
 
 - **[CLAUDE.md](CLAUDE.md)** for AI agent development guidance
 - **[README.md](README.md)** for user overview
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** for development guidelines
+- **[CONTRIBUTING.md](Docs/CONTRIBUTING.md)** for development guidelines

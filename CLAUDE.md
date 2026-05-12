@@ -1,3 +1,7 @@
+---
+updated: 2026-05-12
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with SwiftAcervo.
@@ -38,7 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 **Start here** if you're adding SwiftAcervo to your app or library:
 
-- **[USAGE.md](USAGE.md)** — Integration guide, examples, common patterns, FAQ
+- **[USAGE.md](Docs/USAGE.md)** — Integration guide, examples, common patterns, FAQ
   - Quick start (add to Package.swift)
   - Integration checklist
   - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta)
@@ -49,35 +53,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 Complete reference for all methods and types:
 
-- **[API_REFERENCE.md](API_REFERENCE.md)** — All Acervo and AcervoManager methods, types, error handling
-- **[SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md)** — Where models are stored, directory structure, migration
+- **[API_REFERENCE.md](Docs/API_REFERENCE.md)** — All Acervo and AcervoManager methods, types, error handling
+- **[SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md)** — Where models are stored, directory structure, migration
 
 ### 🛠️ **Building and Testing**
 
 For developers building SwiftAcervo itself or using the CLI:
 
-- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** — Make targets, acervo CLI tool, unit/integration tests, CI/CD
+- **[BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md)** — Make targets, acervo CLI tool, unit/integration tests, CI/CD
 
 ### 🌐 **CDN Operations**
 
 For uploading models to the CDN:
 
-- **[CDN_UPLOAD.md](CDN_UPLOAD.md)** — Full pipeline (`acervo ship`), step-by-step commands, environment variables
-- **[CDN_ARCHITECTURE.md](CDN_ARCHITECTURE.md)** — How downloads work, verification, security properties
+- **[CDN_UPLOAD.md](Docs/CDN_UPLOAD.md)** — Full pipeline (`acervo ship`), step-by-step commands, environment variables
+- **[CDN_ARCHITECTURE.md](Docs/CDN_ARCHITECTURE.md)** — How downloads work, verification, security properties
 
 ### 🏗️ **Architecture & Design**
 
 For understanding the system:
 
-- **[DESIGN_PATTERNS.md](DESIGN_PATTERNS.md)** — Core patterns (Static+Actor, streaming SHA-256, per-model locking, atomic downloads)
-- **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** — File organization, module layout, test structure
-- **[REQUIREMENTS.md](REQUIREMENTS.md)** — v2 component registry specification (draft)
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Ecosystem dependency map, interface contracts
+- **[DESIGN_PATTERNS.md](Docs/DESIGN_PATTERNS.md)** — Core patterns (Static+Actor, streaming SHA-256, per-model locking, atomic downloads)
+- **[PROJECT_STRUCTURE.md](Docs/PROJECT_STRUCTURE.md)** — File organization, module layout, test structure
+- **[ARCHITECTURE.md](Docs/ARCHITECTURE.md)** — Ecosystem dependency map, interface contracts
 
 ### 📖 **User Documentation**
 
 - **[README.md](README.md)** — High-level overview, quick start, installation
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Development guidelines and contribution process
+- **[CONTRIBUTING.md](Docs/CONTRIBUTING.md)** — Development guidelines and contribution process
 
 ---
 
@@ -101,7 +104,7 @@ acervo verify --model-id "org/repo"   # Verify all integrity checks
 acervo upload --model-id "org/repo"   # Upload to R2 CDN
 ```
 
-See [BUILD_AND_TEST.md](BUILD_AND_TEST.md) for full details.
+See [BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md) for full details.
 
 ---
 

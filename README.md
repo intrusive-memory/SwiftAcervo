@@ -1,3 +1,7 @@
+---
+updated: 2026-05-12
+---
+
 # SwiftAcervo
 
 Shared AI model discovery and management for Apple platforms.
@@ -40,7 +44,7 @@ For example, with `ACERVO_APP_GROUP_ID=group.intrusive-memory.models`:
     └── config.json
 ```
 
-The same directory is used by signed UI apps (resolved via the `com.apple.security.application-groups` entitlement) and unsigned CLI tools (resolved via the `ACERVO_APP_GROUP_ID` environment variable). Both write to the same path, so a model downloaded by either is immediately visible to the other. See [SHARED_MODELS_DIRECTORY.md](SHARED_MODELS_DIRECTORY.md) for full path-resolution rules.
+The same directory is used by signed UI apps (resolved via the `com.apple.security.application-groups` entitlement) and unsigned CLI tools (resolved via the `ACERVO_APP_GROUP_ID` environment variable). Both write to the same path, so a model downloaded by either is immediately visible to the other. See [SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md) for full path-resolution rules.
 
 LLM, TTS, audio, and vision models are all peers in the same flat directory. The presence of `config.json` marks a model as valid. SwiftAcervo finds and downloads models -- it does **not** load them. Loading is the consumer's job.
 
@@ -48,14 +52,14 @@ LLM, TTS, audio, and vision models are all peers in the same flat directory. The
 
 **For app and library developers integrating SwiftAcervo**, start here:
 
-- **[USAGE.md](USAGE.md)** — Complete integration guide
+- **[USAGE.md](Docs/USAGE.md)** — Complete integration guide
   - The manifest-first principle (you don't name files; the manifest does)
   - Three ways to avoid naming files (batch, single-model, registered component)
   - How to add SwiftAcervo to your project
   - Common patterns, error handling, FAQ
   - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta, Produciesta)
 
-**For complete API reference**, see [API_REFERENCE.md](API_REFERENCE.md).
+**For complete API reference**, see [API_REFERENCE.md](Docs/API_REFERENCE.md).
 
 **For all documentation**, see the [documentation map in AGENTS.md](AGENTS.md#documentation-map).
 
@@ -649,7 +653,7 @@ See [`.github/workflows/tests.yml`](.github/workflows/tests.yml) for the full wo
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing guidelines, commit conventions, and pull request process.
+See [CONTRIBUTING.md](Docs/CONTRIBUTING.md) for development setup, testing guidelines, commit conventions, and pull request process.
 
 ## License
 
