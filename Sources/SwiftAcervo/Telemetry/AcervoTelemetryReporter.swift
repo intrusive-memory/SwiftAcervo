@@ -1,8 +1,8 @@
 public protocol AcervoTelemetryReporter: Sendable {
-    func capture(_ event: AcervoTelemetryEvent) async
+  func capture(_ event: AcervoTelemetryEvent) async
 }
 
 public struct NoopAcervoTelemetryReporter: AcervoTelemetryReporter {
-    public init() {}
-    public func capture(_ event: AcervoTelemetryEvent) async {}
+  public init() {}
+  public func capture(_ event: AcervoTelemetryEvent) async {}
 }

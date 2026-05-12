@@ -122,7 +122,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       defer { MockURLProtocol.reset() }
 
       try await withIsolatedAcervoState {
-        let fixture = Self.makeFixture(modelId: "cache-test/not-present-\(UUID().uuidString.prefix(8))")
+        let fixture = Self.makeFixture(
+          modelId: "cache-test/not-present-\(UUID().uuidString.prefix(8))")
         Self.installResponder(fixture)
         let reporter = MockTelemetryReporter()
 
@@ -140,7 +141,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
 
         let events = await reporter.snapshot()
-        #expect(Self.matches(events, reason: .notPresent),
+        #expect(
+          Self.matches(events, reason: .notPresent),
           "expected .notPresent cacheMiss in \(events)")
       }
     }
@@ -191,7 +193,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
 
         let events = await reporter.snapshot()
-        #expect(Self.matches(events, reason: .sizeChangedRemote),
+        #expect(
+          Self.matches(events, reason: .sizeChangedRemote),
           "expected .sizeChangedRemote cacheMiss in \(events)")
       }
     }
@@ -232,7 +235,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
 
         let events = await reporter.snapshot()
-        #expect(Self.matches(events, reason: .forcedRefresh),
+        #expect(
+          Self.matches(events, reason: .forcedRefresh),
           "expected .forcedRefresh cacheMiss in \(events)")
       }
     }

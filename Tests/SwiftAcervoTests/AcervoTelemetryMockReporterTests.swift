@@ -163,14 +163,16 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         //    `downloadOperationStart` (that's the Acervo.swift wrapper).
         //    The first event from `downloadFiles` is `manifestFetchStart`.
         guard case .manifestFetchStart = events.first else {
-          Issue.record("expected manifestFetchStart as first event, got \(String(describing: events.first))")
+          Issue.record(
+            "expected manifestFetchStart as first event, got \(String(describing: events.first))")
           return
         }
 
         // 2. Last event MUST be `modelLoadComplete` (the boundary-memory event
         //    emitted at the end of `downloadFiles` per Sortie 5a).
         guard case .modelLoadComplete = events.last else {
-          Issue.record("expected modelLoadComplete as last event, got \(String(describing: events.last))")
+          Issue.record(
+            "expected modelLoadComplete as last event, got \(String(describing: events.last))")
           return
         }
 
@@ -308,21 +310,24 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         // tests elsewhere in the suite; here we are asserting the
         // reporter receives every case at least once, not that this
         // test alone drives every emission site.
-        await reporter.capture(.downloadOperationStart(
-          modelID: modelId, requestedFiles: [], offlineMode: false))
-        await reporter.capture(.downloadOperationComplete(
-          modelID: modelId, totalBytes: 0, durationSeconds: 0.001))
+        await reporter.capture(
+          .downloadOperationStart(
+            modelID: modelId, requestedFiles: [], offlineMode: false))
+        await reporter.capture(
+          .downloadOperationComplete(
+            modelID: modelId, totalBytes: 0, durationSeconds: 0.001))
 
         // cdnRequest: drive via S3CDNClient or manual injection.
         // S3CDNClient.send issues a cdnRequest event for every HTTP call.
         // Easier: emit it manually for coverage; the wiring is exercised
         // in S3CDNClientTests and CDNManifestIntegrityTests sibling suites.
-        await reporter.capture(.cdnRequest(
-          method: "GET",
-          url: "https://test.invalid/probe",
-          statusCode: 200,
-          latencyMS: 1.0,
-          byteCount: 0))
+        await reporter.capture(
+          .cdnRequest(
+            method: "GET",
+            url: "https://test.invalid/probe",
+            statusCode: 200,
+            latencyMS: 1.0,
+            byteCount: 0))
 
         // ---- Scenario 2: integrity failure to drive errorThrown ----
         let badConfig = Data(repeating: 0xff, count: 32)
@@ -345,11 +350,12 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           // immediately before the throw. We add errorThrown manually
           // since verifyAgainstManifest itself does not emit it (the
           // surrounding download path does).
-          await reporter.capture(.errorThrown(
-            phase: .fileDownloadIntegrity,
-            errorDescription: error.localizedDescription,
-            modelID: modelId,
-            fileName: "bad.bin"))
+          await reporter.capture(
+            .errorThrown(
+              phase: .fileDownloadIntegrity,
+              errorDescription: error.localizedDescription,
+              modelID: modelId,
+              fileName: "bad.bin"))
         }
 
         // ---- Assert coverage: every case fires at least once ----
@@ -359,19 +365,71 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           events.contains(where: test)
         }
 
-        #expect(anyMatches { if case .downloadOperationStart = $0 { return true }; return false })
-        #expect(anyMatches { if case .downloadOperationComplete = $0 { return true }; return false })
-        #expect(anyMatches { if case .componentDownloadStart = $0 { return true }; return false })
-        #expect(anyMatches { if case .componentDownloadComplete = $0 { return true }; return false })
-        #expect(anyMatches { if case .manifestFetchStart = $0 { return true }; return false })
-        #expect(anyMatches { if case .manifestFetchComplete = $0 { return true }; return false })
-        #expect(anyMatches { if case .integrityVerifyStart = $0 { return true }; return false })
-        #expect(anyMatches { if case .integrityVerifyComplete = $0 { return true }; return false })
-        #expect(anyMatches { if case .cacheHit = $0 { return true }; return false })
-        #expect(anyMatches { if case .cacheMiss = $0 { return true }; return false })
-        #expect(anyMatches { if case .cdnRequest = $0 { return true }; return false })
-        #expect(anyMatches { if case .modelLoadComplete = $0 { return true }; return false })
-        #expect(anyMatches { if case .errorThrown = $0 { return true }; return false })
+        #expect(
+          anyMatches {
+            if case .downloadOperationStart = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .downloadOperationComplete = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .componentDownloadStart = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .componentDownloadComplete = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .manifestFetchStart = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .manifestFetchComplete = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .integrityVerifyStart = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .integrityVerifyComplete = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .cacheHit = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .cacheMiss = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .cdnRequest = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .modelLoadComplete = $0 { return true }
+            return false
+          })
+        #expect(
+          anyMatches {
+            if case .errorThrown = $0 { return true }
+            return false
+          })
       }
     }
 
@@ -414,12 +472,14 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         // start + complete(passed:false) events. The throw cannot have
         // beaten the captures, because each capture is awaited inline
         // before the throw statement runs (Sortie 5a contract).
-        #expect(caughtCountAtCatch >= 2,
+        #expect(
+          caughtCountAtCatch >= 2,
           "expected ≥2 events recorded before throw propagated, got \(caughtCountAtCatch)")
 
         let events = await reporter.snapshot()
         let hasStart = events.contains(where: {
-          if case .integrityVerifyStart = $0 { return true }; return false
+          if case .integrityVerifyStart = $0 { return true }
+          return false
         })
         let hasFailComplete = events.contains(where: {
           if case .integrityVerifyComplete(_, _, _, _, let passed, _) = $0 {
@@ -473,7 +533,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
 
         let countAfterNilCall = await reporter.count()
-        #expect(countAfterNilCall == 0,
+        #expect(
+          countAfterNilCall == 0,
           "reporter received \(countAfterNilCall) events with telemetry:nil; expected 0")
 
         // ---- Surface 2: AcervoManager.shared.setTelemetry(nil) ----
@@ -492,7 +553,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           telemetry: nil
         )
         let countAfterSetNil = await reporter.count()
-        #expect(countAfterSetNil == 0,
+        #expect(
+          countAfterSetNil == 0,
           "reporter received \(countAfterSetNil) events after setTelemetry(nil); expected 0")
 
         // Independent confirmation: when a reporter IS passed at the
@@ -511,7 +573,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
         // The detached reporter remains empty.
         let stillSilent = await reporter.count()
-        #expect(stillSilent == 0,
+        #expect(
+          stillSilent == 0,
           "detached reporter received \(stillSilent) events; expected 0")
       }
     }

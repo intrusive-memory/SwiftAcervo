@@ -183,12 +183,13 @@ extension AcervoDownloader {
       // ErrorPhase.s3Request handled in S3CDNClient.swift (not reachable from this module).
       if let telemetry {
         Task {
-          await telemetry.capture(.errorThrown(
-            phase: .directoryCreation,
-            errorDescription: "Directory creation failed at \(url.path)",
-            modelID: nil,
-            fileName: nil
-          ))
+          await telemetry.capture(
+            .errorThrown(
+              phase: .directoryCreation,
+              errorDescription: "Directory creation failed at \(url.path)",
+              modelID: nil,
+              fileName: nil
+            ))
         }
       }
       throw AcervoError.directoryCreationFailed(url.path)
@@ -234,12 +235,13 @@ extension AcervoDownloader {
     // process completely offline (no DNS, no socket, no proxy).
     if Acervo.isOfflineModeActive {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .offlineMode,
-          errorDescription: "Manifest download blocked: offline mode is active",
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "Manifest download blocked: offline mode is active",
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.offlineModeActive
     }
@@ -263,12 +265,13 @@ extension AcervoDownloader {
       (data, response) = try await session.data(for: request)
     } catch {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestDownload,
-          errorDescription: error.localizedDescription,
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.networkError(error)
     }
@@ -278,12 +281,13 @@ extension AcervoDownloader {
       httpResponse.statusCode != 200
     {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestDownload,
-          errorDescription: "Manifest download failed with HTTP \(httpResponse.statusCode)",
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: "Manifest download failed with HTTP \(httpResponse.statusCode)",
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.manifestDownloadFailed(statusCode: httpResponse.statusCode)
     }
@@ -294,22 +298,24 @@ extension AcervoDownloader {
       manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
     } catch let error as AcervoError {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestDecode,
-          errorDescription: error.localizedDescription,
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDecode,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw error
     } catch {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestDecode,
-          errorDescription: error.localizedDescription,
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDecode,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.manifestDecodingFailed(error)
     }
@@ -317,12 +323,13 @@ extension AcervoDownloader {
     // Validate version
     guard manifest.manifestVersion == CDNManifest.supportedVersion else {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestVersionUnsupported,
-          errorDescription: "Unsupported manifest version: \(manifest.manifestVersion)",
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestVersionUnsupported,
+            errorDescription: "Unsupported manifest version: \(manifest.manifestVersion)",
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.manifestVersionUnsupported(manifest.manifestVersion)
     }
@@ -330,12 +337,14 @@ extension AcervoDownloader {
     // Validate model ID matches
     guard manifest.modelId == modelId else {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestIntegrity,
-          errorDescription: "Manifest model ID mismatch: expected \(modelId), got \(manifest.modelId)",
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestIntegrity,
+            errorDescription:
+              "Manifest model ID mismatch: expected \(modelId), got \(manifest.modelId)",
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.manifestModelIdMismatch(
         expected: modelId,
@@ -347,12 +356,13 @@ extension AcervoDownloader {
     let computedChecksum = CDNManifest.computeChecksum(from: manifest.files.map(\.sha256))
     guard manifest.manifestChecksum == computedChecksum else {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .manifestIntegrity,
-          errorDescription: "Manifest integrity check failed: checksum mismatch",
-          modelID: modelId,
-          fileName: nil
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestIntegrity,
+            errorDescription: "Manifest integrity check failed: checksum mismatch",
+            modelID: modelId,
+            fileName: nil
+          ))
       }
       throw AcervoError.manifestIntegrityFailed(
         expected: manifest.manifestChecksum,
@@ -423,12 +433,13 @@ extension AcervoDownloader {
     // (downloadFile, downloadFiles, hydrateComponent, etc.) routed here.
     if Acervo.isOfflineModeActive {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .offlineMode,
-          errorDescription: "File download blocked: offline mode is active",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "File download blocked: offline mode is active",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw AcervoError.offlineModeActive
     }
@@ -441,12 +452,13 @@ extension AcervoDownloader {
       httpResponse.statusCode != 200
     {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownload,
-          errorDescription: "File download failed with HTTP \(httpResponse.statusCode)",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "File download failed with HTTP \(httpResponse.statusCode)",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw AcervoError.downloadFailed(
         fileName: fileName,
@@ -487,12 +499,13 @@ extension AcervoDownloader {
     } catch {
       try? fm.removeItem(at: tempFileURL)
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .other,
-          errorDescription: "Failed to open temp file for writing: \(error.localizedDescription)",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .other,
+            errorDescription: "Failed to open temp file for writing: \(error.localizedDescription)",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw error
     }
@@ -534,12 +547,13 @@ extension AcervoDownloader {
       try? fileHandle.close()
       try? fm.removeItem(at: tempFileURL)
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownload,
-          errorDescription: "Stream interrupted or write failed: \(error.localizedDescription)",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "Stream interrupted or write failed: \(error.localizedDescription)",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw error
     }
@@ -548,12 +562,14 @@ extension AcervoDownloader {
     if bytesWritten != manifestFile.sizeBytes {
       try? fm.removeItem(at: tempFileURL)
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownloadSize,
-          errorDescription: "Size mismatch for \(manifestFile.path): expected \(manifestFile.sizeBytes), got \(bytesWritten)",
-          modelID: nil,
-          fileName: manifestFile.path
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownloadSize,
+            errorDescription:
+              "Size mismatch for \(manifestFile.path): expected \(manifestFile.sizeBytes), got \(bytesWritten)",
+            modelID: nil,
+            fileName: manifestFile.path
+          ))
       }
       throw AcervoError.downloadSizeMismatch(
         fileName: manifestFile.path,
@@ -568,12 +584,13 @@ extension AcervoDownloader {
     if actualHash != manifestFile.sha256 {
       try? fm.removeItem(at: tempFileURL)
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownloadIntegrity,
-          errorDescription: "SHA-256 mismatch for \(manifestFile.path)",
-          modelID: nil,
-          fileName: manifestFile.path
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownloadIntegrity,
+            errorDescription: "SHA-256 mismatch for \(manifestFile.path)",
+            modelID: nil,
+            fileName: manifestFile.path
+          ))
       }
       throw AcervoError.integrityCheckFailed(
         file: manifestFile.path,
@@ -644,12 +661,13 @@ extension AcervoDownloader {
     // before the legacy URLSession.download call.
     if Acervo.isOfflineModeActive {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .offlineMode,
-          errorDescription: "Fallback file download blocked: offline mode is active",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .offlineMode,
+            errorDescription: "Fallback file download blocked: offline mode is active",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw AcervoError.offlineModeActive
     }
@@ -661,12 +679,13 @@ extension AcervoDownloader {
       (tempFileURL, response) = try await session.download(for: request)
     } catch {
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownload,
-          errorDescription: error.localizedDescription,
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: error.localizedDescription,
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw AcervoError.networkError(error)
     }
@@ -677,12 +696,13 @@ extension AcervoDownloader {
     {
       try? FileManager.default.removeItem(at: tempFileURL)
       if let telemetry {
-        await telemetry.capture(.errorThrown(
-          phase: .fileDownload,
-          errorDescription: "Fallback file download failed with HTTP \(httpResponse.statusCode)",
-          modelID: nil,
-          fileName: fileName
-        ))
+        await telemetry.capture(
+          .errorThrown(
+            phase: .fileDownload,
+            errorDescription: "Fallback file download failed with HTTP \(httpResponse.statusCode)",
+            modelID: nil,
+            fileName: fileName
+          ))
       }
       throw AcervoError.downloadFailed(
         fileName: fileName,
@@ -786,12 +806,13 @@ extension AcervoDownloader {
       // (no point falling back -- the data was already bad)
       if streamError is AcervoError {
         if let telemetry {
-          await telemetry.capture(.errorThrown(
-            phase: .fileDownload,
-            errorDescription: streamError.localizedDescription,
-            modelID: nil,
-            fileName: manifestFile.path
-          ))
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: streamError.localizedDescription,
+              modelID: nil,
+              fileName: manifestFile.path
+            ))
         }
         throw streamError
       }
@@ -862,12 +883,13 @@ extension AcervoDownloader {
       // If the error is a verification or HTTP error, propagate immediately
       if streamError is AcervoError {
         if let telemetry {
-          await telemetry.capture(.errorThrown(
-            phase: .fileDownload,
-            errorDescription: streamError.localizedDescription,
-            modelID: nil,
-            fileName: fileName
-          ))
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: streamError.localizedDescription,
+              modelID: nil,
+              fileName: fileName
+            ))
         }
         throw streamError
       }
@@ -946,12 +968,13 @@ extension AcervoDownloader {
           // Ordering relative to the throw is not guaranteed, but the event will be captured.
           if let tel = telemetry {
             Task {
-              await tel.capture(.errorThrown(
-                phase: .other,
-                errorDescription: "Requested file not found in manifest: \(fileName)",
-                modelID: modelId,
-                fileName: fileName
-              ))
+              await tel.capture(
+                .errorThrown(
+                  phase: .other,
+                  errorDescription: "Requested file not found in manifest: \(fileName)",
+                  modelID: modelId,
+                  fileName: fileName
+                ))
             }
           }
           throw AcervoError.fileNotInManifest(
@@ -1038,7 +1061,7 @@ extension AcervoDownloader {
             if let telemetry {
               let ageSeconds: Double
               if let attrs = try? fm.attributesOfItem(atPath: fileDestination.path),
-                 let mtime = attrs[.modificationDate] as? Date
+                let mtime = attrs[.modificationDate] as? Date
               {
                 ageSeconds = Date().timeIntervalSince(mtime)
               } else {

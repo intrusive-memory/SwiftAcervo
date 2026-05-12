@@ -87,10 +87,12 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
         // (b) integrityVerifyStart preceded integrityVerifyComplete.
         let startIdx = events.firstIndex(where: {
-          if case .integrityVerifyStart = $0 { return true }; return false
+          if case .integrityVerifyStart = $0 { return true }
+          return false
         })
         let completeIdx = events.firstIndex(where: {
-          if case .integrityVerifyComplete = $0 { return true }; return false
+          if case .integrityVerifyComplete = $0 { return true }
+          return false
         })
         #expect(startIdx != nil && completeIdx != nil)
         if let s = startIdx, let c = completeIdx {
@@ -100,7 +102,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         // (c) Both events were recorded BEFORE the throw propagated.
         //     The count captured immediately on catch must be ≥ 2
         //     (start + fail-complete).
-        #expect(eventCountAtCatch >= 2,
+        #expect(
+          eventCountAtCatch >= 2,
           "reporter saw only \(eventCountAtCatch) events at catch; expected ≥ 2")
 
         // (d) The thrown error is an AcervoError.integrityCheckFailed.
@@ -109,7 +112,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         {
           #expect(file == "mismatch.bin")
         } else {
-          Issue.record("expected AcervoError.integrityCheckFailed, got \(String(describing: caughtError))")
+          Issue.record(
+            "expected AcervoError.integrityCheckFailed, got \(String(describing: caughtError))")
         }
       }
     }
@@ -211,7 +215,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           }
           return false
         })
-        #expect(integrityErrorFound,
+        #expect(
+          integrityErrorFound,
           "expected errorThrown(.fileDownloadIntegrity) in \(events)")
 
         // (b) The errorThrown event was recorded BEFORE the throw propagated.
