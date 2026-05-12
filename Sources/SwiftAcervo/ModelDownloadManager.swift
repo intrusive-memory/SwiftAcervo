@@ -188,7 +188,10 @@ extension ModelDownloadManager {
     for modelId in modelIds {
       let manifest: CDNManifest
       do {
-        manifest = try await AcervoDownloader.downloadManifest(for: modelId)
+        manifest = try await AcervoDownloader.downloadManifest(
+          for: modelId,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "validateCanDownload: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -277,7 +280,10 @@ extension ModelDownloadManager {
     for modelId in modelIds {
       let manifest: CDNManifest
       do {
-        manifest = try await AcervoDownloader.downloadManifest(for: modelId)
+        manifest = try await AcervoDownloader.downloadManifest(
+          for: modelId,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "ensureModelsAvailable: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -333,7 +339,12 @@ extension ModelDownloadManager {
 
       do {
         // Empty files array -> download all files in the manifest.
-        try await Acervo.ensureAvailable(modelId, files: [], progress: bridged)
+        try await Acervo.ensureAvailable(
+          modelId,
+          files: [],
+          progress: bridged,
+          telemetry: self.telemetry
+        )
       } catch let error as AcervoError {
         logger.error(
           "ensureModelsAvailable: download failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"

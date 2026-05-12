@@ -57,7 +57,11 @@ public struct IntegrityVerification: Sendable {
   ///   - directory: The base directory containing the file.
   /// - Returns: `true` if the checksum matches or is not declared; `false` if it mismatches.
   /// - Throws: Errors from reading the file data.
-  static func verify(file: ComponentFile, in directory: URL) throws -> Bool {
+  static func verify(
+    file: ComponentFile,
+    in directory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) throws -> Bool {
     guard let expectedHash = file.sha256 else {
       // No checksum declared -- skip verification
       return true
@@ -90,7 +94,8 @@ public struct IntegrityVerification: Sendable {
   /// - Throws: `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`.
   static func verifyAgainstManifest(
     fileURL: URL,
-    manifestFile: CDNManifestFile
+    manifestFile: CDNManifestFile,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) throws {
     // Fast check: file size
     let actualSize = try fileSize(at: fileURL)

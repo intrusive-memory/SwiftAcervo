@@ -210,7 +210,8 @@ extension AcervoDownloader {
   /// - Throws: `AcervoError` for download, decoding, or validation failures.
   public static func downloadManifest(
     for modelId: String,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws -> CDNManifest {
     // Refuse the fetch up front when offline mode is active. This must run
     // BEFORE any URLSession call so callers can rely on the gate to keep the
@@ -309,7 +310,8 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Refuse the fetch up front when offline mode is active. This runs
     // BEFORE the URLSession streaming call so the gate is unconditional
@@ -481,7 +483,8 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Refuse the fetch up front when offline mode is active. The streaming
     // path checks the gate too, but `streamDownloadFile` may delegate here
@@ -539,7 +542,8 @@ extension AcervoDownloader {
     // Verify integrity: size then SHA-256
     try IntegrityVerification.verifyAgainstManifest(
       fileURL: destination,
-      manifestFile: manifestFile
+      manifestFile: manifestFile,
+      telemetry: telemetry
     )
 
     // Report completion
@@ -584,7 +588,8 @@ extension AcervoDownloader {
     from url: URL,
     to destination: URL,
     manifestFile: CDNManifestFile,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -597,7 +602,8 @@ extension AcervoDownloader {
         fileIndex: 0,
         totalFiles: 1,
         progress: nil,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
@@ -619,7 +625,8 @@ extension AcervoDownloader {
         fileIndex: 0,
         totalFiles: 1,
         progress: nil,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     }
   }
@@ -650,7 +657,8 @@ extension AcervoDownloader {
     fileIndex: Int,
     totalFiles: Int,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let request = buildRequest(from: url)
 
@@ -663,7 +671,8 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles,
         progress: progress,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     } catch let streamError {
       // If the error is a verification or HTTP error, propagate immediately
@@ -684,7 +693,8 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles,
         progress: progress,
-        session: session
+        session: session,
+        telemetry: telemetry
       )
     }
   }
@@ -725,10 +735,11 @@ extension AcervoDownloader {
     destination: URL,
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    session: URLSession = SecureDownloadSession.shared
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Step 1: Fetch and validate the manifest
-    let manifest = try await downloadManifest(for: modelId, session: session)
+    let manifest = try await downloadManifest(for: modelId, session: session, telemetry: telemetry)
 
     // Step 2: Determine which files to download
     let filesToDownload: [CDNManifestFile]
@@ -836,6 +847,7 @@ extension AcervoDownloader {
         }
 
         let capturedSession = session
+        let capturedTelemetry = telemetry
 
         group.addTask {
           // Cooperative cancellation inside the child task.
@@ -849,7 +861,8 @@ extension AcervoDownloader {
             fileIndex: capturedIndex,
             totalFiles: totalFiles,
             progress: wrappedProgress,
-            session: capturedSession
+            session: capturedSession,
+            telemetry: capturedTelemetry
           )
         }
 

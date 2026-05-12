@@ -344,7 +344,8 @@ extension AcervoManager {
       modelId,
       files: files,
       force: force,
-      progress: progress
+      progress: progress,
+      telemetry: self.telemetry
     )
 
     // Cache the model directory URL after successful download

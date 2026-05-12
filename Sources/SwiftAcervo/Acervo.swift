@@ -958,14 +958,16 @@ extension Acervo {
     _ modelId: String,
     files: [String],
     force: Bool = false,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await download(
       modelId,
       files: files,
       force: force,
       progress: progress,
-      in: sharedModelsDirectory
+      in: sharedModelsDirectory,
+      telemetry: telemetry
     )
   }
 
@@ -987,7 +989,8 @@ extension Acervo {
     files: [String],
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    in baseDirectory: URL
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Validate model ID format (must contain exactly one "/")
     let slashCount = modelId.filter { $0 == "/" }.count
@@ -1012,7 +1015,8 @@ extension Acervo {
       requestedFiles: files,
       destination: destination,
       force: force,
-      progress: progress
+      progress: progress,
+      telemetry: telemetry
     )
   }
 }
@@ -1062,13 +1066,15 @@ extension Acervo {
   public static func ensureAvailable(
     _ modelId: String,
     files: [String],
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await ensureAvailable(
       modelId,
       files: files,
       progress: progress,
-      in: sharedModelsDirectory
+      in: sharedModelsDirectory,
+      telemetry: telemetry
     )
   }
 
@@ -1081,7 +1087,8 @@ extension Acervo {
     _ modelId: String,
     files: [String],
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    in baseDirectory: URL
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Check if model is already available (has config.json)
     if isModelAvailable(modelId, in: baseDirectory) {
@@ -1094,7 +1101,8 @@ extension Acervo {
       files: files,
       force: false,
       progress: progress,
-      in: baseDirectory
+      in: baseDirectory,
+      telemetry: telemetry
     )
   }
 }
@@ -1116,8 +1124,11 @@ extension Acervo {
   /// ```swift
   /// try Acervo.deleteModel("mlx-community/Qwen2.5-7B-Instruct-4bit")
   /// ```
-  public static func deleteModel(_ modelId: String) throws {
-    try deleteModel(modelId, in: sharedModelsDirectory)
+  public static func deleteModel(
+    _ modelId: String,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) throws {
+    try deleteModel(modelId, in: sharedModelsDirectory, telemetry: telemetry)
   }
 
   /// Deletes a model's directory from the specified base directory.
@@ -1130,7 +1141,11 @@ extension Acervo {
   ///   - baseDirectory: The base directory to use instead of `sharedModelsDirectory`.
   /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
   ///   `AcervoError.modelNotFound` if the model directory does not exist.
-  static func deleteModel(_ modelId: String, in baseDirectory: URL) throws {
+  static func deleteModel(
+    _ modelId: String,
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) throws {
     // Validate model ID format (must contain exactly one "/")
     let slashCount = modelId.filter { $0 == "/" }.count
     guard slashCount == 1 else {

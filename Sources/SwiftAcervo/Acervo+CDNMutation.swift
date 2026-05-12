@@ -79,7 +79,8 @@ extension Acervo {
     directory: URL,
     credentials: AcervoCDNCredentials,
     keepOrphans: Bool = false,
-    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws -> CDNManifest {
     let client = S3CDNClient(credentials: credentials)
     return try await _publishModel(
@@ -89,7 +90,8 @@ extension Acervo {
       client: client,
       publicSession: .shared,
       keepOrphans: keepOrphans,
-      progress: progress
+      progress: progress,
+      telemetry: telemetry
     )
   }
 
@@ -111,7 +113,8 @@ extension Acervo {
     client: S3CDNClient,
     publicSession: URLSession,
     keepOrphans: Bool,
-    progress: (@Sendable (AcervoPublishProgress) -> Void)?
+    progress: (@Sendable (AcervoPublishProgress) -> Void)?,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws -> CDNManifest {
     // ---------- Step 1 — Generate manifest -------------------------------
     progress?(.generatingManifest)
@@ -380,13 +383,15 @@ extension Acervo {
   public static func deleteFromCDN(
     modelId: String,
     credentials: AcervoCDNCredentials,
-    progress: (@Sendable (AcervoDeleteProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDeleteProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let client = S3CDNClient(credentials: credentials)
     try await _deleteFromCDN(
       modelId: modelId,
       client: client,
-      progress: progress
+      progress: progress,
+      telemetry: telemetry
     )
   }
 
@@ -396,7 +401,8 @@ extension Acervo {
   static func _deleteFromCDN(
     modelId: String,
     client: S3CDNClient,
-    progress: (@Sendable (AcervoDeleteProgress) -> Void)?
+    progress: (@Sendable (AcervoDeleteProgress) -> Void)?,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     let slashCount = modelId.filter { $0 == "/" }.count
     guard slashCount == 1 else {
