@@ -1019,7 +1019,7 @@ extension Acervo {
     let destination = baseDirectory.appendingPathComponent(slugify(modelId))
 
     // Create directory if needed
-    try AcervoDownloader.ensureDirectory(at: destination)
+    try AcervoDownloader.ensureDirectory(at: destination, telemetry: telemetry)
 
     // Exclude model directory from iCloud backup — Apple requires that
     // large re-downloadable content must not be backed up.

@@ -196,6 +196,14 @@ extension ModelDownloadManager {
         logger.error(
           "validateCanDownload: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(.errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+        }
         throw error
       }
 
@@ -288,6 +296,14 @@ extension ModelDownloadManager {
         logger.error(
           "ensureModelsAvailable: manifest fetch failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(.errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+        }
         throw error
       }
 
@@ -349,6 +365,14 @@ extension ModelDownloadManager {
         logger.error(
           "ensureModelsAvailable: download failed for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
+        if let telemetry {
+          await telemetry.capture(.errorThrown(
+            phase: .other,
+            errorDescription: error.localizedDescription,
+            modelID: modelId,
+            fileName: nil
+          ))
+        }
         throw error
       }
 
