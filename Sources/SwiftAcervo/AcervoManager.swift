@@ -55,8 +55,21 @@ public actor AcervoManager {
   /// Access counts per model ID for statistics tracking.
   private var accessCount: [String: Int] = [:]
 
+  /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
+  private var telemetry: (any AcervoTelemetryReporter)? = nil
+
   /// Private initializer to enforce singleton usage.
   private init() {}
+
+  /// Attaches or removes a telemetry reporter.
+  ///
+  /// Pass `nil` to stop telemetry. The reporter is called from within actor
+  /// isolation, so callers must `await` this setter.
+  ///
+  /// - Parameter reporter: The reporter to use, or `nil` to disable telemetry.
+  public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
+    self.telemetry = reporter
+  }
 }
 
 // MARK: - Per-Model Locking

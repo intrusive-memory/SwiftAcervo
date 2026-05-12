@@ -139,6 +139,9 @@ public actor S3CDNClient {
   /// to drive multi-part uploads against modestly sized synthetic files.
   let multipartPartSize: Int64
 
+  /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
+  private var telemetry: (any AcervoTelemetryReporter)? = nil
+
   public init(
     credentials: AcervoCDNCredentials,
     session: URLSession = .shared
@@ -174,6 +177,16 @@ public actor S3CDNClient {
     self.signer = SigV4Signer(credentials: credentials, service: "s3")
     self.singleShotThreshold = singleShotThreshold
     self.multipartPartSize = multipartPartSize
+  }
+
+  /// Attaches or removes a telemetry reporter.
+  ///
+  /// Pass `nil` to stop telemetry. The reporter is called from within actor
+  /// isolation, so callers must `await` this setter.
+  ///
+  /// - Parameter reporter: The reporter to use, or `nil` to disable telemetry.
+  public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
+    self.telemetry = reporter
   }
 
   // MARK: - listObjects
