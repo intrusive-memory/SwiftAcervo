@@ -29,6 +29,16 @@ public enum AcervoTelemetryEvent: Sendable {
   case cacheHit(modelID: String, fileName: String, onDiskBytes: Int64, ageSeconds: Double)
   case cacheMiss(modelID: String, fileName: String, reason: CacheMissReason)
 
+  // --- Component lifecycle (manifest-destiny migration; component-keyed APIs) ---
+  case componentResolveStart(componentID: String, repoID: String)
+  case componentResolveComplete(
+    componentID: String, repoID: String, fileCount: Int, totalBytes: Int64,
+    cacheState: ComponentCacheState, durationSeconds: Double)
+
+  // --- File access (per `withComponentAccess` / `withLocalAccess`) ---
+  case componentFileAccessOpened(
+    componentID: String, repoID: String, baseDirectory: String, fileCount: Int)
+
   // --- CDN HTTP ---
   case cdnRequest(
     method: String, url: String, statusCode: Int, latencyMS: Double, byteCount: Int64?)
@@ -39,6 +49,12 @@ public enum AcervoTelemetryEvent: Sendable {
 
   // --- Error side-channel ---
   case errorThrown(phase: ErrorPhase, errorDescription: String, modelID: String?, fileName: String?)
+
+  public enum ComponentCacheState: String, Sendable {
+    case alreadyReady  // all files present on disk, no download needed
+    case downloaded  // files were missing or corrupt; downloaded fresh
+    case hydratedOnly  // descriptor was hydrated but not downloaded (caller asked for hydration only)
+  }
 
   public enum CacheMissReason: String, Sendable {
     case notPresent  // file not on disk

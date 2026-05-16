@@ -7,6 +7,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Telemetry on component-keyed APIs.** `Acervo.hydrateComponent`, `Acervo.downloadComponent`, `Acervo.ensureComponentReady`, and `Acervo.ensureComponentsReady` now accept a defaulted `telemetry: (any AcervoTelemetryReporter)?` parameter and route events (manifest fetch, component download, cache state, errors) through it. Hosts like SwiftVinetas that wire a reporter at the component layer now see `kind: "acervo"` events for the manifest-destiny flows.
+- **`AcervoManager` component-lifecycle wrappers.** `ensureComponentReady(_:)`, `ensureComponentsReady(_:)`, `downloadComponent(_:force:)`, and `hydrateComponent(_:)` on `AcervoManager` forward `self.telemetry` to the static surface, so a single `AcervoManager.shared.setTelemetry(reporter)` call is sufficient to capture component-keyed events without threading a reporter through every call site.
+- **Three new `AcervoTelemetryEvent` cases:**
+  - `componentResolveStart(componentID:repoID:)` — fires at the top of `ensureComponentReady`.
+  - `componentResolveComplete(componentID:repoID:fileCount:totalBytes:cacheState:durationSeconds:)` — fires on the cache-hit short-circuit and on the post-download path; `cacheState` is one of `.alreadyReady`, `.downloaded`, `.hydratedOnly`.
+  - `componentFileAccessOpened(componentID:repoID:baseDirectory:fileCount:)` — fires from `AcervoManager.withComponentAccess` immediately before the closure runs, naming the on-disk directory that backs the handle.
+- **`AcervoManager.currentTelemetry` accessor** for tests that need to snapshot/restore the attached reporter around mutating code paths.
+
+### Changed
+
+- `AcervoTelemetryMockReporterTests.testSetTelemetryNilSilencesEvents` now asserts a zero *delta* on the detached reporter rather than an absolute zero count. Parallel suites that exercise `AcervoManager.shared.withComponentAccess` (which now emits) can transiently observe events during the brief window the reporter is attached; the contract being tested — "downloadFiles with telemetry: nil does not push events into a detached reporter" — is unchanged.
+
+---
+
 ## [0.13.0] - 2026-05-12
 
 ### Added
