@@ -9,6 +9,10 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [0.13.1] - 2026-05-16
+
 ### Added
 
 - **Telemetry on component-keyed APIs.** `Acervo.hydrateComponent`, `Acervo.downloadComponent`, `Acervo.ensureComponentReady`, and `Acervo.ensureComponentsReady` now accept a defaulted `telemetry: (any AcervoTelemetryReporter)?` parameter and route events (manifest fetch, component download, cache state, errors) through it. Hosts like SwiftVinetas that wire a reporter at the component layer now see `kind: "acervo"` events for the manifest-destiny flows.
