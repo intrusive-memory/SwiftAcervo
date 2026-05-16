@@ -70,6 +70,15 @@ public actor AcervoManager {
   public func setTelemetry(_ reporter: (any AcervoTelemetryReporter)?) {
     self.telemetry = reporter
   }
+
+  /// Returns the currently-attached telemetry reporter, if any.
+  ///
+  /// Intended for tests that need to snapshot/restore the attached reporter
+  /// around code paths that mutate it. Production callers should not depend
+  /// on this; pass a reporter explicitly into the call site instead.
+  public var currentTelemetry: (any AcervoTelemetryReporter)? {
+    telemetry
+  }
 }
 
 // MARK: - Per-Model Locking
@@ -505,6 +514,16 @@ extension AcervoManager {
   ) async throws -> T {
     // Look up descriptor in registry
     guard let descriptor = ComponentRegistry.shared.component(componentId) else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .other,
+            errorDescription: "Component not registered: \(componentId)",
+            modelID: nil,
+            fileName: nil
+          )
+        )
+      }
       throw AcervoError.componentNotRegistered(componentId)
     }
 
@@ -518,6 +537,16 @@ extension AcervoManager {
     for file in descriptor.files {
       let filePath = componentDir.appendingPathComponent(file.relativePath).path
       guard fm.fileExists(atPath: filePath) else {
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .other,
+              errorDescription: "Component file missing: \(file.relativePath)",
+              modelID: descriptor.repoId,
+              fileName: file.relativePath
+            )
+          )
+        }
         throw AcervoError.componentNotDownloaded(componentId)
       }
     }
@@ -528,6 +557,17 @@ extension AcervoManager {
       let fileURL = componentDir.appendingPathComponent(file.relativePath)
       let actualHash = try IntegrityVerification.sha256(of: fileURL)
       if actualHash != expectedHash {
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownloadIntegrity,
+              errorDescription:
+                "withComponentAccess integrity check failed: expected \(expectedHash), got \(actualHash)",
+              modelID: descriptor.repoId,
+              fileName: file.relativePath
+            )
+          )
+        }
         throw AcervoError.integrityCheckFailed(
           file: file.relativePath,
           expected: expectedHash,
@@ -542,6 +582,19 @@ extension AcervoManager {
 
     // Track access statistics
     trackAccess(for: componentId)
+
+    // Emit file-access opened event so consumers can correlate which
+    // on-disk paths were actually used at inference time.
+    if let telemetry {
+      await telemetry.capture(
+        .componentFileAccessOpened(
+          componentID: componentId,
+          repoID: descriptor.repoId,
+          baseDirectory: componentDir.path,
+          fileCount: descriptor.files.count
+        )
+      )
+    }
 
     // Construct handle and invoke closure
     let handle = ComponentHandle(
@@ -581,5 +634,60 @@ extension AcervoManager {
     }
     let handle = LocalHandle(rootURL: url)
     return try perform(handle)
+  }
+}
+
+// MARK: - Component Lifecycle (manifest-destiny migration)
+
+extension AcervoManager {
+
+  /// Ensures a registered component is downloaded and ready, routing
+  /// telemetry through the manager-attached reporter so component-keyed
+  /// operations are visible to host trace collectors (e.g., vinetas).
+  ///
+  /// Forwards to `Acervo.ensureComponentReady(_:progress:telemetry:)`.
+  public func ensureComponentReady(
+    _ componentId: String,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+  ) async throws {
+    try await Acervo.ensureComponentReady(
+      componentId,
+      progress: progress,
+      telemetry: self.telemetry
+    )
+  }
+
+  /// Ensures multiple registered components are downloaded and ready,
+  /// routing telemetry through the manager-attached reporter.
+  public func ensureComponentsReady(
+    _ componentIds: [String],
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+  ) async throws {
+    try await Acervo.ensureComponentsReady(
+      componentIds,
+      progress: progress,
+      telemetry: self.telemetry
+    )
+  }
+
+  /// Downloads a registered component, routing telemetry through the
+  /// manager-attached reporter.
+  public func downloadComponent(
+    _ componentId: String,
+    force: Bool = false,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+  ) async throws {
+    try await Acervo.downloadComponent(
+      componentId,
+      force: force,
+      progress: progress,
+      telemetry: self.telemetry
+    )
+  }
+
+  /// Hydrates a registered component descriptor from the CDN manifest,
+  /// routing telemetry through the manager-attached reporter.
+  public func hydrateComponent(_ componentId: String) async throws {
+    try await Acervo.hydrateComponent(componentId, telemetry: self.telemetry)
   }
 }

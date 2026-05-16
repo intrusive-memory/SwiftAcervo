@@ -541,10 +541,16 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         // Snapshot/restore to avoid leaking shared singleton state.
         await AcervoManager.shared.setTelemetry(reporter)
         await AcervoManager.shared.setTelemetry(nil)
-        // The reporter saw nothing since setTelemetry itself doesn't
-        // emit. We then run the (nil-telemetry) downloader again — it
-        // still must produce zero captures into the now-detached
-        // reporter.
+        // Capture the baseline immediately after detach. Parallel tests in
+        // other suites may emit through AcervoManager.shared during the
+        // brief actor window between the two setTelemetry calls (the
+        // singleton is process-wide and component-access paths emit
+        // `componentFileAccessOpened` now that the manifest-destiny
+        // surfaces are instrumented). The contract we are validating is
+        // "the downloader, called with telemetry: nil, does not push any
+        // additional events into the detached reporter" — so assert the
+        // delta is zero, not the absolute count.
+        let baselineAfterDetach = await reporter.count()
         try await AcervoDownloader.downloadFiles(
           modelId: modelId,
           requestedFiles: [],
@@ -554,8 +560,9 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         )
         let countAfterSetNil = await reporter.count()
         #expect(
-          countAfterSetNil == 0,
-          "reporter received \(countAfterSetNil) events after setTelemetry(nil); expected 0")
+          countAfterSetNil == baselineAfterDetach,
+          "downloadFiles(telemetry: nil) pushed \(countAfterSetNil - baselineAfterDetach) events into a detached reporter; expected 0 delta"
+        )
 
         // Independent confirmation: when a reporter IS passed at the
         // call site, it does receive events. This proves the silence
@@ -571,11 +578,13 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         let directCount = await directReporter.count()
         #expect(directCount > 0, "direct-attached reporter should still receive events")
 
-        // The detached reporter remains empty.
+        // The detached reporter receives nothing from the second
+        // downloadFiles call either — same delta-of-zero contract.
         let stillSilent = await reporter.count()
         #expect(
-          stillSilent == 0,
-          "detached reporter received \(stillSilent) events; expected 0")
+          stillSilent == countAfterSetNil,
+          "downloadFiles(telemetry: directReporter) pushed \(stillSilent - countAfterSetNil) events into the detached reporter; expected 0 delta"
+        )
       }
     }
   }

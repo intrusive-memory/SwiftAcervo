@@ -28,7 +28,7 @@ import Security
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.13.0"
+  public static let version = "0.13.1"
 
   /// The name of the environment variable that gates outbound HTTP fetches.
   ///
@@ -1618,18 +1618,26 @@ extension Acervo {
   /// - Parameter componentId: The ID of a component registered with Acervo.
   /// - Throws: `AcervoError.componentNotRegistered` if `componentId` is
   ///   unknown; any manifest-related error from `fetchManifest`.
-  public static func hydrateComponent(_ componentId: String) async throws {
-    try await hydrateComponent(componentId, session: SecureDownloadSession.shared)
+  public static func hydrateComponent(
+    _ componentId: String,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) async throws {
+    try await hydrateComponent(
+      componentId,
+      session: SecureDownloadSession.shared,
+      telemetry: telemetry
+    )
   }
 
   /// Internal overload that accepts an injected `URLSession` so tests can
   /// stub the CDN via `MockURLProtocol`.
   static func hydrateComponent(
     _ componentId: String,
-    session: URLSession
+    session: URLSession,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await hydrationCoalescer.hydrate(componentId) {
-      try await performHydration(componentId, session: session)
+      try await performHydration(componentId, session: session, telemetry: telemetry)
     }
   }
 
@@ -1637,7 +1645,8 @@ extension Acervo {
   /// Called from within the coalescer so only one runs per componentId at a time.
   private static func performHydration(
     _ componentId: String,
-    session: URLSession
+    session: URLSession,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     guard let existing = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
@@ -1645,7 +1654,8 @@ extension Acervo {
 
     let manifest = try await AcervoDownloader.downloadManifest(
       for: existing.repoId,
-      session: session
+      session: session,
+      telemetry: telemetry
     )
 
     // Drift warning: compare pre-existing declared file count against manifest.
@@ -1704,13 +1714,15 @@ extension Acervo {
   public static func downloadComponent(
     _ componentId: String,
     force: Bool = false,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await downloadComponent(
       componentId,
       force: force,
       progress: progress,
-      in: sharedModelsDirectory
+      in: sharedModelsDirectory,
+      telemetry: telemetry
     )
   }
 
@@ -1721,14 +1733,15 @@ extension Acervo {
     _ componentId: String,
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    in baseDirectory: URL
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
     if initialDescriptor.needsHydration {
-      try await hydrateComponent(componentId)
+      try await hydrateComponent(componentId, telemetry: telemetry)
     }
 
     guard let descriptor = ComponentRegistry.shared.component(componentId),
@@ -1745,7 +1758,8 @@ extension Acervo {
       files: fileList,
       force: force,
       progress: progress,
-      in: baseDirectory
+      in: baseDirectory,
+      telemetry: telemetry
     )
 
     // Additional registry-level checksum verification
@@ -1758,6 +1772,17 @@ extension Acervo {
       let actualHash = try IntegrityVerification.sha256(of: fileURL)
       if actualHash != expectedHash {
         try? FileManager.default.removeItem(at: fileURL)
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownloadIntegrity,
+              errorDescription:
+                "Registry-level SHA mismatch for \(file.relativePath): expected \(expectedHash), got \(actualHash)",
+              modelID: descriptor.repoId,
+              fileName: file.relativePath
+            )
+          )
+        }
         throw AcervoError.integrityCheckFailed(
           file: file.relativePath,
           expected: expectedHash,
@@ -1779,12 +1804,14 @@ extension Acervo {
   /// - Throws: `AcervoError.componentNotRegistered` if the ID is not in the registry.
   public static func ensureComponentReady(
     _ componentId: String,
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await ensureComponentReady(
       componentId,
       progress: progress,
-      in: sharedModelsDirectory
+      in: sharedModelsDirectory,
+      telemetry: telemetry
     )
   }
 
@@ -1794,19 +1821,54 @@ extension Acervo {
   static func ensureComponentReady(
     _ componentId: String,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    in baseDirectory: URL
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     // Check registration first
     guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .other,
+            errorDescription: "Component not registered: \(componentId)",
+            modelID: nil,
+            fileName: nil
+          )
+        )
+      }
       throw AcervoError.componentNotRegistered(componentId)
     }
 
-    if initialDescriptor.needsHydration {
-      try await hydrateComponent(componentId)
+    let startTime = Date()
+    if let telemetry {
+      await telemetry.capture(
+        .componentResolveStart(
+          componentID: componentId,
+          repoID: initialDescriptor.repoId
+        )
+      )
     }
 
-    // If already ready, no-op
+    if initialDescriptor.needsHydration {
+      try await hydrateComponent(componentId, telemetry: telemetry)
+    }
+
+    // If already ready, emit cacheHit-style completion and no-op
     if isComponentReady(componentId, in: baseDirectory) {
+      if let telemetry {
+        let descriptor = ComponentRegistry.shared.component(componentId) ?? initialDescriptor
+        let totalBytes = descriptor.files.reduce(Int64(0)) { $0 + ($1.expectedSizeBytes ?? 0) }
+        await telemetry.capture(
+          .componentResolveComplete(
+            componentID: componentId,
+            repoID: descriptor.repoId,
+            fileCount: descriptor.files.count,
+            totalBytes: totalBytes,
+            cacheState: .alreadyReady,
+            durationSeconds: Date().timeIntervalSince(startTime)
+          )
+        )
+      }
       return
     }
 
@@ -1815,8 +1877,24 @@ extension Acervo {
       componentId,
       force: false,
       progress: progress,
-      in: baseDirectory
+      in: baseDirectory,
+      telemetry: telemetry
     )
+
+    if let telemetry {
+      let descriptor = ComponentRegistry.shared.component(componentId) ?? initialDescriptor
+      let totalBytes = descriptor.files.reduce(Int64(0)) { $0 + ($1.expectedSizeBytes ?? 0) }
+      await telemetry.capture(
+        .componentResolveComplete(
+          componentID: componentId,
+          repoID: descriptor.repoId,
+          fileCount: descriptor.files.count,
+          totalBytes: totalBytes,
+          cacheState: .downloaded,
+          durationSeconds: Date().timeIntervalSince(startTime)
+        )
+      )
+    }
   }
 
   /// Ensures multiple registered components are downloaded and ready.
@@ -1830,12 +1908,14 @@ extension Acervo {
   /// - Throws: `AcervoError.componentNotRegistered` if any ID is not in the registry.
   public static func ensureComponentsReady(
     _ componentIds: [String],
-    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     try await ensureComponentsReady(
       componentIds,
       progress: progress,
-      in: sharedModelsDirectory
+      in: sharedModelsDirectory,
+      telemetry: telemetry
     )
   }
 
@@ -1846,13 +1926,15 @@ extension Acervo {
   static func ensureComponentsReady(
     _ componentIds: [String],
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
-    in baseDirectory: URL
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
     for componentId in componentIds {
       try await ensureComponentReady(
         componentId,
         progress: progress,
-        in: baseDirectory
+        in: baseDirectory,
+        telemetry: telemetry
       )
     }
   }

@@ -1,12 +1,12 @@
 ---
-updated: 2026-05-12
+updated: 2026-05-16
 ---
 
 # AGENTS.md — Documentation Hub for AI Agents
 
 This file serves as a navigation hub for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.13.0 (May 2026)
+**Current Version**: 0.13.1 (May 2026)
 
 **For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](Docs/USAGE.md)**.
 
