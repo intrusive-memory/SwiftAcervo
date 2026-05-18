@@ -772,10 +772,14 @@ extension AcervoDownloader {
 
 extension AcervoDownloader {
 
-  /// Downloads a file using the legacy `download(for:)` + `verifyAgainstManifest` pattern.
-  ///
-  /// This is the fallback path used when `bytes(for:)` streaming is unavailable
-  /// (e.g., the response lacks `Content-Length` or the stream throws).
+  /// Legacy whole-file fallback. Invoked only when `streamDownloadFile` throws a
+  /// non-`AcervoError` (transport error, etc.). This path intentionally does NOT
+  /// implement `.part`-based resume: it is the second-chance retry for a stream that
+  /// has already failed. Restarting the whole file is acceptable here because
+  /// (a) reaching this path is already an exceptional case, (b) `URLSession.download(for:)`
+  /// writes to session-managed temp anyway and is rename-only on the final hop,
+  /// (c) adding resume here would duplicate `streamDownloadFile`'s range-classification
+  /// logic for negligible benefit.
   ///
   /// - Parameters:
   ///   - request: The configured `URLRequest` targeting the CDN resource.
