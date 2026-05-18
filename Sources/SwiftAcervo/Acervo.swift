@@ -282,14 +282,31 @@ extension Acervo {
 
 extension Acervo {
 
-  /// Checks whether a model is available locally by verifying the presence
-  /// of `config.json` in its model directory.
+  /// Returns `true` when the model is **fully on disk and usable**, anchored
+  /// against its cached CDN manifest.
   ///
-  /// This method never throws. If the model ID is invalid or the directory
-  /// does not exist, it returns `false`.
+  /// The check is strict and offline:
   ///
-  /// - Parameter modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-  /// - Returns: `true` if the model directory contains a `config.json` file.
+  /// 1. Load the manifest cached at
+  ///    `{sharedModelsDirectory}/{slug}/.acervo-manifest.json`. If the
+  ///    cached manifest is missing or fails its self-checksum, the method
+  ///    returns `false`.
+  /// 2. For every file declared in that manifest, verify the on-disk file
+  ///    exists at the recorded byte size. Short-circuits on the first miss.
+  ///
+  /// This means a model directory containing only `config.json` (without a
+  /// manifest cache, or with files smaller than the manifest declares) is
+  /// **not** considered available — that state indicates a previous
+  /// download that did not run to completion.
+  ///
+  /// This method never throws and never performs network I/O. For an
+  /// "is the file just there?" probe that does not require a manifest, see
+  /// `isModelConfigPresent(_:)` (the legacy loose check).
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format (e.g.,
+  ///   "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Returns: `true` only if the cached manifest exists, self-validates,
+  ///   and every file it declares is on disk at the recorded size.
   ///
   /// ```swift
   /// if Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit") {
@@ -297,10 +314,46 @@ extension Acervo {
   /// }
   /// ```
   public static func isModelAvailable(_ modelId: String) -> Bool {
+    isModelAvailable(modelId, in: sharedModelsDirectory)
+  }
+
+  /// Returns `true` when the model's `config.json` is present at the model
+  /// root.
+  ///
+  /// **Warning:** Does NOT imply "model is usable." A directory containing
+  /// only `config.json` (or a partial download) will satisfy this probe even
+  /// though weights, tokenizer, and other declared files may be missing.
+  /// Prefer `availability(_:)` or `isModelAvailable(_:)` for production use.
+  /// This method exists as an explicit escape hatch for callers that
+  /// genuinely only want to probe for `config.json` — for example, legacy
+  /// integrations that pre-date the manifest cache.
+  ///
+  /// Never throws and never performs network I/O.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `true` iff `{sharedModelsDirectory}/{slug}/config.json`
+  ///   exists.
+  public static func isModelConfigPresent(_ modelId: String) -> Bool {
     guard let dir = try? modelDirectory(for: modelId) else {
       return false
     }
     let configPath = dir.appendingPathComponent("config.json").path
+    return FileManager.default.fileExists(atPath: configPath)
+  }
+
+  /// Custom-base-directory overload of `isModelConfigPresent(_:)`.
+  ///
+  /// Internal test seam mirroring the public method's behavior against an
+  /// arbitrary base directory.
+  ///
+  /// - Parameters:
+  ///   - modelId: A model identifier in "org/repo" format.
+  ///   - baseDirectory: The base directory to check.
+  /// - Returns: `true` iff `{baseDirectory}/{slug}/config.json` exists.
+  static func isModelConfigPresent(_ modelId: String, in baseDirectory: URL) -> Bool {
+    let slug = slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    let configPath = modelDir.appendingPathComponent("config.json").path
     return FileManager.default.fileExists(atPath: configPath)
   }
 
@@ -1057,20 +1110,37 @@ extension Acervo {
 
 extension Acervo {
 
-  /// Checks whether a model is available locally within a specified
-  /// base directory by verifying the presence of `config.json`.
+  /// Strict, manifest-driven availability check against a custom base
+  /// directory.
   ///
-  /// This internal overload enables testing with temporary directories.
+  /// Internal overload used by tests and by `ensureAvailable(_:in:)`.
+  /// Mirrors the contract of the public `isModelAvailable(_:)` exactly:
+  ///
+  /// - Loads the cached manifest at
+  ///   `{baseDirectory}/{slug}/.acervo-manifest.json` and verifies its
+  ///   self-checksum. Returns `false` if the cache is absent or corrupt.
+  /// - Verifies every file in the manifest is on disk at the recorded
+  ///   byte size via `IntegrityVerification.allManifestFilesPresentBySize`.
   ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The base directory to check for the model.
-  /// - Returns: `true` if the model directory contains a `config.json` file.
+  /// - Returns: `true` only if the cached manifest exists and every declared
+  ///   file is on disk at the recorded size.
   static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
-    let slug = slugify(modelId)
-    let modelDir = baseDirectory.appendingPathComponent(slug)
-    let configPath = modelDir.appendingPathComponent("config.json").path
-    return FileManager.default.fileExists(atPath: configPath)
+    guard
+      let manifest = AcervoDownloader.loadCachedManifest(
+        for: modelId,
+        in: baseDirectory
+      )
+    else {
+      return false
+    }
+    let modelDir = baseDirectory.appendingPathComponent(slugify(modelId))
+    return IntegrityVerification.allManifestFilesPresentBySize(
+      manifest: manifest,
+      in: modelDir
+    )
   }
 
   /// Ensures a model is available locally, downloading it if necessary.

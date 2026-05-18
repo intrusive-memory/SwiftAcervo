@@ -117,6 +117,56 @@ public struct IntegrityVerification: Sendable {
     }
   }
 
+  /// Returns `true` when a file's on-disk size matches the size declared in
+  /// its `CDNManifestFile` entry.
+  ///
+  /// This is the canonical "is this individual file present and intact (by
+  /// size)" predicate. It deliberately does NOT recompute the SHA-256 — that
+  /// would be prohibitively expensive for a synchronous availability probe.
+  /// It is shared by the per-file cache-hit check in
+  /// `AcervoDownloader.downloadFiles` and by the model-level aggregator
+  /// `allManifestFilesPresentBySize(manifest:in:)`.
+  ///
+  /// Never throws; "no file" yields `false`.
+  ///
+  /// - Parameters:
+  ///   - file: The manifest entry describing the expected file (path + size).
+  ///   - directory: The base directory inside which `file.path` resolves.
+  /// - Returns: `true` iff the file exists and its size in bytes equals
+  ///   `file.sizeBytes`.
+  static func fileMatchesManifestEntry(
+    _ file: CDNManifestFile,
+    in directory: URL
+  ) -> Bool {
+    let url = directory.appendingPathComponent(file.path)
+    return partialFileSize(at: url) == file.sizeBytes
+  }
+
+  /// Returns `true` when EVERY file declared in `manifest.files` is on disk
+  /// at the recorded size, anchored at `directory`.
+  ///
+  /// Short-circuits on the first miss. Emits no telemetry; this is a pure
+  /// predicate used by `Acervo.isModelAvailable(_:)` to answer the
+  /// "is this model usable right now?" question without network I/O.
+  ///
+  /// - Parameters:
+  ///   - manifest: The CDN manifest to compare against.
+  ///   - directory: The model's on-disk directory (e.g.,
+  ///     `{baseDirectory}/{slug}`).
+  /// - Returns: `true` iff every entry in `manifest.files` satisfies
+  ///   `fileMatchesManifestEntry(_:in:)`.
+  static func allManifestFilesPresentBySize(
+    manifest: CDNManifest,
+    in directory: URL
+  ) -> Bool {
+    for file in manifest.files {
+      guard fileMatchesManifestEntry(file, in: directory) else {
+        return false
+      }
+    }
+    return true
+  }
+
   /// Verifies a downloaded file against its manifest entry.
   ///
   /// Checks size first (fast), then SHA-256 (slow but definitive).

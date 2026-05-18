@@ -389,6 +389,87 @@ extension AcervoDownloader {
   }
 }
 
+// MARK: - Manifest Persistence (Local Cache)
+
+extension AcervoDownloader {
+
+  /// Filename for the locally-cached copy of the CDN manifest, stored at the
+  /// root of each model's directory. Hidden (leading dot) to keep it from
+  /// appearing in casual listings, but otherwise a regular file.
+  static let cachedManifestFilename = ".acervo-manifest.json"
+
+  /// Persists a validated `CDNManifest` to disk inside the model's directory.
+  ///
+  /// Used after a successful `downloadFiles` run so that the strict
+  /// `Acervo.isModelAvailable(_:)` check can subsequently verify every file
+  /// in the manifest is on disk at the recorded size without re-fetching the
+  /// manifest from the CDN.
+  ///
+  /// The write is atomic and the JSON is sorted-keys for determinism (helps
+  /// reproducibility and is friendly to filesystem snapshot tooling).
+  ///
+  /// - Parameters:
+  ///   - manifest: The validated manifest to persist. Caller is expected to
+  ///     have already validated `manifestChecksum` (via `downloadManifest`).
+  ///   - baseDirectory: The base shared-models directory. The manifest is
+  ///     written to `{baseDirectory}/{slug}/.acervo-manifest.json`.
+  /// - Throws: Encoding or atomic-write failures.
+  static func persistManifest(
+    _ manifest: CDNManifest,
+    in baseDirectory: URL
+  ) throws {
+    let modelDir = baseDirectory.appendingPathComponent(manifest.slug)
+    let url = modelDir.appendingPathComponent(cachedManifestFilename)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(manifest)
+    try data.write(to: url, options: [.atomic])
+  }
+
+  /// Loads the locally-cached `CDNManifest` for a model, if present and valid.
+  ///
+  /// Used by `Acervo.isModelAvailable(_:)` to drive the strict on-disk
+  /// availability check without a network round-trip. Performs three
+  /// validations and returns `nil` on any failure:
+  ///
+  /// 1. Read the file at `{baseDirectory}/{slug}/.acervo-manifest.json`.
+  /// 2. JSON-decode it as `CDNManifest`.
+  /// 3. Verify `manifestChecksum` matches the canonical checksum-of-checksums
+  ///    of the file SHAs (same algorithm `downloadManifest` enforces against
+  ///    fresh manifests).
+  ///
+  /// On any failure, the cache file is best-effort removed and `nil` is
+  /// returned. Never throws — a corrupted manifest cache is a soft miss, not
+  /// a hard error.
+  ///
+  /// - Parameters:
+  ///   - modelId: The "org/repo" model identifier whose cached manifest we
+  ///     want to load.
+  ///   - baseDirectory: The base shared-models directory.
+  /// - Returns: The decoded, self-consistent manifest, or `nil`.
+  static func loadCachedManifest(
+    for modelId: String,
+    in baseDirectory: URL
+  ) -> CDNManifest? {
+    let slug = Acervo.slugify(modelId)
+    let url = baseDirectory
+      .appendingPathComponent(slug)
+      .appendingPathComponent(cachedManifestFilename)
+    guard let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    guard let manifest = try? JSONDecoder().decode(CDNManifest.self, from: data) else {
+      try? FileManager.default.removeItem(at: url)
+      return nil
+    }
+    guard manifest.verifyChecksum() else {
+      try? FileManager.default.removeItem(at: url)
+      return nil
+    }
+    return manifest
+  }
+}
+
 // MARK: - Streaming Download (Stream-and-Hash)
 
 extension AcervoDownloader {
@@ -1203,10 +1284,15 @@ extension AcervoDownloader {
           }
           // Fall through to download.
         } else {
-          let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
-          if existingSize == manifestFile.sizeBytes {
+          // Per-file predicate is shared with `isModelAvailable(_:)` via
+          // `IntegrityVerification.fileMatchesManifestEntry(_:in:)` so the
+          // two code paths agree on the definition of "this file is intact
+          // on disk." Telemetry remains per-file here; the predicate itself
+          // is silent.
+          if IntegrityVerification.fileMatchesManifestEntry(manifestFile, in: destination) {
             // Cache hit: file exists with the correct size. Emit before
             // crediting progress so observers see the cache decision first.
+            let existingSize = manifestFile.sizeBytes
             if let telemetry {
               let ageSeconds: Double
               if let attrs = try? fm.attributesOfItem(atPath: fileDestination.path),
@@ -1356,6 +1442,26 @@ extension AcervoDownloader {
       // Drain any remaining in-flight tasks.  If any of them threw, the
       // error propagates here and the task group cancels the remaining ones.
       try await group.waitForAll()
+    }
+
+    // Persist the validated manifest alongside the model files so the
+    // strict-on-disk `Acervo.isModelAvailable(_:)` check can verify every
+    // file without re-fetching from the CDN. Best-effort: a write failure
+    // here must not propagate as a user-visible download error — the model
+    // is fully downloaded and verified by this point, the manifest cache is
+    // just an optimization for subsequent availability probes. We compute
+    // the base directory as `destination.deletingLastPathComponent()`
+    // because `downloadFiles` is invoked with `destination =
+    // baseDirectory/{slug}`; `persistManifest` re-derives the slug from the
+    // manifest itself, anchoring the cache file consistently with
+    // `loadCachedManifest(for:in:)`.
+    let manifestBaseDirectory = destination.deletingLastPathComponent()
+    do {
+      try persistManifest(manifest, in: manifestBaseDirectory)
+    } catch {
+      logger.warning(
+        "Failed to persist cached manifest for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
     }
 
     // Boundary memory event: emit once per model after the last component
