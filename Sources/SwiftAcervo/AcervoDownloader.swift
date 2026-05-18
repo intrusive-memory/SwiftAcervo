@@ -389,6 +389,88 @@ extension AcervoDownloader {
   }
 }
 
+// MARK: - Manifest Persistence (Local Cache)
+
+extension AcervoDownloader {
+
+  /// Filename for the locally-cached copy of the CDN manifest, stored at the
+  /// root of each model's directory. Hidden (leading dot) to keep it from
+  /// appearing in casual listings, but otherwise a regular file.
+  static let cachedManifestFilename = ".acervo-manifest.json"
+
+  /// Persists a validated `CDNManifest` to disk inside the model's directory.
+  ///
+  /// Used after a successful `downloadFiles` run so that the strict
+  /// `Acervo.isModelAvailable(_:)` check can subsequently verify every file
+  /// in the manifest is on disk at the recorded size without re-fetching the
+  /// manifest from the CDN.
+  ///
+  /// The write is atomic and the JSON is sorted-keys for determinism (helps
+  /// reproducibility and is friendly to filesystem snapshot tooling).
+  ///
+  /// - Parameters:
+  ///   - manifest: The validated manifest to persist. Caller is expected to
+  ///     have already validated `manifestChecksum` (via `downloadManifest`).
+  ///   - baseDirectory: The base shared-models directory. The manifest is
+  ///     written to `{baseDirectory}/{slug}/.acervo-manifest.json`.
+  /// - Throws: Encoding or atomic-write failures.
+  static func persistManifest(
+    _ manifest: CDNManifest,
+    in baseDirectory: URL
+  ) throws {
+    let modelDir = baseDirectory.appendingPathComponent(manifest.slug)
+    let url = modelDir.appendingPathComponent(cachedManifestFilename)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let data = try encoder.encode(manifest)
+    try data.write(to: url, options: [.atomic])
+  }
+
+  /// Loads the locally-cached `CDNManifest` for a model, if present and valid.
+  ///
+  /// Used by `Acervo.isModelAvailable(_:)` to drive the strict on-disk
+  /// availability check without a network round-trip. Performs three
+  /// validations and returns `nil` on any failure:
+  ///
+  /// 1. Read the file at `{baseDirectory}/{slug}/.acervo-manifest.json`.
+  /// 2. JSON-decode it as `CDNManifest`.
+  /// 3. Verify `manifestChecksum` matches the canonical checksum-of-checksums
+  ///    of the file SHAs (same algorithm `downloadManifest` enforces against
+  ///    fresh manifests).
+  ///
+  /// On any failure, the cache file is best-effort removed and `nil` is
+  /// returned. Never throws — a corrupted manifest cache is a soft miss, not
+  /// a hard error.
+  ///
+  /// - Parameters:
+  ///   - modelId: The "org/repo" model identifier whose cached manifest we
+  ///     want to load.
+  ///   - baseDirectory: The base shared-models directory.
+  /// - Returns: The decoded, self-consistent manifest, or `nil`.
+  static func loadCachedManifest(
+    for modelId: String,
+    in baseDirectory: URL
+  ) -> CDNManifest? {
+    let slug = Acervo.slugify(modelId)
+    let url =
+      baseDirectory
+      .appendingPathComponent(slug)
+      .appendingPathComponent(cachedManifestFilename)
+    guard let data = try? Data(contentsOf: url) else {
+      return nil
+    }
+    guard let manifest = try? JSONDecoder().decode(CDNManifest.self, from: data) else {
+      try? FileManager.default.removeItem(at: url)
+      return nil
+    }
+    guard manifest.verifyChecksum() else {
+      try? FileManager.default.removeItem(at: url)
+      return nil
+    }
+    return manifest
+  }
+}
+
 // MARK: - Streaming Download (Stream-and-Hash)
 
 extension AcervoDownloader {
@@ -398,8 +480,31 @@ extension AcervoDownloader {
   ///
   /// This eliminates the post-download read pass by feeding every byte into
   /// both the temp file and a `SHA256` hasher simultaneously. The temp file
-  /// is written in 4 MB chunks to `FileManager.default.temporaryDirectory`
-  /// using a UUID-based name.
+  /// is the destination URL with a `.part` extension appended, colocated with
+  /// the final destination on the same volume so the closing `moveItem` is a
+  /// guaranteed rename (no cross-volume copy).
+  ///
+  /// **Resumable behavior:** If a `.part` file already exists at the
+  /// destination, this method classifies it by size against the manifest:
+  /// - absent → write from offset 0, no `Range` header.
+  /// - genuine partial (`0 < size < manifest.sizeBytes`) → send
+  ///   `Range: bytes=<size>-`, seek the file handle to `size`, and seed the
+  ///   SHA-256 hasher by replaying the existing bytes through it.
+  /// - already-complete (`size == manifest.sizeBytes`) → skip the network
+  ///   entirely; verify SHA against the part file. On match, rename to
+  ///   destination. On mismatch, delete and start fresh.
+  /// - oversized (`size > manifest.sizeBytes`) → delete and start fresh.
+  ///
+  /// Hasher state is reseeded by streaming the existing partial bytes back
+  /// through `SHA256.update(data:)` rather than persisted between attempts.
+  /// REQUIREMENTS § 7 documents the trade-off (~10 s for a 4 GB part file on
+  /// modern SSD). The simplicity benefit of "hasher state lives only inside a
+  /// single call" outweighs the one-time replay cost on resume.
+  ///
+  /// **Failure-path policy:** the part file is KEPT across transient failures
+  /// (network/write errors) so a future retry can resume from the same byte
+  /// offset. It is DELETED only on validated corruption: size mismatch, SHA
+  /// mismatch, or an oversized pre-existing part file.
   ///
   /// - Parameters:
   ///   - request: The configured `URLRequest` targeting the CDN resource.
@@ -413,7 +518,7 @@ extension AcervoDownloader {
   ///   - session: The `URLSession` used to perform the streaming request.
   ///     Defaults to `SecureDownloadSession.shared`, which rejects redirects
   ///     to non-CDN domains. Tests may inject a mock session.
-  /// - Throws: `AcervoError.downloadFailed` for non-200 HTTP responses,
+  /// - Throws: `AcervoError.downloadFailed` for non-200/206 HTTP responses,
   ///   `AcervoError.downloadSizeMismatch` or `AcervoError.integrityCheckFailed`
   ///   if post-stream verification fails. Re-throws network errors.
   private static func streamDownloadFile(
@@ -444,71 +549,197 @@ extension AcervoDownloader {
       throw AcervoError.offlineModeActive
     }
 
-    // Stream the HTTP response using bytes(for:)
-    let (asyncBytes, response) = try await session.bytes(for: request)
-
-    // Validate HTTP 200 status before processing bytes
-    if let httpResponse = response as? HTTPURLResponse,
-      httpResponse.statusCode != 200
-    {
-      if let telemetry {
-        await telemetry.capture(
-          .errorThrown(
-            phase: .fileDownload,
-            errorDescription: "File download failed with HTTP \(httpResponse.statusCode)",
-            modelID: nil,
-            fileName: fileName
-          ))
-      }
-      throw AcervoError.downloadFailed(
-        fileName: fileName,
-        statusCode: httpResponse.statusCode
-      )
-    }
-
-    // Use manifest size for accurate progress
+    let fm = FileManager.default
     let totalBytes = manifestFile.sizeBytes
 
-    // Report initial progress
+    // Ensure destination's parent directory exists BEFORE constructing the
+    // `.part` URL. Subdirectory entries like `speech_tokenizer/config.json`
+    // require this ordering or opening the file handle below would fail.
+    let parentDirectory = destination.deletingLastPathComponent()
+    try ensureDirectory(at: parentDirectory, telemetry: telemetry)
+
+    // Co-locate the partial file with the destination. Same-volume guarantees
+    // the final `moveItem` is a rename, not a cross-volume copy. The `.part`
+    // suffix is invisible to consumers because the destination directory only
+    // exposes the final file path after a successful verify-and-rename.
+    let partURL = destination.appendingPathExtension("part")
+
+    // Classify the part file's pre-stream state.
+    var bytesWritten: Int64 = 0
+    var hasher = SHA256()
+    var resumeOffset: Int64 = 0
+    var skipNetwork = false
+
+    if let partSize = IntegrityVerification.partialFileSize(at: partURL) {
+      if partSize == manifestFile.sizeBytes {
+        // Already-complete part file. Verify SHA directly; on match, rename;
+        // on mismatch, delete and restart from scratch.
+        do {
+          let preHash = try IntegrityVerification.sha256(of: partURL)
+          if preHash == manifestFile.sha256 {
+            // Atomic-rename and report immediate completion. No network I/O.
+            if fm.fileExists(atPath: destination.path) {
+              try fm.removeItem(at: destination)
+            }
+            try fm.moveItem(at: partURL, to: destination)
+            progress?(
+              AcervoDownloadProgress(
+                fileName: fileName,
+                bytesDownloaded: totalBytes,
+                totalBytes: totalBytes,
+                fileIndex: fileIndex,
+                totalFiles: totalFiles
+              ))
+            skipNetwork = true
+          } else {
+            // Validated corruption — delete and restart fresh.
+            try? fm.removeItem(at: partURL)
+          }
+        } catch {
+          // Hash computation failed (file read error). Treat as corrupt;
+          // delete and restart.
+          try? fm.removeItem(at: partURL)
+        }
+      } else if partSize > manifestFile.sizeBytes {
+        // Oversized part file — corrupt or stale manifest size. Validated
+        // corruption: delete and restart.
+        try? fm.removeItem(at: partURL)
+      } else if partSize > 0 {
+        // Genuine partial. Replay existing bytes through the hasher and ask
+        // the server to resume from `partSize`.
+        do {
+          let handle = try FileHandle(forReadingFrom: partURL)
+          defer { try? handle.close() }
+          while true {
+            let chunk = handle.readData(ofLength: IntegrityVerification.chunkSize)
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+          }
+          resumeOffset = partSize
+          bytesWritten = partSize
+        } catch {
+          // Could not seed the hasher from the existing part file. Treat as
+          // corrupt and restart fresh.
+          try? fm.removeItem(at: partURL)
+          hasher = SHA256()
+          resumeOffset = 0
+          bytesWritten = 0
+        }
+      }
+      // partSize == 0: file exists but empty. Treat like a fresh start; the
+      // open-for-writing path below will reuse the empty file.
+    }
+
+    if skipNetwork {
+      return
+    }
+
+    // Build the effective request, attaching a `Range` header only when we
+    // have valid partial bytes to resume from.
+    var effectiveRequest = request
+    let didSendRangeHeader = (resumeOffset > 0)
+    if didSendRangeHeader {
+      effectiveRequest.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+    }
+
+    // Stream the HTTP response using bytes(for:)
+    let (asyncBytes, response) = try await session.bytes(for: effectiveRequest)
+
+    // Validate HTTP status: 200 (full body) or 206 (partial). If we sent a
+    // Range header and the server responded 200, the server ignored it and
+    // is sending the full body — reset hasher + truncate part file and
+    // continue from offset 0.
+    var serverIgnoredRange = false
+    if let httpResponse = response as? HTTPURLResponse {
+      let status = httpResponse.statusCode
+      switch status {
+      case 200:
+        if didSendRangeHeader {
+          // Server ignored our Range request. Reset and consume from start.
+          serverIgnoredRange = true
+        }
+      case 206:
+        // Trust partial bytes already on disk; body resumes at `resumeOffset`.
+        break
+      default:
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: "File download failed with HTTP \(status)",
+              modelID: nil,
+              fileName: fileName
+            ))
+        }
+        // Non-success HTTP status — KEEP the part file (transient: server
+        // may be healthy on retry). Throw to surface the failure.
+        throw AcervoError.downloadFailed(
+          fileName: fileName,
+          statusCode: status
+        )
+      }
+    }
+
+    // Report initial progress (factoring resume offset into the byte counter
+    // so consumers see continuous progress across attempts).
     progress?(
       AcervoDownloadProgress(
         fileName: fileName,
-        bytesDownloaded: 0,
+        bytesDownloaded: bytesWritten,
         totalBytes: totalBytes,
         fileIndex: fileIndex,
         totalFiles: totalFiles
       ))
 
-    // Create UUID-named temp file in temporaryDirectory
-    let tempFileURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString)
-
-    // Set up incremental SHA-256 hasher
-    var hasher = SHA256()
-    var buffer = Data()
-    buffer.reserveCapacity(streamChunkSize)
-    var bytesWritten: Int64 = 0
-
-    // Ensure temp file is cleaned up on any failure path
-    let fm = FileManager.default
-    // Create the file so FileHandle can open it for writing
-    fm.createFile(atPath: tempFileURL.path, contents: nil)
+    // Open the part file for writing. If we are resuming (206 case), seek to
+    // `resumeOffset` so appended bytes land after the existing prefix. If the
+    // server ignored our Range header, we'll truncate to 0 below.
+    if !fm.fileExists(atPath: partURL.path) {
+      fm.createFile(atPath: partURL.path, contents: nil)
+    }
     let fileHandle: FileHandle
     do {
-      fileHandle = try FileHandle(forWritingTo: tempFileURL)
+      fileHandle = try FileHandle(forWritingTo: partURL)
     } catch {
-      try? fm.removeItem(at: tempFileURL)
+      // Could not open the part file for writing — KEEP the file (the bytes
+      // on disk are still valid, the failure is transient).
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
             phase: .other,
-            errorDescription: "Failed to open temp file for writing: \(error.localizedDescription)",
+            errorDescription: "Failed to open part file for writing: \(error.localizedDescription)",
             modelID: nil,
             fileName: fileName
           ))
       }
       throw error
     }
+
+    if serverIgnoredRange {
+      // Discard the partial prefix: reset hasher, truncate file, restart.
+      hasher = SHA256()
+      do {
+        try fileHandle.truncate(atOffset: 0)
+        try fileHandle.seek(toOffset: 0)
+      } catch {
+        try? fileHandle.close()
+        // Truncation failure is transient — keep the part file as-is and
+        // surface the error so the caller can retry.
+        throw error
+      }
+      bytesWritten = 0
+    } else if resumeOffset > 0 {
+      // Seek past the existing prefix so streamed bytes append.
+      do {
+        try fileHandle.seek(toOffset: UInt64(resumeOffset))
+      } catch {
+        try? fileHandle.close()
+        throw error
+      }
+    }
+
+    var buffer = Data()
+    buffer.reserveCapacity(streamChunkSize)
 
     do {
       for try await byte in asyncBytes {
@@ -543,9 +774,10 @@ extension AcervoDownloader {
 
       try fileHandle.close()
     } catch {
-      // Stream interrupted or write failed -- clean up temp file
+      // Stream interrupted or write failed -- KEEP the part file. The bytes
+      // already on disk remain a valid partial that a future retry can
+      // resume from.
       try? fileHandle.close()
-      try? fm.removeItem(at: tempFileURL)
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
@@ -558,9 +790,9 @@ extension AcervoDownloader {
       throw error
     }
 
-    // Verify size
+    // Verify size — DELETE on validated corruption.
     if bytesWritten != manifestFile.sizeBytes {
-      try? fm.removeItem(at: tempFileURL)
+      try? fm.removeItem(at: partURL)
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
@@ -578,11 +810,11 @@ extension AcervoDownloader {
       )
     }
 
-    // Finalize hash and verify SHA-256
+    // Finalize hash and verify SHA-256 — DELETE on validated corruption.
     let digest = hasher.finalize()
     let actualHash = digest.map { String(format: "%02x", $0) }.joined()
     if actualHash != manifestFile.sha256 {
-      try? fm.removeItem(at: tempFileURL)
+      try? fm.removeItem(at: partURL)
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
@@ -599,17 +831,12 @@ extension AcervoDownloader {
       )
     }
 
-    // Ensure destination's parent directory exists
-    let parentDirectory = destination.deletingLastPathComponent()
-    try ensureDirectory(at: parentDirectory, telemetry: telemetry)
-
-    // Remove any existing file at destination
+    // Remove any existing file at destination, then atomic-rename the
+    // verified part file into place.
     if fm.fileExists(atPath: destination.path) {
       try fm.removeItem(at: destination)
     }
-
-    // Atomic move: temp -> destination (file is fully verified at this point)
-    try fm.moveItem(at: tempFileURL, to: destination)
+    try fm.moveItem(at: partURL, to: destination)
 
     // Report completion
     progress?(
@@ -627,10 +854,14 @@ extension AcervoDownloader {
 
 extension AcervoDownloader {
 
-  /// Downloads a file using the legacy `download(for:)` + `verifyAgainstManifest` pattern.
-  ///
-  /// This is the fallback path used when `bytes(for:)` streaming is unavailable
-  /// (e.g., the response lacks `Content-Length` or the stream throws).
+  /// Legacy whole-file fallback. Invoked only when `streamDownloadFile` throws a
+  /// non-`AcervoError` (transport error, etc.). This path intentionally does NOT
+  /// implement `.part`-based resume: it is the second-chance retry for a stream that
+  /// has already failed. Restarting the whole file is acceptable here because
+  /// (a) reaching this path is already an exceptional case, (b) `URLSession.download(for:)`
+  /// writes to session-managed temp anyway and is rename-only on the final hop,
+  /// (c) adding resume here would duplicate `streamDownloadFile`'s range-classification
+  /// logic for negligible benefit.
   ///
   /// - Parameters:
   ///   - request: The configured `URLRequest` targeting the CDN resource.
@@ -1054,10 +1285,15 @@ extension AcervoDownloader {
           }
           // Fall through to download.
         } else {
-          let existingSize = (try? IntegrityVerification.fileSize(at: fileDestination)) ?? -1
-          if existingSize == manifestFile.sizeBytes {
+          // Per-file predicate is shared with `isModelAvailable(_:)` via
+          // `IntegrityVerification.fileMatchesManifestEntry(_:in:)` so the
+          // two code paths agree on the definition of "this file is intact
+          // on disk." Telemetry remains per-file here; the predicate itself
+          // is silent.
+          if IntegrityVerification.fileMatchesManifestEntry(manifestFile, in: destination) {
             // Cache hit: file exists with the correct size. Emit before
             // crediting progress so observers see the cache decision first.
+            let existingSize = manifestFile.sizeBytes
             if let telemetry {
               let ageSeconds: Double
               if let attrs = try? fm.attributesOfItem(atPath: fileDestination.path),
@@ -1207,6 +1443,26 @@ extension AcervoDownloader {
       // Drain any remaining in-flight tasks.  If any of them threw, the
       // error propagates here and the task group cancels the remaining ones.
       try await group.waitForAll()
+    }
+
+    // Persist the validated manifest alongside the model files so the
+    // strict-on-disk `Acervo.isModelAvailable(_:)` check can verify every
+    // file without re-fetching from the CDN. Best-effort: a write failure
+    // here must not propagate as a user-visible download error — the model
+    // is fully downloaded and verified by this point, the manifest cache is
+    // just an optimization for subsequent availability probes. We compute
+    // the base directory as `destination.deletingLastPathComponent()`
+    // because `downloadFiles` is invoked with `destination =
+    // baseDirectory/{slug}`; `persistManifest` re-derives the slug from the
+    // manifest itself, anchoring the cache file consistently with
+    // `loadCachedManifest(for:in:)`.
+    let manifestBaseDirectory = destination.deletingLastPathComponent()
+    do {
+      try persistManifest(manifest, in: manifestBaseDirectory)
+    } catch {
+      logger.warning(
+        "Failed to persist cached manifest for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
     }
 
     // Boundary memory event: emit once per model after the last component

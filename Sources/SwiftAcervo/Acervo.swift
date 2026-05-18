@@ -28,7 +28,7 @@ import Security
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.13.1"
+  public static let version = "0.14.0"
 
   /// The name of the environment variable that gates outbound HTTP fetches.
   ///
@@ -282,14 +282,31 @@ extension Acervo {
 
 extension Acervo {
 
-  /// Checks whether a model is available locally by verifying the presence
-  /// of `config.json` in its model directory.
+  /// Returns `true` when the model is **fully on disk and usable**, anchored
+  /// against its cached CDN manifest.
   ///
-  /// This method never throws. If the model ID is invalid or the directory
-  /// does not exist, it returns `false`.
+  /// The check is strict and offline:
   ///
-  /// - Parameter modelId: A model identifier in "org/repo" format (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
-  /// - Returns: `true` if the model directory contains a `config.json` file.
+  /// 1. Load the manifest cached at
+  ///    `{sharedModelsDirectory}/{slug}/.acervo-manifest.json`. If the
+  ///    cached manifest is missing or fails its self-checksum, the method
+  ///    returns `false`.
+  /// 2. For every file declared in that manifest, verify the on-disk file
+  ///    exists at the recorded byte size. Short-circuits on the first miss.
+  ///
+  /// This means a model directory containing only `config.json` (without a
+  /// manifest cache, or with files smaller than the manifest declares) is
+  /// **not** considered available — that state indicates a previous
+  /// download that did not run to completion.
+  ///
+  /// This method never throws and never performs network I/O. For an
+  /// "is the file just there?" probe that does not require a manifest, see
+  /// `isModelConfigPresent(_:)` (the legacy loose check).
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format (e.g.,
+  ///   "mlx-community/Qwen2.5-7B-Instruct-4bit").
+  /// - Returns: `true` only if the cached manifest exists, self-validates,
+  ///   and every file it declares is on disk at the recorded size.
   ///
   /// ```swift
   /// if Acervo.isModelAvailable("mlx-community/Qwen2.5-7B-Instruct-4bit") {
@@ -297,10 +314,46 @@ extension Acervo {
   /// }
   /// ```
   public static func isModelAvailable(_ modelId: String) -> Bool {
+    isModelAvailable(modelId, in: sharedModelsDirectory)
+  }
+
+  /// Returns `true` when the model's `config.json` is present at the model
+  /// root.
+  ///
+  /// **Warning:** Does NOT imply "model is usable." A directory containing
+  /// only `config.json` (or a partial download) will satisfy this probe even
+  /// though weights, tokenizer, and other declared files may be missing.
+  /// Prefer `availability(_:)` or `isModelAvailable(_:)` for production use.
+  /// This method exists as an explicit escape hatch for callers that
+  /// genuinely only want to probe for `config.json` — for example, legacy
+  /// integrations that pre-date the manifest cache.
+  ///
+  /// Never throws and never performs network I/O.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `true` iff `{sharedModelsDirectory}/{slug}/config.json`
+  ///   exists.
+  public static func isModelConfigPresent(_ modelId: String) -> Bool {
     guard let dir = try? modelDirectory(for: modelId) else {
       return false
     }
     let configPath = dir.appendingPathComponent("config.json").path
+    return FileManager.default.fileExists(atPath: configPath)
+  }
+
+  /// Custom-base-directory overload of `isModelConfigPresent(_:)`.
+  ///
+  /// Internal test seam mirroring the public method's behavior against an
+  /// arbitrary base directory.
+  ///
+  /// - Parameters:
+  ///   - modelId: A model identifier in "org/repo" format.
+  ///   - baseDirectory: The base directory to check.
+  /// - Returns: `true` iff `{baseDirectory}/{slug}/config.json` exists.
+  static func isModelConfigPresent(_ modelId: String, in baseDirectory: URL) -> Bool {
+    let slug = slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    let configPath = modelDir.appendingPathComponent("config.json").path
     return FileManager.default.fileExists(atPath: configPath)
   }
 
@@ -990,7 +1043,8 @@ extension Acervo {
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
     // Validate model ID format (must contain exactly one "/")
     let slashCount = modelId.filter { $0 == "/" }.count
@@ -1026,15 +1080,30 @@ extension Acervo {
     excludeFromBackup(baseDirectory)
     excludeFromBackup(destination)
 
-    // Manifest-driven download with per-file integrity verification
-    try await AcervoDownloader.downloadFiles(
-      modelId: modelId,
-      requestedFiles: files,
-      destination: destination,
-      force: force,
-      progress: progress,
-      telemetry: telemetry
-    )
+    // Manifest-driven download with per-file integrity verification.
+    // `session` is a test-only injection seam: when nil, AcervoDownloader's
+    // default (`SecureDownloadSession.shared`) is used; when set, the
+    // injected session intercepts both manifest and file requests.
+    if let session {
+      try await AcervoDownloader.downloadFiles(
+        modelId: modelId,
+        requestedFiles: files,
+        destination: destination,
+        force: force,
+        progress: progress,
+        session: session,
+        telemetry: telemetry
+      )
+    } else {
+      try await AcervoDownloader.downloadFiles(
+        modelId: modelId,
+        requestedFiles: files,
+        destination: destination,
+        force: force,
+        progress: progress,
+        telemetry: telemetry
+      )
+    }
 
     // Lifecycle: emit completion on the success path. `totalBytes` is reported
     // as 0 at this layer; consumers needing an exact byte total should sum
@@ -1057,34 +1126,79 @@ extension Acervo {
 
 extension Acervo {
 
-  /// Checks whether a model is available locally within a specified
-  /// base directory by verifying the presence of `config.json`.
+  /// Strict, manifest-driven availability check against a custom base
+  /// directory.
   ///
-  /// This internal overload enables testing with temporary directories.
+  /// Internal overload used by tests and by `ensureAvailable(_:in:)`.
+  /// Mirrors the contract of the public `isModelAvailable(_:)` exactly:
+  ///
+  /// - Loads the cached manifest at
+  ///   `{baseDirectory}/{slug}/.acervo-manifest.json` and verifies its
+  ///   self-checksum. Returns `false` if the cache is absent or corrupt.
+  /// - Verifies every file in the manifest is on disk at the recorded
+  ///   byte size via `IntegrityVerification.allManifestFilesPresentBySize`.
   ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The base directory to check for the model.
-  /// - Returns: `true` if the model directory contains a `config.json` file.
+  /// - Returns: `true` only if the cached manifest exists and every declared
+  ///   file is on disk at the recorded size.
   static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
-    let slug = slugify(modelId)
-    let modelDir = baseDirectory.appendingPathComponent(slug)
-    let configPath = modelDir.appendingPathComponent("config.json").path
-    return FileManager.default.fileExists(atPath: configPath)
+    guard
+      let manifest = AcervoDownloader.loadCachedManifest(
+        for: modelId,
+        in: baseDirectory
+      )
+    else {
+      return false
+    }
+    let modelDir = baseDirectory.appendingPathComponent(slugify(modelId))
+    return IntegrityVerification.allManifestFilesPresentBySize(
+      manifest: manifest,
+      in: modelDir
+    )
   }
 
   /// Ensures a model is available locally, downloading it if necessary.
   ///
-  /// If the model is already available (has `config.json` in its directory),
-  /// this method returns immediately without performing any downloads.
-  /// Otherwise, it calls `download()` with `force: false`.
+  /// If the model is already available (the cached manifest is present and
+  /// every declared file is on disk at the recorded byte size), this method
+  /// returns immediately without performing any downloads. Otherwise, it
+  /// calls `download()` with `force: false`.
+  ///
+  /// ## Concurrency: download deduplication
+  ///
+  /// This method participates in a process-wide in-flight registry
+  /// (`InFlightDownloads`). When two callers invoke `ensureAvailable` for
+  /// the same `modelId` concurrently, both await a SINGLE underlying
+  /// download Task — the registry guarantees the work is performed exactly
+  /// once. Both callers receive the same outcome (success or the same
+  /// thrown error). The registry entry is cleared once the download Task
+  /// completes (success or failure), so a subsequent call after the
+  /// completion starts a fresh download.
+  ///
+  /// **Dedup key is `modelId`, NOT `(modelId, files)`.** A joiner that
+  /// requests a different `files` subset rides on the originator's set:
+  /// for example, if the originator requested `["config.json",
+  /// "model.safetensors"]` and a joiner requested only `["config.json"]`,
+  /// the joiner does not trigger an additional download of just
+  /// `config.json` — it awaits the originator's two-file download and
+  /// inherits both files on disk. This trade-off is intentional. The
+  /// overwhelmingly common production caller passes `files: []` (i.e.
+  /// "everything in the manifest"), in which case there is no observable
+  /// difference. Callers that genuinely need disjoint per-file downloads
+  /// for the same model must serialize themselves at the call site.
   ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format
   ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   ///   - files: An array of file names or relative paths within the model.
-  ///   - progress: An optional callback invoked periodically with download progress.
-  ///     Must be `@Sendable` for Swift 6 strict concurrency.
+  ///     Pass `[]` to download every file in the manifest.
+  ///   - progress: An optional callback invoked periodically with download
+  ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
+  ///     When two callers dedup, only the originator's `progress` callback
+  ///     receives ticks from the underlying download; joiners receive their
+  ///     final outcome via the `await` but do not see per-tick callbacks.
   /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
   ///   or download/manifest-related errors from `AcervoDownloader`.
   ///
@@ -1114,28 +1228,61 @@ extension Acervo {
   /// downloading it if necessary.
   ///
   /// This internal overload enables testing with temporary directories
-  /// without touching the real `sharedModelsDirectory`.
+  /// without touching the real `sharedModelsDirectory`. It is the sole
+  /// implementation of the dedup logic; the public `ensureAvailable(...)`
+  /// forwards here. See the public overload's doc comment for the dedup
+  /// contract.
+  ///
+  /// `session` is an internal test-injection seam (default `nil` uses
+  /// `SecureDownloadSession.shared`). The public API does not surface it.
   static func ensureAvailable(
     _ modelId: String,
     files: [String],
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
-    // Check if model is already available (has config.json)
-    if isModelAvailable(modelId, in: baseDirectory) {
-      return
+    // Fast path: model is already strictly available (cached manifest + all
+    // files at recorded sizes). No download, no registry interaction.
+    if isModelAvailable(modelId, in: baseDirectory) { return }
+
+    // Wrap the caller's progress callback so each tick also publishes to
+    // InFlightDownloads. The joiner's wrappedProgress closure is built but
+    // never installed: only the originator's closure is wired into the
+    // actual download (because only the originator's `start` runs).
+    let wrappedProgress: (@Sendable (AcervoDownloadProgress) -> Void) = { p in
+      Task { await InFlightDownloads.shared.publishProgress(p.overallProgress, for: modelId) }
+      progress?(p)
     }
 
-    // Model not available -- download it
-    try await download(
-      modelId,
-      files: files,
-      force: false,
-      progress: progress,
-      in: baseDirectory,
-      telemetry: telemetry
-    )
+    // Capture by-value so the @Sendable `start` closure can reference them.
+    let capturedFiles = files
+    let capturedBase = baseDirectory
+    let capturedTelemetry = telemetry
+    let capturedSession = session
+
+    let sharedTask = await InFlightDownloads.shared.task(for: modelId) {
+      Task {
+        // Clear the registry entry on BOTH the success and the failure path.
+        // `defer` is synchronous; `finish` is async, so we re-launch it in a
+        // Task. The next caller after a thrown error sees `contains == false`
+        // and starts a fresh download.
+        defer {
+          Task { await InFlightDownloads.shared.finish(modelId) }
+        }
+        try await download(
+          modelId,
+          files: capturedFiles,
+          force: false,
+          progress: wrappedProgress,
+          in: capturedBase,
+          telemetry: capturedTelemetry,
+          session: capturedSession
+        )
+      }
+    }
+    try await sharedTask.value
   }
 }
 
@@ -2003,5 +2150,54 @@ extension Acervo {
     {
       try? fm.removeItem(at: componentDir)
     }
+  }
+}
+
+// MARK: - Availability (three-state)
+
+extension Acervo {
+
+  /// Returns the three-state availability of the specified model.
+  ///
+  /// This is the canonical "is the model usable right now?" surface. Unlike
+  /// `isModelAvailable(_:)` (which returns a strict `Bool`), this method can
+  /// also surface the `.downloading` state when Sortie 6's `InFlightDownloads`
+  /// actor is wired in.
+  ///
+  /// This method is `async` even though the Sortie 5 implementation is
+  /// synchronous. The `async` declaration is intentional: Sortie 6 will
+  /// `await` `InFlightDownloads.shared.contains(_:)` (an actor method), and
+  /// changing the signature between sorties would require callers to be
+  /// updated twice. Declaring `async` now avoids that churn.
+  ///
+  /// This method never throws and never performs network I/O.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  public static func availability(_ modelId: String) async -> ModelAvailability {
+    await availability(modelId, in: sharedModelsDirectory)
+  }
+
+  /// Custom-base-directory overload of `availability(_:)`.
+  ///
+  /// Internal test seam mirroring the public method's behavior against an
+  /// arbitrary base directory. Not annotated `public` so it does not widen
+  /// the API surface.
+  ///
+  /// - Parameters:
+  ///   - modelId: A model identifier in "org/repo" format.
+  ///   - baseDirectory: The base directory to check for the model.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  static func availability(_ modelId: String, in baseDirectory: URL) async -> ModelAvailability {
+    // Observe the in-flight registry first: a download in progress wins
+    // over any partial bytes that may already be on disk. The registry is
+    // the sole source of `.downloading`-ness — a `.part` file with no
+    // registered Task is treated as `.notAvailable`.
+    if await InFlightDownloads.shared.contains(modelId) {
+      let p = await InFlightDownloads.shared.progress(for: modelId) ?? 0.0
+      return .downloading(progress: p)
+    }
+    let strict = isModelAvailable(modelId, in: baseDirectory)
+    return strict ? .available : .notAvailable
   }
 }

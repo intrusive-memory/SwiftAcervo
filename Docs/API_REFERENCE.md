@@ -20,7 +20,9 @@ Stateless namespace for model discovery and downloading. Safe to call from any t
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `isModelAvailable(_:)` | `Bool` | `true` if model directory contains `config.json` |
+| `availability(_:)` | `ModelAvailability` | Three-state availability check: `.notAvailable`, `.downloading(progress:)`, or `.available`. Non-throwing, no network I/O. Observes `InFlightDownloads` for in-flight downloads. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md). |
+| `isModelAvailable(_:)` | `Bool` | `true` only when every file in the cached manifest is present on disk at the recorded size. Returns `false` if no manifest is cached or any file is missing/undersized. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md) for migration from the loose (v0.13.x) semantics. |
+| `isModelConfigPresent(_:)` | `Bool` | Escape hatch that returns `true` if `config.json` exists at the model root — the original loose v0.13.x semantics for `isModelAvailable`. Does NOT imply model usability or completeness. Use only if your code intentionally requires the loose probe. |
 | `modelFileExists(_:fileName:)` | `Bool` | `true` if specific file exists in model directory |
 
 ### Discovery
@@ -203,6 +205,7 @@ Singleton actor wrapping the `Acervo` static API with per-model locking. Use whe
 
 | Method | Parameters | Throws | Description |
 |--------|-----------|--------|-------------|
+| `availability(_:)` | `modelId` | — | Three-state availability check: `.notAvailable`, `.downloading(progress:)`, or `.available`. Non-throwing, no network I/O. Observes in-flight downloads. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md). |
 | `download(_:files:force:progress:)` | `modelId`, `files`, `force`, `progress` | `AcervoError` | Download with per-model serialization |
 | `withModelAccess(_:perform:)` | `modelId`, closure | `AcervoError` | Exclusive access to model directory while holding lock |
 | `clearCache()` | — | — | Clear URL cache |
@@ -365,6 +368,25 @@ struct ComponentFile {
     let sha256: String?                 // nil to skip verification
 }
 ```
+
+### ModelAvailability
+
+Three-state availability enum. Use with `Acervo.availability(_:)` or `AcervoManager.availability(_:)` for a non-throwing, network-I/O-free status check. Conforms to `Sendable` and `Equatable`.
+
+```swift
+public enum ModelAvailability: Sendable, Equatable {
+    case notAvailable                           // Model not present on disk or manifest incomplete
+    case downloading(progress: Double)          // Download in flight; progress is 0.0 to 1.0
+    case available                              // Model present and verified complete
+}
+```
+
+**Usage**:
+- `case .notAvailable` — No manifest cached, or manifest files are missing/undersized on disk. Call `Acervo.ensureAvailable(_:)` to start a download.
+- `case .downloading(progress:)` — An earlier call to `ensureAvailable` is in progress. Observe the progress value; when it reaches 1.0 and the state transitions to `.available`, the model is ready.
+- `case .available` — All manifest files are on disk at the correct sizes. Safe to load and use. No network I/O required.
+
+**Note**: This is the canonical three-state API. For the old loose probe (v0.13.x semantics — just check for `config.json`), use `Acervo.isModelConfigPresent(_:)`.
 
 ### ComponentHandle
 

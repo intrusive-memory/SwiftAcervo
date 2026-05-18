@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 
@@ -185,34 +186,61 @@ struct AcervoDownloadAPITests {
 
   // MARK: - ensureAvailable() Skip Logic
 
-  @Test("ensureAvailable() skips download when model already has config.json")
+  @Test("ensureAvailable() skips download when model is already fully present (manifest + files)")
   func ensureAvailableSkipsExistingModel() async throws {
     let tempBase = try makeTempBase()
     defer { try? FileManager.default.removeItem(at: tempBase) }
 
     let modelId = "test-org/already-available"
 
-    // Create fake model with config.json
-    try createFakeModel(modelId: modelId, in: tempBase)
+    // Under Sortie-4 strict semantics, `ensureAvailable` skips the download
+    // only when `Acervo.isModelAvailable(_:in:)` returns true — which
+    // requires (a) a cached, self-consistent `.acervo-manifest.json` and
+    // (b) every file declared in that manifest present on disk at the
+    // recorded size. Write the model accordingly: a `config.json` with
+    // known content plus a single-entry manifest that matches.
+    let slug = Acervo.slugify(modelId)
+    let modelDir = tempBase.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
-    // Write known content so we can verify it's unchanged
-    let configURL =
-      tempBase
-      .appendingPathComponent(Acervo.slugify(modelId))
-      .appendingPathComponent("config.json")
     let knownContent = "{\"test\": \"original_content\"}"
-    try knownContent.write(to: configURL, atomically: true, encoding: .utf8)
+    let configBody = Data(knownContent.utf8)
+    let configURL = modelDir.appendingPathComponent("config.json")
+    try configBody.write(to: configURL)
 
-    // ensureAvailable() should return without downloading
-    // (if it tried to download, it would fail with a network error
-    // for this fake model ID, or it would overwrite the content)
+    let configSha = SHA256.hash(data: configBody)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    let files = [
+      CDNManifestFile(
+        path: "config.json",
+        sha256: configSha,
+        sizeBytes: Int64(configBody.count)
+      )
+    ]
+    let manifest = CDNManifest(
+      manifestVersion: CDNManifest.supportedVersion,
+      modelId: modelId,
+      slug: slug,
+      updatedAt: "2026-05-18T00:00:00Z",
+      files: files,
+      manifestChecksum: CDNManifest.computeChecksum(from: files.map(\.sha256))
+    )
+    try AcervoDownloader.persistManifest(manifest, in: tempBase)
+
+    // Sanity check: strict availability should return true before the call.
+    #expect(Acervo.isModelAvailable(modelId, in: tempBase))
+
+    // ensureAvailable() should return without downloading.
+    // If it tried to download, it would fail with a network error for this
+    // fake model ID — or it would overwrite the content with real bytes.
     try await Acervo.ensureAvailable(
       modelId,
       files: ["config.json"],
       in: tempBase
     )
 
-    // Verify the file content is unchanged (no download occurred)
+    // Verify the file content is unchanged (no download occurred).
     let afterContent = try String(contentsOf: configURL, encoding: .utf8)
     #expect(
       afterContent == knownContent,
@@ -264,21 +292,24 @@ struct AcervoDownloadAPITests {
       "ensureAvailable should attempt download when model is missing")
   }
 
-  @Test("isModelAvailable internal overload detects model in custom directory")
-  func isModelAvailableInternalOverload() throws {
+  @Test("isModelConfigPresent internal overload detects config.json in custom directory")
+  func isModelConfigPresentInternalOverload() throws {
     let tempBase = try makeTempBase()
     defer { try? FileManager.default.removeItem(at: tempBase) }
 
     let modelId = "test-org/custom-dir-model"
 
-    // Model not yet created
+    // Model not yet created — neither strict nor loose check should pass.
     #expect(!Acervo.isModelAvailable(modelId, in: tempBase))
+    #expect(!Acervo.isModelConfigPresent(modelId, in: tempBase))
 
-    // Create fake model
+    // Create fake model (writes only config.json — no manifest).
     try createFakeModel(modelId: modelId, in: tempBase)
 
-    // Now it should be available
-    #expect(Acervo.isModelAvailable(modelId, in: tempBase))
+    // Loose check sees config.json.
+    #expect(Acervo.isModelConfigPresent(modelId, in: tempBase))
+    // Strict check still returns false: no .acervo-manifest.json was written.
+    #expect(!Acervo.isModelAvailable(modelId, in: tempBase))
   }
 
   // MARK: - deleteModel() Tests

@@ -691,3 +691,23 @@ extension AcervoManager {
     try await Acervo.hydrateComponent(componentId, telemetry: self.telemetry)
   }
 }
+
+// MARK: - Availability (three-state)
+
+extension AcervoManager {
+
+  /// Returns the three-state availability of the specified model.
+  ///
+  /// Forwards to `Acervo.availability(_:)` without acquiring the per-model
+  /// lock. Status queries must not serialize behind an in-flight download —
+  /// a locked probe would always appear `.notAvailable` for a model that is
+  /// actively being written to disk.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  public func availability(_ modelId: String) async -> ModelAvailability {
+    // Intentionally does NOT acquire the per-model lock: status queries
+    // must not serialize behind an in-flight download.
+    await Acervo.availability(modelId)
+  }
+}
