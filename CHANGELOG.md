@@ -11,6 +11,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.13.2] - 2026-05-18
+
+### Changed
+
+- **Resumable downloads via `.part` files.** Temp files now live at `{destination}.part` (same volume as the final file) and survive transient failures. On retry, downloads send `Range: bytes=<partial-size>-`; if the server responds 200 instead of 206, the partial bytes are discarded and the full body is consumed. The cross-volume `moveItem` (App Group container vs system temp directory) is incidentally avoided since the part file is co-located with the destination. (See `REQUIREMENTS.md` § 4.5.)
+- **Removed cleanup-only paths in `streamDownloadFile`** that deleted partial bytes on every transient failure. Part files are now deleted only on validated corruption (oversize, SHA mismatch, size mismatch) or successful completion. (See `REQUIREMENTS.md` § 4.6.)
+
+### Internal
+
+- Added `IntegrityVerification.partialFileSize(at:)`.
+
+### Not included (deferred to a follow-up release)
+
+- **Chunked streaming** (REQUIREMENTS § 4.4). The per-byte `for try await byte in asyncBytes` loop is unchanged. A dedicated mission with its own perf bench will ship the `URLSessionDataDelegate`-based rewrite. Do not advertise chunking as a change in this release.
+
+---
+
 ## [0.13.1] - 2026-05-16
 
 ### Added
