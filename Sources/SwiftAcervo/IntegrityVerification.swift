@@ -22,7 +22,7 @@ public struct IntegrityVerification: Sendable {
 
   /// Size of chunks used for streaming SHA-256 computation.
   /// 4 MB balances memory usage and I/O efficiency.
-  private static let chunkSize = 4_194_304
+  static let chunkSize = 4_194_304
 
   /// Computes the SHA-256 hash of a file using streaming reads.
   ///
@@ -89,6 +89,32 @@ public struct IntegrityVerification: Sendable {
   static func fileSize(at fileURL: URL) throws -> Int64 {
     let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
     return attrs[.size] as? Int64 ?? 0
+  }
+
+  /// Returns the size of a file in bytes if it exists, or `nil` if absent.
+  ///
+  /// This helper distinguishes "file absent" (returns `nil`) from "file
+  /// exists with size 0" (returns `0`). It never throws — any I/O glitch
+  /// when reading file attributes is translated to `nil` and reported at
+  /// debug log level. Used by the resumable-download path in
+  /// `AcervoDownloader.streamDownloadFile` to classify the state of a
+  /// `.part` file before deciding whether to send a `Range` header.
+  ///
+  /// - Parameter fileURL: The URL of the file to probe.
+  /// - Returns: The file size in bytes, or `nil` if the file does not exist.
+  static func partialFileSize(at fileURL: URL) -> Int64? {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: fileURL.path) else {
+      return nil
+    }
+    do {
+      return try fileSize(at: fileURL)
+    } catch {
+      // File exists per `fileExists` but attributes lookup failed. Treat as
+      // absent for resume-classification purposes; the downstream code will
+      // start fresh.
+      return nil
+    }
   }
 
   /// Verifies a downloaded file against its manifest entry.
