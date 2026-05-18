@@ -342,20 +342,23 @@ struct ComponentIntegrationTests {
     #expect(models.first?.id == "test-org/v1-model")
   }
 
-  @Test("v1 API isModelAvailable still works")
-  func v1IsModelAvailable() throws {
+  @Test("v1 API isModelConfigPresent still works (legacy loose check)")
+  func v1IsModelConfigPresent() throws {
     let tempDir = try makeTempDir()
     defer { removeTempDir(tempDir) }
 
-    // Not available
-    #expect(Acervo.isModelAvailable("test-org/nonexistent", in: tempDir) == false)
+    // Not present: nothing on disk.
+    #expect(Acervo.isModelConfigPresent("test-org/nonexistent", in: tempDir) == false)
 
     // Create model with config.json
     let modelDir = tempDir.appendingPathComponent("test-org_exists")
     try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: modelDir.appendingPathComponent("config.json"))
 
-    #expect(Acervo.isModelAvailable("test-org/exists", in: tempDir) == true)
+    // Loose check (config.json only, no manifest) returns true.
+    #expect(Acervo.isModelConfigPresent("test-org/exists", in: tempDir) == true)
+    // Strict check returns false: no manifest is cached.
+    #expect(Acervo.isModelAvailable("test-org/exists", in: tempDir) == false)
   }
 
   @Test("v1 API withModelAccess still works")

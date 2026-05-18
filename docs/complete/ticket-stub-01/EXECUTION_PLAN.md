@@ -1,3 +1,11 @@
+---
+feature_name: OPERATION TICKET STUB
+starting_point_commit: d725931
+mission_branch: mission/ticket-stub/01
+iteration: 1
+state: completed
+---
+
 # EXECUTION_PLAN.md — SwiftAcervo: Three-state availability + resumable, dedup'd downloads
 
 **Source requirements:** [`REQUIREMENTS.md`](REQUIREMENTS.md)

@@ -22,9 +22,11 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
   /// the "already-exists with correct size" skip in
   /// `AcervoDownloader.downloadFiles`.
   ///
-  /// `isModelAvailable(_:)` keys off `config.json`, so as long as the failing
-  /// file is `config.json` itself, the model is reliably reported unavailable
-  /// after a partial failure regardless of which other files completed.
+  /// Under the Sortie-4 strict-availability contract, `isModelAvailable(_:)`
+  /// returns `true` only after `downloadFiles` runs to success (which writes
+  /// `.acervo-manifest.json` next to the files). A partial failure exits
+  /// before the manifest is persisted, so the model is reliably reported
+  /// unavailable regardless of which other files completed.
   ///
   /// These tests cover the three documented per-file failure modes:
   ///

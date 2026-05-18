@@ -11,6 +11,41 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.14.0] - 2026-05-18
+
+### Added
+
+- **`ModelAvailability` enum** — Three-state availability marker with cases `.notAvailable`, `.downloading(progress: Double)`, and `.available`. Conforms to `Sendable` and `Equatable`.
+- **`Acervo.availability(_:)` and `AcervoManager.availability(_:)`** — The canonical three-state read API for model status. Non-throwing, performs no network I/O. For models with downloads in flight (tracked by `InFlightDownloads`), returns `.downloading(progress:)`. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md) for the design contract.
+- **`Acervo.isModelConfigPresent(_:)`** — Explicit escape hatch for callers that genuinely only want to probe for `config.json` at the model root. Does NOT imply usability or completeness. Callers migrating from the old `isModelAvailable` loose semantics may use this to retain the original behavior if required.
+- **`InFlightDownloads` actor** (internal) — Process-wide registry of in-flight downloads. Two concurrent `ensureAvailable(modelId, ...)` calls for the same `modelId` now share a single underlying download task. The dedup key is `modelId` alone; a joiner that requests a different `files` subset rides on the originator's set. Production callers pass `files: []` (everything in the manifest), so this trade-off is rarely observable.
+- **Manifest persistence on disk** — After each successful `downloadFiles`, the CDN manifest is cached at `{baseDirectory}/{slug}/.acervo-manifest.json`. Used by the new strict `isModelAvailable` (see Changed) and by `availability(_:)` to report file completeness.
+- **`IntegrityVerification.allManifestFilesPresentBySize(manifest:in:)` and `IntegrityVerification.partialFileSize(at:)` (internal)**  — Helper functions for manifest-aware file completeness checks.
+
+### Changed (BREAKING SEMANTIC)
+
+- **`Acervo.isModelAvailable(_:)` now enforces strict verification.** Returns `true` only when every file declared in the cached manifest is present on disk at the manifest's recorded `sizeBytes`. The previous loose semantics — "returns `true` if `config.json` exists at the model root" — are now available exclusively via the new `isModelConfigPresent(_:)` escape hatch. Callers that intentionally want the loose probe (original behavior) must migrate to `isModelConfigPresent`. Callers that want "model is fully usable" should switch to `availability(_:)` for a three-state answer with observable in-flight downloads. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md) § "2a. Status surfaces today" for migration guidance.
+- **`ensureAvailable(_:files:...)` deduplication semantics.** Two concurrent callers requesting the same `modelId` now share the underlying download, even if they pass different `files` subsets. The joiner's `files` parameter is ignored; it rides on the originator's set. Production code passes `files: []` (everything in the manifest), so this is rarely observable. Tests that exercise narrow file subsets concurrently against the same model should be aware of the dedup behavior.
+
+---
+
+## [0.13.2] - 2026-05-18
+
+### Changed
+
+- **Resumable downloads via `.part` files.** Temp files now live at `{destination}.part` (same volume as the final file) and survive transient failures. On retry, downloads send `Range: bytes=<partial-size>-`; if the server responds 200 instead of 206, the partial bytes are discarded and the full body is consumed. The cross-volume `moveItem` (App Group container vs system temp directory) is incidentally avoided since the part file is co-located with the destination. (See `REQUIREMENTS.md` § 4.5.)
+- **Removed cleanup-only paths in `streamDownloadFile`** that deleted partial bytes on every transient failure. Part files are now deleted only on validated corruption (oversize, SHA mismatch, size mismatch) or successful completion. (See `REQUIREMENTS.md` § 4.6.)
+
+### Internal
+
+- Added `IntegrityVerification.partialFileSize(at:)`.
+
+### Not included (deferred to a follow-up release)
+
+- **Chunked streaming** (REQUIREMENTS § 4.4). The per-byte `for try await byte in asyncBytes` loop is unchanged. A dedicated mission with its own perf bench will ship the `URLSessionDataDelegate`-based rewrite. Do not advertise chunking as a change in this release.
+
+---
+
 ## [0.13.1] - 2026-05-16
 
 ### Added

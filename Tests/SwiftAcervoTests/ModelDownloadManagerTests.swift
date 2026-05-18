@@ -9,6 +9,7 @@
 //   INTEGRATION_TESTS=1 xcodebuild test -scheme SwiftAcervo-Package \
 //       -destination 'platform=macOS,arch=arm64'
 
+import CryptoKit
 import Foundation
 import Testing
 
@@ -23,16 +24,41 @@ private let testModelId = "mlx-community/Llama-3.2-1B-Instruct-4bit"
 /// Second small model used in multi-model tests.
 private let testModelId2 = "mlx-community/SmolLM2-135M-Instruct-4bit"
 
-/// Seeds a fake model in a temp directory so it appears already-local.
+/// Seeds a fake model in a temp directory so it appears already-local under
+/// the strict `Acervo.isModelAvailable(_:)` contract (Sortie 4+).
 ///
-/// Creates the slug directory and drops a `config.json` so that
-/// `Acervo.isModelAvailable()` returns `true` for that model.
+/// Creates the slug directory, drops a minimal `config.json`, and persists a
+/// matching `.acervo-manifest.json` whose single entry's SHA-256 and size
+/// match the on-disk `config.json` exactly. Without the manifest cache, the
+/// new strict availability check would return `false` and any caller using
+/// `Acervo.ensureAvailable` would actually attempt a CDN download.
 private func seedFakeModel(_ modelId: String, in baseDir: URL) throws {
   let slug = Acervo.slugify(modelId)
   let modelDir = baseDir.appendingPathComponent(slug)
   try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+  let configBody = Data("{}".utf8)
   let configURL = modelDir.appendingPathComponent("config.json")
-  try Data("{}".utf8).write(to: configURL)
+  try configBody.write(to: configURL)
+
+  let configSha = SHA256.hash(data: configBody)
+    .map { String(format: "%02x", $0) }
+    .joined()
+  let files = [
+    CDNManifestFile(
+      path: "config.json",
+      sha256: configSha,
+      sizeBytes: Int64(configBody.count)
+    )
+  ]
+  let manifest = CDNManifest(
+    manifestVersion: CDNManifest.supportedVersion,
+    modelId: modelId,
+    slug: slug,
+    updatedAt: "2026-05-18T00:00:00Z",
+    files: files,
+    manifestChecksum: CDNManifest.computeChecksum(from: files.map(\.sha256))
+  )
+  try AcervoDownloader.persistManifest(manifest, in: baseDir)
 }
 
 /// Thread-safe collector for ModelDownloadProgress reports.

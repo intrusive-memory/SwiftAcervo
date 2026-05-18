@@ -22,7 +22,7 @@ public struct IntegrityVerification: Sendable {
 
   /// Size of chunks used for streaming SHA-256 computation.
   /// 4 MB balances memory usage and I/O efficiency.
-  private static let chunkSize = 4_194_304
+  static let chunkSize = 4_194_304
 
   /// Computes the SHA-256 hash of a file using streaming reads.
   ///
@@ -89,6 +89,82 @@ public struct IntegrityVerification: Sendable {
   static func fileSize(at fileURL: URL) throws -> Int64 {
     let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
     return attrs[.size] as? Int64 ?? 0
+  }
+
+  /// Returns the size of a file in bytes if it exists, or `nil` if absent.
+  ///
+  /// This helper distinguishes "file absent" (returns `nil`) from "file
+  /// exists with size 0" (returns `0`). It never throws — any I/O glitch
+  /// when reading file attributes is translated to `nil` and reported at
+  /// debug log level. Used by the resumable-download path in
+  /// `AcervoDownloader.streamDownloadFile` to classify the state of a
+  /// `.part` file before deciding whether to send a `Range` header.
+  ///
+  /// - Parameter fileURL: The URL of the file to probe.
+  /// - Returns: The file size in bytes, or `nil` if the file does not exist.
+  static func partialFileSize(at fileURL: URL) -> Int64? {
+    let fm = FileManager.default
+    guard fm.fileExists(atPath: fileURL.path) else {
+      return nil
+    }
+    do {
+      return try fileSize(at: fileURL)
+    } catch {
+      // File exists per `fileExists` but attributes lookup failed. Treat as
+      // absent for resume-classification purposes; the downstream code will
+      // start fresh.
+      return nil
+    }
+  }
+
+  /// Returns `true` when a file's on-disk size matches the size declared in
+  /// its `CDNManifestFile` entry.
+  ///
+  /// This is the canonical "is this individual file present and intact (by
+  /// size)" predicate. It deliberately does NOT recompute the SHA-256 — that
+  /// would be prohibitively expensive for a synchronous availability probe.
+  /// It is shared by the per-file cache-hit check in
+  /// `AcervoDownloader.downloadFiles` and by the model-level aggregator
+  /// `allManifestFilesPresentBySize(manifest:in:)`.
+  ///
+  /// Never throws; "no file" yields `false`.
+  ///
+  /// - Parameters:
+  ///   - file: The manifest entry describing the expected file (path + size).
+  ///   - directory: The base directory inside which `file.path` resolves.
+  /// - Returns: `true` iff the file exists and its size in bytes equals
+  ///   `file.sizeBytes`.
+  static func fileMatchesManifestEntry(
+    _ file: CDNManifestFile,
+    in directory: URL
+  ) -> Bool {
+    let url = directory.appendingPathComponent(file.path)
+    return partialFileSize(at: url) == file.sizeBytes
+  }
+
+  /// Returns `true` when EVERY file declared in `manifest.files` is on disk
+  /// at the recorded size, anchored at `directory`.
+  ///
+  /// Short-circuits on the first miss. Emits no telemetry; this is a pure
+  /// predicate used by `Acervo.isModelAvailable(_:)` to answer the
+  /// "is this model usable right now?" question without network I/O.
+  ///
+  /// - Parameters:
+  ///   - manifest: The CDN manifest to compare against.
+  ///   - directory: The model's on-disk directory (e.g.,
+  ///     `{baseDirectory}/{slug}`).
+  /// - Returns: `true` iff every entry in `manifest.files` satisfies
+  ///   `fileMatchesManifestEntry(_:in:)`.
+  static func allManifestFilesPresentBySize(
+    manifest: CDNManifest,
+    in directory: URL
+  ) -> Bool {
+    for file in manifest.files {
+      guard fileMatchesManifestEntry(file, in: directory) else {
+        return false
+      }
+    }
+    return true
   }
 
   /// Verifies a downloaded file against its manifest entry.
