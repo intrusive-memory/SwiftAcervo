@@ -2075,3 +2075,50 @@ extension Acervo {
     }
   }
 }
+
+// MARK: - Availability (three-state)
+
+extension Acervo {
+
+  /// Returns the three-state availability of the specified model.
+  ///
+  /// This is the canonical "is the model usable right now?" surface. Unlike
+  /// `isModelAvailable(_:)` (which returns a strict `Bool`), this method can
+  /// also surface the `.downloading` state when Sortie 6's `InFlightDownloads`
+  /// actor is wired in.
+  ///
+  /// This method is `async` even though the Sortie 5 implementation is
+  /// synchronous. The `async` declaration is intentional: Sortie 6 will
+  /// `await` `InFlightDownloads.shared.contains(_:)` (an actor method), and
+  /// changing the signature between sorties would require callers to be
+  /// updated twice. Declaring `async` now avoids that churn.
+  ///
+  /// This method never throws and never performs network I/O.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  public static func availability(_ modelId: String) async -> ModelAvailability {
+    await availability(modelId, in: sharedModelsDirectory)
+  }
+
+  /// Custom-base-directory overload of `availability(_:)`.
+  ///
+  /// Internal test seam mirroring the public method's behavior against an
+  /// arbitrary base directory. Not annotated `public` so it does not widen
+  /// the API surface.
+  ///
+  /// - Parameters:
+  ///   - modelId: A model identifier in "org/repo" format.
+  ///   - baseDirectory: The base directory to check for the model.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  static func availability(_ modelId: String, in baseDirectory: URL) async -> ModelAvailability {
+    // TODO(Sortie 6): replace stub with InFlightDownloads.shared.contains(modelId)
+    let inFlight = false
+    if inFlight {
+      // TODO(Sortie 6): read InFlightDownloads.shared.progress(for: modelId) ?? 0.0
+      return .downloading(progress: 0.0)
+    }
+    let strict = isModelAvailable(modelId, in: baseDirectory)
+    return strict ? .available : .notAvailable
+  }
+}
