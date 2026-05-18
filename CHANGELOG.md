@@ -13,6 +13,8 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.14.0] - 2026-05-18
 
+> **Migrating from 0.13.x?** Read [`UPGRADING.md`](UPGRADING.md) for the per-call-site disposition guide.
+
 ### Added
 
 - **`ModelAvailability` enum** — Three-state availability marker with cases `.notAvailable`, `.downloading(progress: Double)`, and `.available`. Conforms to `Sendable` and `Equatable`.
