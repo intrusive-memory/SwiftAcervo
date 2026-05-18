@@ -1043,7 +1043,8 @@ extension Acervo {
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
     // Validate model ID format (must contain exactly one "/")
     let slashCount = modelId.filter { $0 == "/" }.count
@@ -1079,15 +1080,30 @@ extension Acervo {
     excludeFromBackup(baseDirectory)
     excludeFromBackup(destination)
 
-    // Manifest-driven download with per-file integrity verification
-    try await AcervoDownloader.downloadFiles(
-      modelId: modelId,
-      requestedFiles: files,
-      destination: destination,
-      force: force,
-      progress: progress,
-      telemetry: telemetry
-    )
+    // Manifest-driven download with per-file integrity verification.
+    // `session` is a test-only injection seam: when nil, AcervoDownloader's
+    // default (`SecureDownloadSession.shared`) is used; when set, the
+    // injected session intercepts both manifest and file requests.
+    if let session {
+      try await AcervoDownloader.downloadFiles(
+        modelId: modelId,
+        requestedFiles: files,
+        destination: destination,
+        force: force,
+        progress: progress,
+        session: session,
+        telemetry: telemetry
+      )
+    } else {
+      try await AcervoDownloader.downloadFiles(
+        modelId: modelId,
+        requestedFiles: files,
+        destination: destination,
+        force: force,
+        progress: progress,
+        telemetry: telemetry
+      )
+    }
 
     // Lifecycle: emit completion on the success path. `totalBytes` is reported
     // as 0 at this layer; consumers needing an exact byte total should sum
@@ -1145,16 +1161,44 @@ extension Acervo {
 
   /// Ensures a model is available locally, downloading it if necessary.
   ///
-  /// If the model is already available (has `config.json` in its directory),
-  /// this method returns immediately without performing any downloads.
-  /// Otherwise, it calls `download()` with `force: false`.
+  /// If the model is already available (the cached manifest is present and
+  /// every declared file is on disk at the recorded byte size), this method
+  /// returns immediately without performing any downloads. Otherwise, it
+  /// calls `download()` with `force: false`.
+  ///
+  /// ## Concurrency: download deduplication
+  ///
+  /// This method participates in a process-wide in-flight registry
+  /// (`InFlightDownloads`). When two callers invoke `ensureAvailable` for
+  /// the same `modelId` concurrently, both await a SINGLE underlying
+  /// download Task — the registry guarantees the work is performed exactly
+  /// once. Both callers receive the same outcome (success or the same
+  /// thrown error). The registry entry is cleared once the download Task
+  /// completes (success or failure), so a subsequent call after the
+  /// completion starts a fresh download.
+  ///
+  /// **Dedup key is `modelId`, NOT `(modelId, files)`.** A joiner that
+  /// requests a different `files` subset rides on the originator's set:
+  /// for example, if the originator requested `["config.json",
+  /// "model.safetensors"]` and a joiner requested only `["config.json"]`,
+  /// the joiner does not trigger an additional download of just
+  /// `config.json` — it awaits the originator's two-file download and
+  /// inherits both files on disk. This trade-off is intentional. The
+  /// overwhelmingly common production caller passes `files: []` (i.e.
+  /// "everything in the manifest"), in which case there is no observable
+  /// difference. Callers that genuinely need disjoint per-file downloads
+  /// for the same model must serialize themselves at the call site.
   ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format
   ///     (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit").
   ///   - files: An array of file names or relative paths within the model.
-  ///   - progress: An optional callback invoked periodically with download progress.
-  ///     Must be `@Sendable` for Swift 6 strict concurrency.
+  ///     Pass `[]` to download every file in the manifest.
+  ///   - progress: An optional callback invoked periodically with download
+  ///     progress. Must be `@Sendable` for Swift 6 strict concurrency.
+  ///     When two callers dedup, only the originator's `progress` callback
+  ///     receives ticks from the underlying download; joiners receive their
+  ///     final outcome via the `await` but do not see per-tick callbacks.
   /// - Throws: `AcervoError.invalidModelId` if the model ID format is invalid,
   ///   or download/manifest-related errors from `AcervoDownloader`.
   ///
@@ -1184,28 +1228,61 @@ extension Acervo {
   /// downloading it if necessary.
   ///
   /// This internal overload enables testing with temporary directories
-  /// without touching the real `sharedModelsDirectory`.
+  /// without touching the real `sharedModelsDirectory`. It is the sole
+  /// implementation of the dedup logic; the public `ensureAvailable(...)`
+  /// forwards here. See the public overload's doc comment for the dedup
+  /// contract.
+  ///
+  /// `session` is an internal test-injection seam (default `nil` uses
+  /// `SecureDownloadSession.shared`). The public API does not surface it.
   static func ensureAvailable(
     _ modelId: String,
     files: [String],
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
-    // Check if model is already available (has config.json)
-    if isModelAvailable(modelId, in: baseDirectory) {
-      return
+    // Fast path: model is already strictly available (cached manifest + all
+    // files at recorded sizes). No download, no registry interaction.
+    if isModelAvailable(modelId, in: baseDirectory) { return }
+
+    // Wrap the caller's progress callback so each tick also publishes to
+    // InFlightDownloads. The joiner's wrappedProgress closure is built but
+    // never installed: only the originator's closure is wired into the
+    // actual download (because only the originator's `start` runs).
+    let wrappedProgress: (@Sendable (AcervoDownloadProgress) -> Void) = { p in
+      Task { await InFlightDownloads.shared.publishProgress(p.overallProgress, for: modelId) }
+      progress?(p)
     }
 
-    // Model not available -- download it
-    try await download(
-      modelId,
-      files: files,
-      force: false,
-      progress: progress,
-      in: baseDirectory,
-      telemetry: telemetry
-    )
+    // Capture by-value so the @Sendable `start` closure can reference them.
+    let capturedFiles = files
+    let capturedBase = baseDirectory
+    let capturedTelemetry = telemetry
+    let capturedSession = session
+
+    let sharedTask = await InFlightDownloads.shared.task(for: modelId) {
+      Task {
+        // Clear the registry entry on BOTH the success and the failure path.
+        // `defer` is synchronous; `finish` is async, so we re-launch it in a
+        // Task. The next caller after a thrown error sees `contains == false`
+        // and starts a fresh download.
+        defer {
+          Task { await InFlightDownloads.shared.finish(modelId) }
+        }
+        try await download(
+          modelId,
+          files: capturedFiles,
+          force: false,
+          progress: wrappedProgress,
+          in: capturedBase,
+          telemetry: capturedTelemetry,
+          session: capturedSession
+        )
+      }
+    }
+    try await sharedTask.value
   }
 }
 
@@ -2112,11 +2189,13 @@ extension Acervo {
   ///   - baseDirectory: The base directory to check for the model.
   /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
   static func availability(_ modelId: String, in baseDirectory: URL) async -> ModelAvailability {
-    // TODO(Sortie 6): replace stub with InFlightDownloads.shared.contains(modelId)
-    let inFlight = false
-    if inFlight {
-      // TODO(Sortie 6): read InFlightDownloads.shared.progress(for: modelId) ?? 0.0
-      return .downloading(progress: 0.0)
+    // Observe the in-flight registry first: a download in progress wins
+    // over any partial bytes that may already be on disk. The registry is
+    // the sole source of `.downloading`-ness — a `.part` file with no
+    // registered Task is treated as `.notAvailable`.
+    if await InFlightDownloads.shared.contains(modelId) {
+      let p = await InFlightDownloads.shared.progress(for: modelId) ?? 0.0
+      return .downloading(progress: p)
     }
     let strict = isModelAvailable(modelId, in: baseDirectory)
     return strict ? .available : .notAvailable

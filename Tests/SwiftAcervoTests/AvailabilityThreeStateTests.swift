@@ -258,5 +258,368 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       // .notAvailable (model lives in tempBase, not SharedModels).
       #expect(managerResult == .notAvailable)
     }
+
+    // MARK: - Sortie 6: InFlightDownloads dedup helpers
+
+    /// Builds a manifest with three small files plus deterministic body
+    /// bytes whose SHA-256 matches each file entry. Returns the manifest
+    /// AND the body map so callers can construct responders that serve
+    /// them.
+    private func buildThreeFileFixture(modelId: String) -> (CDNManifest, [String: Data]) {
+      let configData = Data("{}".utf8)
+      let weightsData = Data(repeating: 0x42, count: 64)
+      let tokenizerData = Data(repeating: 0x77, count: 32)
+      let files = [
+        manifestFile(path: "config.json", data: configData),
+        manifestFile(path: "weights.safetensors", data: weightsData),
+        manifestFile(path: "tokenizer.model", data: tokenizerData),
+      ]
+      let manifest = makeManifest(modelId: modelId, files: files)
+      let bodies: [String: Data] = [
+        "config.json": configData,
+        "weights.safetensors": weightsData,
+        "tokenizer.model": tokenizerData,
+      ]
+      return (manifest, bodies)
+    }
+
+    /// Standard responder: serves the manifest on `manifest.json` URLs,
+    /// serves the appropriate body on file URLs (looked up by last path
+    /// component). Sleeps `fileDelaySeconds` synchronously inside each
+    /// FILE response — NOT the manifest response — so concurrent
+    /// `ensureAvailable` calls have time to enter the InFlightDownloads
+    /// actor before the originator's work finishes.
+    private func makeSlowResponder(
+      manifest: CDNManifest,
+      bodies: [String: Data],
+      fileDelaySeconds: TimeInterval = 0.4
+    ) -> MockURLProtocol.Responder {
+      let encodedManifest = try! JSONEncoder().encode(manifest)
+      return { request in
+        let url = request.url?.absoluteString ?? ""
+        if url.hasSuffix("/manifest.json") {
+          let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+          )!
+          return (response, encodedManifest)
+        }
+        // File request — sleep to keep the download in-flight long enough
+        // for joiners to be observed before the originator completes.
+        Thread.sleep(forTimeInterval: fileDelaySeconds)
+        let path = request.url?.lastPathComponent ?? ""
+        let data = bodies[path] ?? Data()
+        let response = HTTPURLResponse(
+          url: request.url!,
+          statusCode: 200,
+          httpVersion: "HTTP/1.1",
+          headerFields: [
+            "Content-Type": "application/octet-stream",
+            "Content-Length": "\(data.count)",
+          ]
+        )!
+        return (response, data)
+      }
+    }
+
+    // MARK: - Sortie 6 tests
+
+    @Test("dedup: a single download services two concurrent ensureAvailable calls")
+    func dedup_singleDownloadUnderConcurrency() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/dedup-single-\(UUID().uuidString.prefix(8))"
+      let (manifest, bodies) = buildThreeFileFixture(modelId: String(modelId))
+      MockURLProtocol.responder = makeSlowResponder(
+        manifest: manifest, bodies: bodies, fileDelaySeconds: 0.5)
+
+      let session = MockURLProtocol.session()
+      let id = String(modelId)
+      let base = tempBase
+      // Launch two concurrent ensureAvailable calls.
+      async let a: Void = Acervo.ensureAvailable(
+        id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+      async let b: Void = Acervo.ensureAvailable(
+        id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+      _ = try await (a, b)
+
+      // Exactly 1 manifest fetch + 3 file fetches. NOT 8.
+      #expect(
+        MockURLProtocol.requestCount == 4,
+        "dedup must collapse two concurrent ensureAvailable calls into ONE download; got \(MockURLProtocol.requestCount) requests"
+      )
+      // Both callers must have observed success: model is now strictly available.
+      #expect(Acervo.isModelAvailable(id, in: base))
+    }
+
+    @Test("dedup: registry is cleared after a successful download")
+    func dedup_registryClearedAfterCompletion() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/registry-clear-\(UUID().uuidString.prefix(8))"
+      let (manifest, bodies) = buildThreeFileFixture(modelId: String(modelId))
+      MockURLProtocol.responder = makeSlowResponder(
+        manifest: manifest, bodies: bodies, fileDelaySeconds: 0.05)
+
+      try await Acervo.ensureAvailable(
+        String(modelId), files: [], progress: nil, in: tempBase, telemetry: nil,
+        session: MockURLProtocol.session())
+
+      let stillRegistered = await InFlightDownloads.shared.contains(String(modelId))
+      #expect(
+        stillRegistered == false,
+        "registry must be cleared after a successful download")
+    }
+
+    @Test("dedup: an error propagates to joiners and clears the registry")
+    func dedup_errorPropagatesToJoiner() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/dedup-error-\(UUID().uuidString.prefix(8))"
+      let (manifest, bodies) = buildThreeFileFixture(modelId: String(modelId))
+      let encodedManifest = try JSONEncoder().encode(manifest)
+
+      // Responder that succeeds for the manifest and the first file, then
+      // returns a 500 on subsequent file requests. We rely on lastPathComponent
+      // to identify which file is being requested; "weights.safetensors" fails.
+      MockURLProtocol.responder = { request in
+        let url = request.url?.absoluteString ?? ""
+        if url.hasSuffix("/manifest.json") {
+          let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"])!
+          return (response, encodedManifest)
+        }
+        // Short sleep so concurrent joiners enter the actor before the
+        // originator's Task throws and clears the registry.
+        Thread.sleep(forTimeInterval: 0.3)
+        let path = request.url?.lastPathComponent ?? ""
+        if path == "weights.safetensors" {
+          let response = HTTPURLResponse(
+            url: request.url!, statusCode: 500, httpVersion: "HTTP/1.1",
+            headerFields: [:])!
+          return (response, Data())
+        }
+        let data = bodies[path] ?? Data()
+        let response = HTTPURLResponse(
+          url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+          headerFields: ["Content-Length": "\(data.count)"])!
+        return (response, data)
+      }
+
+      let session = MockURLProtocol.session()
+      let id = String(modelId)
+      let base = tempBase
+
+      async let aResult: Void = Acervo.ensureAvailable(
+        id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+      async let bResult: Void = Acervo.ensureAvailable(
+        id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+
+      var aError: Error?
+      var bError: Error?
+      do { try await aResult } catch { aError = error }
+      do { try await bResult } catch { bError = error }
+
+      #expect(aError != nil, "originator should have thrown")
+      #expect(bError != nil, "joiner should have thrown")
+      // Both errors should have the same underlying AcervoError case-name shape.
+      // We compare String(describing:) since AcervoError is not Equatable across
+      // all associated values.
+      if let a = aError, let b = bError {
+        #expect(
+          String(describing: a) == String(describing: b),
+          "originator and joiner must observe the same error; got \(a) vs \(b)"
+        )
+      }
+
+      // Registry must be cleared after the failure.
+      let containsAfter = await InFlightDownloads.shared.contains(id)
+      #expect(containsAfter == false, "registry must clear on the error path")
+
+      // A third call after the failure starts a fresh download attempt. We
+      // verify by observing that requestCount increases beyond the previous
+      // total (the third attempt makes new manifest + file requests).
+      let before = MockURLProtocol.requestCount
+      do {
+        try await Acervo.ensureAvailable(
+          id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+      } catch {
+        // Expected — same failure mode.
+      }
+      let after = MockURLProtocol.requestCount
+      #expect(
+        after > before,
+        "a retry after the failure must perform fresh network I/O (before=\(before), after=\(after))"
+      )
+    }
+
+    @Test("downloading state is observable via Acervo.availability while a download is in flight")
+    func downloading_stateObservableViaAvailability() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/downloading-state-\(UUID().uuidString.prefix(8))"
+      let (manifest, bodies) = buildThreeFileFixture(modelId: String(modelId))
+      MockURLProtocol.responder = makeSlowResponder(
+        manifest: manifest, bodies: bodies, fileDelaySeconds: 0.4)
+
+      let session = MockURLProtocol.session()
+      let id = String(modelId)
+      let base = tempBase
+
+      // Sendable box for cross-task progress capture.
+      actor ProgressLog {
+        private(set) var values: [Double] = []
+        func append(_ p: Double) { values.append(p) }
+      }
+      let log = ProgressLog()
+
+      // Drive the download in a child task.
+      let downloadTask: Task<Void, Error> = Task {
+        try await Acervo.ensureAvailable(
+          id, files: [], progress: nil, in: base, telemetry: nil, session: session)
+      }
+
+      // Poll availability every 100ms while the download is in flight.
+      // Capture observed progress fractions for the monotonic-non-decrease
+      // check. We expect AT LEAST one `.downloading(_)` observation.
+      let pollTask: Task<Void, Never> = Task { [log] in
+        for _ in 0..<30 {  // up to 3 seconds of polling
+          try? await Task.sleep(nanoseconds: 100_000_000)
+          let snap = await Acervo.availability(id, in: base)
+          if case .downloading(let p) = snap {
+            await log.append(p)
+          }
+          if downloadTask.isCancelled { break }
+        }
+      }
+
+      try await downloadTask.value
+      _ = await pollTask.value
+
+      let observedDownloading = await log.values
+      #expect(
+        !observedDownloading.isEmpty,
+        "expected at least one .downloading observation during the in-flight window"
+      )
+      // Progress values must be in [0, 1).
+      for p in observedDownloading {
+        #expect(p >= 0.0 && p < 1.0, "downloading progress out of range: \(p)")
+      }
+      // Monotonic non-decreasing.
+      for i in 1..<observedDownloading.count {
+        #expect(
+          observedDownloading[i] >= observedDownloading[i - 1],
+          "progress must be monotonically non-decreasing; index \(i): \(observedDownloading[i]) < \(observedDownloading[i - 1])"
+        )
+      }
+
+      // After completion the model is strictly available.
+      let final = await Acervo.availability(id, in: base)
+      #expect(final == .available, "final availability must be .available; got \(final)")
+    }
+
+    @Test("dedup: joiner requesting a different files subset rides on the originator's set")
+    func dedup_joinerWithDifferentFilesRidesOriginator() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/dedup-joiner-files-\(UUID().uuidString.prefix(8))"
+      let (manifest, bodies) = buildThreeFileFixture(modelId: String(modelId))
+      MockURLProtocol.responder = makeSlowResponder(
+        manifest: manifest, bodies: bodies, fileDelaySeconds: 0.5)
+
+      let session = MockURLProtocol.session()
+      let id = String(modelId)
+      let base = tempBase
+
+      // Originator: request config.json + weights.safetensors (2 files).
+      // Joiner: request only config.json (1 file).
+      // The dedup key is modelId, so the joiner rides on the originator's
+      // 2-file download. Expected request count: 1 manifest + 2 files = 3.
+      //
+      // We must give the originator a head start so it deterministically wins
+      // the race to register in InFlightDownloads. Without this, the joiner
+      // could win and the originator would "ride" on the 1-file set instead.
+      // The semantics we are documenting is "FIRST to register wins" — the
+      // labels "originator" and "joiner" are about REGISTRATION ORDER.
+      let originator: Task<Void, Error> = Task {
+        try await Acervo.ensureAvailable(
+          id, files: ["config.json", "weights.safetensors"], progress: nil, in: base,
+          telemetry: nil, session: session)
+      }
+      // Sleep long enough for the originator's actor entry to occur first,
+      // but short enough that the file fetch (slowed by 0.5s) is still in
+      // flight when the joiner enters.
+      try await Task.sleep(nanoseconds: 100_000_000)
+      let joiner: Task<Void, Error> = Task {
+        try await Acervo.ensureAvailable(
+          id, files: ["config.json"], progress: nil, in: base, telemetry: nil, session: session)
+      }
+      try await originator.value
+      try await joiner.value
+
+      #expect(
+        MockURLProtocol.requestCount == 3,
+        "joiner must ride on originator's file set; expected 3 (1 manifest + 2 files), got \(MockURLProtocol.requestCount)"
+      )
+    }
+
+    @Test("hard-kill simulation: partial .part on disk with no registered Task returns .notAvailable")
+    func hardKillSimulation_returnsNotAvailable_withPartialOnDisk() async throws {
+      await InFlightDownloads.shared.reset()
+
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "sortie6/hard-kill-\(UUID().uuidString.prefix(8))"
+      let slug = Acervo.slugify(modelId)
+      let modelDir = tempBase.appendingPathComponent(slug)
+      try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+      // Pre-populate a partial — simulates a download that was killed
+      // before the final atomic rename + manifest persist.
+      let partialPath = modelDir.appendingPathComponent("weights.safetensors.part")
+      try Data(repeating: 0x42, count: 32).write(to: partialPath)
+
+      // No in-flight task registered.
+      let inFlight = await InFlightDownloads.shared.contains(modelId)
+      #expect(inFlight == false, "precondition: no in-flight task")
+
+      // availability must report .notAvailable — the .part file alone does
+      // not satisfy `.available`, and the registry is the only source of
+      // `.downloading`-ness.
+      let result = await Acervo.availability(modelId, in: tempBase)
+      #expect(
+        result == .notAvailable,
+        "partial on disk without in-flight task must report .notAvailable; got \(result)"
+      )
+    }
   }
 }
