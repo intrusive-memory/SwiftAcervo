@@ -452,7 +452,8 @@ extension AcervoDownloader {
     in baseDirectory: URL
   ) -> CDNManifest? {
     let slug = Acervo.slugify(modelId)
-    let url = baseDirectory
+    let url =
+      baseDirectory
       .appendingPathComponent(slug)
       .appendingPathComponent(cachedManifestFilename)
     guard let data = try? Data(contentsOf: url) else {

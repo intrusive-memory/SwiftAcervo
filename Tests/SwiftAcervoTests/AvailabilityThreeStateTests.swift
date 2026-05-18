@@ -591,7 +591,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       )
     }
 
-    @Test("hard-kill simulation: partial .part on disk with no registered Task returns .notAvailable")
+    @Test(
+      "hard-kill simulation: partial .part on disk with no registered Task returns .notAvailable")
     func hardKillSimulation_returnsNotAvailable_withPartialOnDisk() async throws {
       await InFlightDownloads.shared.reset()
 
