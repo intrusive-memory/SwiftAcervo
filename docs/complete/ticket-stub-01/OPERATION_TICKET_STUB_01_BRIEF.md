@@ -1,3 +1,7 @@
+---
+state: completed
+---
+
 # Iteration 01 Brief — OPERATION TICKET STUB
 
 **Mission:** Make SwiftAcervo's `availability` surface authoritative with three states (`notAvailable`, `downloading(progress:)`, `available`), make downloads resumable via `.part` files, and dedup concurrent callers via an `InFlightDownloads` actor.

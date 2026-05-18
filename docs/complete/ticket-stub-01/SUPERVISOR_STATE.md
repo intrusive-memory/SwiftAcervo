@@ -1,3 +1,7 @@
+---
+state: completed
+---
+
 # SUPERVISOR_STATE.md — OPERATION TICKET STUB
 
 ## Terminology
