@@ -559,11 +559,7 @@ let voiceConfig = try await AcervoManager.shared.withModelAccess(voiceModelId) {
 ```swift
 import SwiftAcervo
 
-// At app launch: migrate legacy paths if any, then warm the cache.
-let migrated = try Acervo.migrateFromLegacyPaths()
-if !migrated.isEmpty {
-    print("Migrated \(migrated.count) model(s) to SharedModels")
-}
+// At app launch: warm the cache.
 try await AcervoManager.shared.preloadModels()
 
 // Show the user what's on disk. This is purely local — no manifest fetches.

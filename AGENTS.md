@@ -6,7 +6,7 @@ updated: 2026-05-18
 
 This file serves as a navigation hub for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.14.0 (May 2026)
+**Current Version**: 0.14.1 (May 2026)
 
 **For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](Docs/USAGE.md)**.
 
@@ -67,7 +67,6 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
   - Canonical path: `~/Library/Group Containers/<app-group-id>/SharedModels/`
   - Directory structure and naming conventions
   - Validity marker (`config.json`)
-  - Migration from legacy paths
   - Troubleshooting and permissions
 
 ### 🛠️ Building, Testing, and CLI

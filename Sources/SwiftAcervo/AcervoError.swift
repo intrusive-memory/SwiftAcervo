@@ -30,9 +30,6 @@ public enum AcervoError: LocalizedError, Sendable {
   /// A model already exists at the target location.
   case modelAlreadyExists(String)
 
-  /// Migration from a legacy path failed.
-  case migrationFailed(source: String, reason: String)
-
   /// The provided model ID is not in the expected "org/repo" format.
   case invalidModelId(String)
 
@@ -179,9 +176,6 @@ public enum AcervoError: LocalizedError, Sendable {
 
     case .modelAlreadyExists(let modelId):
       return "Model already exists: \(modelId)"
-
-    case .migrationFailed(let source, let reason):
-      return "Migration failed for '\(source)': \(reason)"
 
     case .invalidModelId(let modelId):
       return "Invalid model ID '\(modelId)'. Expected format: 'org/repo'"

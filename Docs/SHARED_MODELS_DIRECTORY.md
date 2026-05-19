@@ -239,43 +239,6 @@ if modelSizeBytes > availableBytes {
 
 ---
 
-## Migration from Legacy Paths
-
-Before SwiftAcervo, models were scattered:
-
-```
-~/Library/Caches/intrusive-memory/Models/
-├── LLM/
-│   └── mlx-community_Qwen2.5-7B-Instruct-4bit/
-├── TTS/
-│   └── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
-├── Audio/
-│   └── mlx-community_snac_24khz/
-└── VLM/
-```
-
-**Migrate to SwiftAcervo**:
-
-```swift
-import SwiftAcervo
-
-// At app startup
-let migrated = try Acervo.migrateFromLegacyPaths()
-if !migrated.isEmpty {
-    print("Migrated \(migrated.count) model(s) to SharedModels")
-}
-```
-
-**What happens**:
-1. Scans legacy directories (LLM, TTS, Audio, VLM)
-2. Finds valid models (those with `config.json`)
-3. Moves to `SharedModels/{slug}/`
-4. Old directories are preserved (you can delete manually)
-
-**Idempotent**: Running migration multiple times is safe. Already-migrated models are skipped.
-
----
-
 ## Permissions and Sandboxing
 
 ### iOS / macOS (Sandboxed)
