@@ -1,3 +1,10 @@
+---
+feature_name: OPERATION QUARTERMASTER TORRENT
+starting_point_commit: beeb09195ee12d8a21c10fa30cc75ea5127181e9
+mission_branch: mission/quartermaster-torrent/01
+iteration: 1
+---
+
 # EXECUTION_PLAN.md — SwiftAcervo
 
 Generated from [`REQUIREMENTS.md`](REQUIREMENTS.md) on 2026-05-19.
