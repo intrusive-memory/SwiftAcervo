@@ -187,12 +187,6 @@ These guarantees hold for any bundle component `D` with an explicit `files` list
 - **No hydration for bundle descriptors**: The bare un-hydrated `ComponentDescriptor` initializer is not compatible with the bundle pattern (see note above). Always supply an explicit `files:` list.
 - **`config.json` validity marker**: If none of the bundle components declare `config.json` at the repo root, `isModelAvailable` (the non-component API) will return `false` for the `repoId`. This is expected — `isModelAvailable` is for the non-component download path. Use `isComponentReady` for component-keyed checks.
 
-### Migration
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `migrateFromLegacyPaths()` | `[AcervoModel]` | Move models from legacy cache paths to `sharedModelsDirectory` |
-
 ---
 
 ## AcervoManager (Actor)
@@ -423,7 +417,6 @@ Error type conforming to `LocalizedError`, `Sendable`.
 | `downloadFailed(fileName:statusCode:)` | Network error during file download |
 | `networkError(Error)` | URLSession network error |
 | `modelAlreadyExists(String)` | Model directory already exists (when creating) |
-| `migrationFailed(source:reason:)` | Failure during legacy path migration |
 | `invalidModelId(String)` | Model ID format is invalid |
 | `manifestDownloadFailed(statusCode:)` | CDN manifest unavailable |
 | `manifestIntegrityFailed(expected:actual:)` | Manifest checksum mismatch |

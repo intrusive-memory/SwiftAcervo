@@ -16,7 +16,6 @@ SwiftAcervo/
 │   │   ├── AcervoError.swift
 │   │   ├── AcervoDownloader.swift
 │   │   ├── AcervoDownloadProgress.swift
-│   │   ├── AcervoMigration.swift
 │   │   ├── LevenshteinDistance.swift
 │   │   ├── CDNManifest.swift
 │   │   ├── SecureDownloadSession.swift
@@ -84,7 +83,6 @@ Methods:
 - **Availability**: `isModelAvailable(_:)`, `modelFileExists(_:fileName:)`
 - **Discovery**: `listModels()`, `modelInfo(_:)`, `findModels(matching:)`, `findModels(fuzzyMatching:)`, `closestModel(to:)`, `modelFamilies()`
 - **Download**: `download(_:files:force:progress:)`, `ensureAvailable(_:files:progress:)`
-- **Migration**: `migrateFromLegacyPaths()`
 - **Components**: `register(_:)`, `registeredComponents()`, `downloadComponent(_:)`, `ensureComponentReady(_:)`, `verifyComponent(_:)`
 
 **Type**: ~500–600 lines, mostly method signatures and delegates to `AcervoManager`
@@ -160,13 +158,6 @@ Manifest parsing and validation:
 - `struct CDNFile` — Individual file metadata
 - Manifest format validation
 - Checksum computation
-
-#### AcervoMigration.swift
-Migration from legacy paths:
-- Scans `~/Library/Caches/intrusive-memory/Models/`
-- Finds valid models (those with config.json)
-- Moves to `sharedModelsDirectory`
-- Handles errors gracefully (partial migration)
 
 #### LevenshteinDistance.swift
 Fuzzy search implementation:
@@ -324,7 +315,6 @@ Unit tests with no network access:
 - **ComponentRegistryTests.swift** — Registration, deduplication
 - **IntegrityVerificationTests.swift** — SHA-256 hashing
 - **LevenshteinDistanceTests.swift** — Fuzzy search algorithm
-- **MigrationTests.swift** — Legacy path migration
 - **ManifestTests.swift** — Manifest parsing, validation
 
 Run with: `make test` or `xcodebuild test -scheme SwiftAcervo-Package`

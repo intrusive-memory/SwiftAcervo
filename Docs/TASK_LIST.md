@@ -122,22 +122,6 @@ This is an unorganized, unsized list of tasks needed to implement SwiftAcervo v1
 - [ ] Implement printStatisticsReport() method
 - [ ] Ensure all closures are @Sendable
 
-## Migration from Legacy Paths
-
-- [ ] Implement migrateFromLegacyPaths() function
-- [ ] Scan ~/Library/Caches/intrusive-memory/Models/LLM/
-- [ ] Scan ~/Library/Caches/intrusive-memory/Models/TTS/
-- [ ] Scan ~/Library/Caches/intrusive-memory/Models/Audio/
-- [ ] Scan ~/Library/Caches/intrusive-memory/Models/VLM/
-- [ ] Find subdirectories with config.json
-- [ ] Extract slug from directory name
-- [ ] Check if destination already exists in SharedModels
-- [ ] Move directory if destination does not exist
-- [ ] Skip if destination exists
-- [ ] Return list of migrated AcervoModel instances
-- [ ] Handle migration errors gracefully
-- [ ] Do NOT delete old parent directories
-
 ## Unit Tests (AcervoTests.swift)
 
 - [ ] Test slugify() with various inputs
@@ -203,15 +187,6 @@ This is an unorganized, unsized list of tasks needed to implement SwiftAcervo v1
 - [ ] Test access count tracking
 - [ ] Test printStatisticsReport() output
 
-## Migration Tests
-
-- [ ] Test migrateFromLegacyPaths() with empty legacy directories
-- [ ] Test migrateFromLegacyPaths() moves valid models
-- [ ] Test migrateFromLegacyPaths() skips models already in SharedModels
-- [ ] Test migrateFromLegacyPaths() handles missing config.json
-- [ ] Test migrateFromLegacyPaths() returns correct AcervoModel list
-- [ ] Test migration error handling
-
 ## Integration Tests (Tagged, Network Required)
 
 - [ ] Test download of real config.json from HuggingFace
@@ -248,7 +223,6 @@ This is an unorganized, unsized list of tasks needed to implement SwiftAcervo v1
 - [ ] Add inline code documentation
 - [ ] Document error cases
 - [ ] Document thread safety guarantees
-- [ ] Add migration guide for consumers
 - [ ] Document HuggingFace auth token usage
 - [ ] Document subdirectory file downloads
 - [ ] Add examples for SwiftBruja integration
@@ -270,7 +244,6 @@ This is an unorganized, unsized list of tasks needed to implement SwiftAcervo v1
 - [ ] Manual smoke test: Download a real model
 - [ ] Manual smoke test: List models
 - [ ] Manual smoke test: Fuzzy search
-- [ ] Manual smoke test: Migration from legacy paths
 - [ ] Manual smoke test: Delete model
 - [ ] Code review for security issues
 - [ ] Check for command injection vulnerabilities

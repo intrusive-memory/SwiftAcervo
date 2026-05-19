@@ -14,7 +14,6 @@ struct AcervoErrorTests {
       .downloadFailed(fileName: "config.json", statusCode: 404),
       .networkError(URLError(.notConnectedToInternet)),
       .modelAlreadyExists("org/repo"),
-      .migrationFailed(source: "/old/path", reason: "permission denied"),
       .invalidModelId("bad-id"),
       .componentNotRegistered("test-component"),
       .componentNotDownloaded("test-component"),

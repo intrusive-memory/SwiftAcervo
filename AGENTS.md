@@ -67,7 +67,6 @@ Hard-coding a specific `files: [...]` array is supported as an escape hatch (pre
   - Canonical path: `~/Library/Group Containers/<app-group-id>/SharedModels/`
   - Directory structure and naming conventions
   - Validity marker (`config.json`)
-  - Migration from legacy paths
   - Troubleshooting and permissions
 
 ### 🛠️ Building, Testing, and CLI

@@ -6,7 +6,7 @@ updated: 2026-05-12
 
 Shared AI model discovery and management for Apple platforms.
 
-SwiftAcervo ("Swift Collection/Repository") provides a single canonical location for AI models so that models downloaded by one tool are immediately visible to all others. It handles path resolution, availability checks, discovery, downloading, fuzzy search, and migration -- with zero external dependencies.
+SwiftAcervo ("Swift Collection/Repository") provides a single canonical location for AI models so that models downloaded by one tool are immediately visible to all others. It handles path resolution, availability checks, discovery, downloading, and fuzzy search -- with zero external dependencies.
 
 ## Why SwiftAcervo?
 
@@ -310,12 +310,6 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 | `verifyComponent(_:)` | Verifies a component's files against SHA-256 checksums |
 | `registeredComponents()` | Returns all registered component descriptors |
 
-#### Migration
-
-| Method | Description |
-|--------|-------------|
-| `migrateFromLegacyPaths()` | Moves models from legacy cache paths to `sharedModelsDirectory` |
-
 ### AcervoManager (Actor)
 
 `AcervoManager` is a singleton actor that wraps the `Acervo` static API with per-model locking. Two concurrent downloads of the same model are serialized; different models proceed in parallel.
@@ -364,7 +358,6 @@ SwiftAcervo provides two main entry points: the `Acervo` static API for simple o
 - `downloadFailed(fileName:statusCode:)`
 - `networkError(Error)`
 - `modelAlreadyExists(String)`
-- `migrationFailed(source:reason:)`
 - `invalidModelId(String)`
 - `manifestDownloadFailed(statusCode:)` -- CDN manifest unavailable
 - `manifestIntegrityFailed(expected:actual:)` -- Manifest checksum mismatch
@@ -458,16 +451,10 @@ let voiceConfig = try await AcervoManager.shared.withModelAccess(voiceModelId) {
 
 ### Produciesta (Production App)
 
-[Produciesta](https://github.com/intrusive-memory/Produciesta) is the user-facing production app that ties the ecosystem together. It uses SwiftAcervo at startup to migrate legacy paths and verify model availability:
+[Produciesta](https://github.com/intrusive-memory/Produciesta) is the user-facing production app that ties the ecosystem together. It uses SwiftAcervo at startup to verify model availability:
 
 ```swift
 import SwiftAcervo
-
-// At app launch: migrate any models from the old cache structure
-let migrated = try Acervo.migrateFromLegacyPaths()
-if !migrated.isEmpty {
-    print("Migrated \(migrated.count) model(s) to SharedModels")
-}
 
 // Preload the cache so model lookups are fast throughout the session
 try await AcervoManager.shared.preloadModels()
@@ -477,70 +464,6 @@ let available = try Acervo.listModels()
 let families = try Acervo.modelFamilies()
 for (family, variants) in families {
     print("\(family): \(variants.count) variant(s)")
-}
-```
-
-## Migration from Legacy Paths
-
-Before SwiftAcervo, intrusive-memory projects stored models in a type-based directory structure under the system caches:
-
-```
-~/Library/Caches/intrusive-memory/Models/
-├── LLM/
-│   └── mlx-community_Qwen2.5-7B-Instruct-4bit/
-├── TTS/
-│   └── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
-├── Audio/
-│   └── mlx-community_snac_24khz/
-└── VLM/
-    └── (vision-language models)
-```
-
-SwiftAcervo consolidates all models into a single flat directory:
-
-```
-<App Group Container>/SharedModels/
-├── mlx-community_Qwen2.5-7B-Instruct-4bit/
-├── mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/
-└── mlx-community_snac_24khz/
-```
-
-### Running the Migration
-
-Call `migrateFromLegacyPaths()` once at application startup. It scans all four legacy subdirectories (`LLM`, `TTS`, `Audio`, `VLM`) for valid model directories (those containing `config.json`) and moves them to `sharedModelsDirectory`:
-
-```swift
-import SwiftAcervo
-
-let migrated = try Acervo.migrateFromLegacyPaths()
-print("Migrated \(migrated.count) model(s)")
-
-for model in migrated {
-    print("  \(model.id) -> \(model.path.path)")
-}
-```
-
-### Migration Behavior
-
-- **Safe operation.** Models are moved (not copied). If a model already exists at the destination, it is skipped.
-- **Old directories are preserved.** The legacy parent directories (`LLM/`, `TTS/`, etc.) are NOT deleted. Consumers are responsible for cleaning up their own legacy references.
-- **Idempotent.** Running migration multiple times is harmless. Already-migrated models are skipped because their destination directories already exist.
-- **Partial failure.** If one model fails to move, an `AcervoError.migrationFailed` is thrown. Models that were successfully migrated before the error remain in their new location.
-- **No network required.** Migration is a local filesystem operation only.
-
-### When to Migrate
-
-Run migration once when upgrading from an older version of any intrusive-memory project. A good pattern is to check at app launch:
-
-```swift
-// Only attempt migration if the legacy directory exists
-let legacyPath = URL(filePath: NSHomeDirectory())
-    .appendingPathComponent("Library/Caches/intrusive-memory/Models")
-if FileManager.default.fileExists(atPath: legacyPath.path) {
-    let migrated = try Acervo.migrateFromLegacyPaths()
-    if !migrated.isEmpty {
-        print("Migrated \(migrated.count) model(s) to sharedModelsDirectory")
-    }
 }
 ```
 

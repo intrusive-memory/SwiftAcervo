@@ -165,17 +165,6 @@ struct AcervoErrorPathTests {
     #expect(desc.contains(path), "errorDescription should contain the path")
   }
 
-  @Test("migrationFailed error description contains source and reason")
-  func migrationFailedDescriptionContainsDetails() {
-    let source = "/old/legacy/dir"
-    let reason = "permission denied"
-    let error = AcervoError.migrationFailed(source: source, reason: reason)
-    let desc = error.errorDescription ?? ""
-    #expect(!desc.isEmpty, "errorDescription should not be empty")
-    #expect(desc.contains(source), "errorDescription should contain the source path")
-    #expect(desc.contains(reason), "errorDescription should contain the failure reason")
-  }
-
   @Test("networkError error description is non-empty")
   func networkErrorDescriptionIsNonEmpty() {
     let error = AcervoError.networkError(URLError(.timedOut))
