@@ -47,6 +47,14 @@ public enum AcervoTelemetryEvent: Sendable {
   case modelLoadComplete(modelID: String, totalSizeMB: Double, componentCount: Int)
   // Adapter MUST route this through captureWithMemorySnapshot.
 
+  // --- Availability resolution (slug-keyed API surface, slug-registry/S2) ---
+  /// Emitted exactly once per call to `Acervo.availability(slug:url:)`
+  /// (and its repo-keyed forwarder), regardless of call shape. The fan-out
+  /// across components is collapsed into a single event so consumers see one
+  /// emission per consumer-visible call, not one per component.
+  case modelAvailabilityResolved(
+    slug: String, manifestURL: String, componentCount: Int, result: String)
+
   // --- Error side-channel ---
   case errorThrown(phase: ErrorPhase, errorDescription: String, modelID: String?, fileName: String?)
 
