@@ -33,6 +33,7 @@ make install-acervo     # Build acervo and install to bin/ (Debug)
 make release-acervo     # Build acervo and install to bin/ (Release)
 
 make test-acervo-unit   # Run acervo unit tests (no credentials needed)
+make test-perf          # Run performance + parallel-range correctness tests (developer only, NOT CI)
 ```
 
 **Note**: Always use `make` targets, not raw `xcodebuild` or `swift` commands. The Makefile encodes correct schemes, destinations, and flags.
@@ -113,6 +114,27 @@ xcodebuild test -scheme SwiftAcervo -destination 'platform=macOS' \
 - Network access to `https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev`
 - Valid R2 credentials (if testing upload operations)
 - No rate limiting or firewall blocks
+
+### Performance and Parallel-Range Correctness Tests
+
+**Developer-only. NOT run in CI.** These tests live in `StreamingPerformanceTests.swift` and are gated behind the `SwiftAcervo-Performance.xctestplan`. They are excluded from `SwiftAcervo-macOS.xctestplan` and `SwiftAcervo-iOS.xctestplan` (CI plans skip `StreamingPerformanceTests` by name).
+
+```bash
+make test-perf
+```
+
+**Why out of CI**: CI runners (macos-26) are shared and noisy. Wall-clock measurements are meaningless there, and the parallel-range correctness tests take ~65 seconds per run (sequential `DispatchSemaphore` gating introduces deliberate 5-second processing buffers between ranges to prevent a known sparse-file race in `HasherCoordinator`).
+
+**What's tested**:
+- **Test A** — Wall-clock measurement: 256 MB download, 4-way parallel range, reports net throughput time
+- **Test F** — Parallel-range reorder-buffer correctness: 128 MB, SHA-256 integrity check
+- **Test G** — Parallel-range error propagation: one 403 Forbidden range fails the entire download
+- **Test H** — Parallel-range resume: seeded `.part` file + 2× threshold tail uses parallel path
+- **Test I** — `ACERVO_PARALLEL_RANGES=1` kill-switch: verifies single vs parallel routing
+
+**Run before/after changes to `AcervoDownloader.swift`** to detect regressions in the streaming path. Compare Test A's net throughput time (printed output minus the fixed sequencing overhead) across runs.
+
+**To test the kill-switch (Test I)**: temporarily add `ACERVO_PARALLEL_RANGES=1` to `SwiftAcervo-Performance.xctestplan`'s `environmentVariableEntries`, run `make test-perf`, confirm `requestCount == 1`, then remove the env var.
 
 ### Linting
 

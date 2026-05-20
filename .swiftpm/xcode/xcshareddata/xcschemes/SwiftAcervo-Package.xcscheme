@@ -78,10 +78,12 @@
         directory. Individual tests that need stricter isolation override
         the value per-test via the withIsolatedAcervoState helper.
 
-        SwiftAcervo-macOS  → SwiftAcervoTests + AcervoToolTests
-        SwiftAcervo-iOS    → SwiftAcervoTests only (acervo CLI uses
-                             Foundation.Process, which is unavailable
-                             on iOS)
+        SwiftAcervo-macOS        → SwiftAcervoTests + AcervoToolTests (CI)
+        SwiftAcervo-iOS          → SwiftAcervoTests only (acervo CLI uses
+                                   Foundation.Process, which is unavailable
+                                   on iOS) (CI)
+        SwiftAcervo-Performance  → StreamingPerformanceTests only (NOT CI;
+                                   run via make test-perf locally)
       -->
       <TestPlans>
          <TestPlanReference
@@ -90,6 +92,9 @@
          </TestPlanReference>
          <TestPlanReference
             reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-iOS.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference
+            reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-Performance.xctestplan">
          </TestPlanReference>
       </TestPlans>
    </TestAction>

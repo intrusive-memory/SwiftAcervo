@@ -17,6 +17,9 @@
   },
   "testTargets" : [
     {
+      "skippedTests" : [
+        "StreamingPerformanceTests"
+      ],
       "target" : {
         "containerPath" : "container:",
         "identifier" : "SwiftAcervoTests",

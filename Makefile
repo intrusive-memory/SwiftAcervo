@@ -23,7 +23,7 @@ DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 # SwiftAcervo-iOS   plan → SwiftAcervoTests only (acervo CLI target uses
 #                          Foundation.Process, which is unavailable on iOS)
 
-.PHONY: build test test-ios clean resolve lint help release \
+.PHONY: build test test-ios test-perf clean resolve lint help release \
         build-acervo install-acervo release-acervo \
         test-acervo-unit test-acervo-cdn
 
@@ -40,6 +40,10 @@ test-ios:
 	  -skipPackagePluginValidation \
 	  ONLY_ACTIVE_ARCH=YES \
 	  COMPILER_INDEX_STORE_ENABLE=NO
+
+test-perf:
+	xcodebuild test -scheme $(TEST_SCHEME) -testPlan SwiftAcervo-Performance \
+	  -destination $(DESTINATION)
 
 clean:
 	xcodebuild clean -scheme $(SCHEME) -destination $(DESTINATION)
@@ -97,6 +101,7 @@ help:
 	@echo "  build                    - Build the SwiftAcervo scheme"
 	@echo "  test                     - Run macOS test plan (SwiftAcervoTests + AcervoToolTests)"
 	@echo "  test-ios                 - Run iOS test plan (SwiftAcervoTests only) on iPhone 17 simulator"
+	@echo "  test-perf                - Run performance + parallel-range correctness tests (developer only, NOT CI)"
 	@echo "  clean                    - Clean build artifacts"
 	@echo "  resolve                  - Resolve Swift package dependencies"
 	@echo "  lint                     - Format all Swift source files"
