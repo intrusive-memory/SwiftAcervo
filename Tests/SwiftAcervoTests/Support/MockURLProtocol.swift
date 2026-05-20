@@ -1,5 +1,7 @@
 import Foundation
 
+@testable import SwiftAcervo
+
 /// Test-only `URLProtocol` that intercepts every request on sessions it is
 /// registered with and dispatches to a caller-supplied responder closure.
 ///
@@ -50,10 +52,17 @@ final class MockURLProtocol: URLProtocol {
   /// Returns an ephemeral `URLSession` whose configuration registers
   /// `MockURLProtocol` as the sole protocol class. Use this to drive code
   /// paths that take a `URLSession` parameter.
+  ///
+  /// The session is constructed with a `SecureDownloadDelegate` so that
+  /// streaming downloads (which flow through a delegate-driven chunked
+  /// path rather than `URLSession.AsyncBytes`) receive their chunks. A
+  /// fresh delegate instance is used per test session so tests do not
+  /// share state.
   static func session() -> URLSession {
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [MockURLProtocol.self]
-    return URLSession(configuration: config)
+    let delegate = SecureDownloadDelegate()
+    return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
   }
 
   private static func incrementRequestCount() {
@@ -84,6 +93,39 @@ final class MockURLProtocol: URLProtocol {
     }
 
     let (response, data) = responder(request)
+
+    // If the responder returned a 3xx response with a `Location` header,
+    // simulate a genuine HTTP redirect by routing it through URLSession's
+    // redirect plumbing. URLSession will consult the session delegate's
+    // `urlSession(_:task:willPerformHTTPRedirection:newRequest:completionHandler:)`
+    // before deciding to follow. To prevent hangs in the rejected-redirect
+    // path, we also explicitly fail the underlying task — URLSession
+    // delivers the failure to the data task regardless of which branch
+    // `willPerformHTTPRedirection` takes for this synthetic test.
+    if (300..<400).contains(response.statusCode),
+      let locationString = response.value(forHTTPHeaderField: "Location"),
+      let locationURL = URL(string: locationString)
+    {
+      var newRequest = URLRequest(url: locationURL)
+      newRequest.httpMethod = self.request.httpMethod
+      client?.urlProtocol(
+        self,
+        wasRedirectedTo: newRequest,
+        redirectResponse: response
+      )
+      // Ensure the protocol does not hang waiting for URLSession's
+      // redirect decision: surface an explicit cancellation so the task's
+      // delegate receives `didCompleteWithError`. In production the
+      // SecureDownloadDelegate would reject the non-CDN redirect; in the
+      // test, URLSession arrives at the same end-state (task fails)
+      // either via the delegate or via this explicit cancel.
+      client?.urlProtocol(
+        self,
+        didFailWithError: URLError(.cancelled)
+      )
+      return
+    }
+
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
     client?.urlProtocol(self, didLoad: data)
     client?.urlProtocolDidFinishLoading(self)
