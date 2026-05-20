@@ -39,15 +39,33 @@ struct AcervoDownloader: Sendable {
     category: "AcervoDownloader"
   )
 
-  /// Size of the write buffer used during streaming downloads (4 MB).
-  /// Matches `IntegrityVerification.chunkSize` for consistency.
-  private static let streamChunkSize = 4_194_304
+  /// Flush-and-hash quantum on the delegate-driven streaming path: bytes
+  /// accumulate in an in-memory buffer until they cross this threshold,
+  /// then drain into `hasher.update(data:)` + `fileHandle.write(contentsOf:)`
+  /// in one shot. Smaller than the legacy 4 MB chunk because the OS picks
+  /// I/O sizes for us now (no per-byte amortization need), and smaller
+  /// flushes give finer-grained progress callbacks and lower peak memory
+  /// per in-flight stream.
+  static let streamFlushSize: Int = 256 * 1024
+
+  /// Files smaller than this take the single-request path; larger files
+  /// fan out into `parallelRangeCount` concurrent HTTP Range requests.
+  /// 64 MB is small enough that 4-way parallelism would only shave
+  /// milliseconds, and large enough that single-stream throughput already
+  /// saturates most connections.
+  static let parallelRangeThreshold: Int64 = 64 * 1024 * 1024
+
+  /// Number of concurrent HTTP Range requests issued per file when the
+  /// file exceeds `parallelRangeThreshold`. Matches `maxConcurrentDownloads`
+  /// so peak in-flight HTTP requests across the session stays bounded by
+  /// `httpMaximumConnectionsPerHost = 8` even with HTTP/2/3 multiplexing.
+  static let parallelRangeCount: Int = 4
 
   /// Maximum number of files downloaded concurrently in `downloadFiles()`.
   ///
   /// This is an internal constant and is intentionally not part of the public API.
   /// Increasing this value improves throughput on fast connections but raises
-  /// peak memory usage proportionally (each in-flight file uses one 4 MB buffer).
+  /// peak memory usage proportionally.
   private static let maxConcurrentDownloads = 4
 
   private init() {}
@@ -203,10 +221,28 @@ extension AcervoDownloader {
 
   /// Constructs a `URLRequest` for downloading a file from the CDN.
   ///
+  /// Sets `assumesHTTP3Capable = true` ONLY for requests targeting the
+  /// production CDN host so URLSession attempts QUIC on the first request
+  /// rather than waiting for `Alt-Svc` discovery on the second.
+  /// Cloudflare R2's `pub-*.r2.dev` endpoint advertises HTTP/3, so this
+  /// saves 1 RTT cold-start per download. We gate the flag on the host
+  /// because applying it indiscriminately (e.g., for mock-protocol test
+  /// URLs that share the CDN hostname-pattern but don't actually serve
+  /// HTTP/3) materially slows test execution while URLSession negotiates
+  /// QUIC against a fake endpoint.
+  ///
+  /// `assumesHTTP3Capable` is a per-request property in Foundation, not a
+  /// session-level config flag — that is why this opt-in lives here rather
+  /// than in `SecureDownloadSession.shared`.
+  ///
   /// - Parameter url: The remote URL to download from.
   /// - Returns: A configured `URLRequest`.
   static func buildRequest(from url: URL) -> URLRequest {
-    URLRequest(url: url)
+    var req = URLRequest(url: url)
+    if url.host == SecureDownloadDelegate.allowedHost {
+      req.assumesHTTP3Capable = true
+    }
+    return req
   }
 
   /// Downloads and validates the CDN manifest for a model.
@@ -471,6 +507,21 @@ extension AcervoDownloader {
   }
 }
 
+// MARK: - Stream State (shared by single-request and parallel-range paths)
+
+/// Mutable state shared between `streamDownloadFile` and its helper
+/// functions. Class-based so the helpers can mutate without requiring
+/// `inout` across `async` boundaries.
+private final class StreamState: @unchecked Sendable {
+  var hasher: SHA256
+  var bytesWritten: Int64
+
+  init(hasher: SHA256, bytesWritten: Int64) {
+    self.hasher = hasher
+    self.bytesWritten = bytesWritten
+  }
+}
+
 // MARK: - Streaming Download (Stream-and-Hash)
 
 extension AcervoDownloader {
@@ -634,66 +685,16 @@ extension AcervoDownloader {
       return
     }
 
-    // Build the effective request, attaching a `Range` header only when we
-    // have valid partial bytes to resume from.
-    var effectiveRequest = request
-    let didSendRangeHeader = (resumeOffset > 0)
-    if didSendRangeHeader {
-      effectiveRequest.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
-    }
+    // Decide whether to use the single-request path or the parallel-range
+    // path. Parallelization applies only to large files (> threshold) AND
+    // only when the diagnostics override is not engaged. Resumed downloads
+    // still parallelize across the remaining tail.
+    let useParallelRanges =
+      manifestFile.sizeBytes > parallelRangeThreshold
+      && !SecureDownloadSession.parallelRangesDisabled
+      && parallelRangeCount > 1
 
-    // Stream the HTTP response using bytes(for:)
-    let (asyncBytes, response) = try await session.bytes(for: effectiveRequest)
-
-    // Validate HTTP status: 200 (full body) or 206 (partial). If we sent a
-    // Range header and the server responded 200, the server ignored it and
-    // is sending the full body — reset hasher + truncate part file and
-    // continue from offset 0.
-    var serverIgnoredRange = false
-    if let httpResponse = response as? HTTPURLResponse {
-      let status = httpResponse.statusCode
-      switch status {
-      case 200:
-        if didSendRangeHeader {
-          // Server ignored our Range request. Reset and consume from start.
-          serverIgnoredRange = true
-        }
-      case 206:
-        // Trust partial bytes already on disk; body resumes at `resumeOffset`.
-        break
-      default:
-        if let telemetry {
-          await telemetry.capture(
-            .errorThrown(
-              phase: .fileDownload,
-              errorDescription: "File download failed with HTTP \(status)",
-              modelID: nil,
-              fileName: fileName
-            ))
-        }
-        // Non-success HTTP status — KEEP the part file (transient: server
-        // may be healthy on retry). Throw to surface the failure.
-        throw AcervoError.downloadFailed(
-          fileName: fileName,
-          statusCode: status
-        )
-      }
-    }
-
-    // Report initial progress (factoring resume offset into the byte counter
-    // so consumers see continuous progress across attempts).
-    progress?(
-      AcervoDownloadProgress(
-        fileName: fileName,
-        bytesDownloaded: bytesWritten,
-        totalBytes: totalBytes,
-        fileIndex: fileIndex,
-        totalFiles: totalFiles
-      ))
-
-    // Open the part file for writing. If we are resuming (206 case), seek to
-    // `resumeOffset` so appended bytes land after the existing prefix. If the
-    // server ignored our Range header, we'll truncate to 0 below.
+    // Open the part file for writing. Same setup for both paths.
     if !fm.fileExists(atPath: partURL.path) {
       fm.createFile(atPath: partURL.path, contents: nil)
     }
@@ -701,8 +702,6 @@ extension AcervoDownloader {
     do {
       fileHandle = try FileHandle(forWritingTo: partURL)
     } catch {
-      // Could not open the part file for writing — KEEP the file (the bytes
-      // on disk are still valid, the failure is transient).
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
@@ -715,63 +714,41 @@ extension AcervoDownloader {
       throw error
     }
 
-    if serverIgnoredRange {
-      // Discard the partial prefix: reset hasher, truncate file, restart.
-      hasher = SHA256()
-      do {
-        try fileHandle.truncate(atOffset: 0)
-        try fileHandle.seek(toOffset: 0)
-      } catch {
-        try? fileHandle.close()
-        // Truncation failure is transient — keep the part file as-is and
-        // surface the error so the caller can retry.
-        throw error
-      }
-      bytesWritten = 0
-    } else if resumeOffset > 0 {
-      // Seek past the existing prefix so streamed bytes append.
-      do {
-        try fileHandle.seek(toOffset: UInt64(resumeOffset))
-      } catch {
-        try? fileHandle.close()
-        throw error
-      }
-    }
-
-    var buffer = Data()
-    buffer.reserveCapacity(streamChunkSize)
+    let state = StreamState(hasher: hasher, bytesWritten: bytesWritten)
 
     do {
-      for try await byte in asyncBytes {
-        buffer.append(byte)
-
-        // Flush buffer when it reaches chunk size
-        if buffer.count >= streamChunkSize {
-          hasher.update(data: buffer)
-          try fileHandle.write(contentsOf: buffer)
-          bytesWritten += Int64(buffer.count)
-          buffer.removeAll(keepingCapacity: true)
-
-          // Report intermediate progress
-          progress?(
-            AcervoDownloadProgress(
-              fileName: fileName,
-              bytesDownloaded: bytesWritten,
-              totalBytes: totalBytes,
-              fileIndex: fileIndex,
-              totalFiles: totalFiles
-            ))
-        }
+      if useParallelRanges {
+        try await runParallelRangeStream(
+          request: request,
+          fileHandle: fileHandle,
+          partURL: partURL,
+          manifestFile: manifestFile,
+          fileName: fileName,
+          fileIndex: fileIndex,
+          totalFiles: totalFiles,
+          totalBytes: totalBytes,
+          resumeOffset: resumeOffset,
+          state: state,
+          progress: progress,
+          session: session,
+          telemetry: telemetry
+        )
+      } else {
+        try await runSingleRequestStream(
+          request: request,
+          fileHandle: fileHandle,
+          manifestFile: manifestFile,
+          fileName: fileName,
+          fileIndex: fileIndex,
+          totalFiles: totalFiles,
+          totalBytes: totalBytes,
+          resumeOffset: resumeOffset,
+          state: state,
+          progress: progress,
+          session: session,
+          telemetry: telemetry
+        )
       }
-
-      // Flush any remaining bytes in buffer
-      if !buffer.isEmpty {
-        hasher.update(data: buffer)
-        try fileHandle.write(contentsOf: buffer)
-        bytesWritten += Int64(buffer.count)
-        buffer.removeAll(keepingCapacity: true)
-      }
-
       try fileHandle.close()
     } catch {
       // Stream interrupted or write failed -- KEEP the part file. The bytes
@@ -791,14 +768,14 @@ extension AcervoDownloader {
     }
 
     // Verify size — DELETE on validated corruption.
-    if bytesWritten != manifestFile.sizeBytes {
+    if state.bytesWritten != manifestFile.sizeBytes {
       try? fm.removeItem(at: partURL)
       if let telemetry {
         await telemetry.capture(
           .errorThrown(
             phase: .fileDownloadSize,
             errorDescription:
-              "Size mismatch for \(manifestFile.path): expected \(manifestFile.sizeBytes), got \(bytesWritten)",
+              "Size mismatch for \(manifestFile.path): expected \(manifestFile.sizeBytes), got \(state.bytesWritten)",
             modelID: nil,
             fileName: manifestFile.path
           ))
@@ -806,12 +783,12 @@ extension AcervoDownloader {
       throw AcervoError.downloadSizeMismatch(
         fileName: manifestFile.path,
         expected: manifestFile.sizeBytes,
-        actual: bytesWritten
+        actual: state.bytesWritten
       )
     }
 
     // Finalize hash and verify SHA-256 — DELETE on validated corruption.
-    let digest = hasher.finalize()
+    let digest = state.hasher.finalize()
     let actualHash = digest.map { String(format: "%02x", $0) }.joined()
     if actualHash != manifestFile.sha256 {
       try? fm.removeItem(at: partURL)
@@ -843,6 +820,502 @@ extension AcervoDownloader {
       AcervoDownloadProgress(
         fileName: fileName,
         bytesDownloaded: totalBytes,
+        totalBytes: totalBytes,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles
+      ))
+  }
+
+  /// Drives the single-request streaming path: one `URLSessionDataTask`,
+  /// chunks delivered via the session's `SecureDownloadDelegate`, buffered
+  /// into `streamFlushSize`-sized flushes that hit both the SHA-256 hasher
+  /// and the part file's `FileHandle` in one shot.
+  ///
+  /// Handles the "Range header sent but server returned 200" case by
+  /// resetting the hasher and truncating the part file before consuming
+  /// the body from offset 0.
+  fileprivate static func runSingleRequestStream(
+    request: URLRequest,
+    fileHandle: FileHandle,
+    manifestFile: CDNManifestFile,
+    fileName: String,
+    fileIndex: Int,
+    totalFiles: Int,
+    totalBytes: Int64,
+    resumeOffset: Int64,
+    state: StreamState,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
+    session: URLSession,
+    telemetry: (any AcervoTelemetryReporter)?
+  ) async throws {
+    // Build the effective request, attaching a `Range` header only when we
+    // have valid partial bytes to resume from.
+    var effectiveRequest = request
+    let didSendRangeHeader = (resumeOffset > 0)
+    if didSendRangeHeader {
+      effectiveRequest.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+    }
+
+    let (stream, task, consumer): (
+      AsyncThrowingStream<Data, Error>, URLSessionDataTask, ChunkConsumer
+    ) = try session.chunkedDownload(for: effectiveRequest)
+
+    // Seek the handle to the right starting offset BEFORE the first chunk
+    // arrives. If we sent Range and the server honors it (206), we resume
+    // at `resumeOffset`. If the server ignores Range (200), we will reset
+    // and rewind below once we see the status code on the first chunk.
+    if resumeOffset > 0 {
+      do {
+        try fileHandle.seek(toOffset: UInt64(resumeOffset))
+      } catch {
+        task.cancel()
+        throw error
+      }
+    }
+
+    // The initial progress callback fires when the first chunk arrives,
+    // NOT before the network call returns. This preserves the legacy
+    // contract that a failed connection (e.g., unreachable host) never
+    // surfaces a progress event.
+
+    var buffer = Data()
+    buffer.reserveCapacity(streamFlushSize)
+    var sawFirstChunk = false
+    var serverIgnoredRange = false
+
+    do {
+      for try await chunk in stream {
+        if !sawFirstChunk {
+          sawFirstChunk = true
+          if let status = consumer.responseStatus {
+            switch status {
+            case 200:
+              if didSendRangeHeader {
+                // Server ignored our Range header — reset and consume from
+                // start.
+                serverIgnoredRange = true
+                state.hasher = SHA256()
+                try fileHandle.truncate(atOffset: 0)
+                try fileHandle.seek(toOffset: 0)
+                state.bytesWritten = 0
+              }
+            case 206:
+              break  // expected when Range was sent; nothing to do
+            default:
+              if let telemetry {
+                await telemetry.capture(
+                  .errorThrown(
+                    phase: .fileDownload,
+                    errorDescription: "File download failed with HTTP \(status)",
+                    modelID: nil,
+                    fileName: fileName
+                  ))
+              }
+              task.cancel()
+              throw AcervoError.downloadFailed(
+                fileName: fileName,
+                statusCode: status
+              )
+            }
+          }
+          // Fire the initial progress event only after we have evidence
+          // the connection produced a usable response. This factors the
+          // resume offset into the byte counter so consumers see
+          // continuous progress across attempts.
+          progress?(
+            AcervoDownloadProgress(
+              fileName: fileName,
+              bytesDownloaded: state.bytesWritten,
+              totalBytes: totalBytes,
+              fileIndex: fileIndex,
+              totalFiles: totalFiles
+            ))
+        }
+
+        buffer.append(chunk)
+        if buffer.count >= streamFlushSize {
+          state.hasher.update(data: buffer)
+          try fileHandle.write(contentsOf: buffer)
+          state.bytesWritten += Int64(buffer.count)
+          buffer.removeAll(keepingCapacity: true)
+          progress?(
+            AcervoDownloadProgress(
+              fileName: fileName,
+              bytesDownloaded: state.bytesWritten,
+              totalBytes: totalBytes,
+              fileIndex: fileIndex,
+              totalFiles: totalFiles
+            ))
+        }
+      }
+
+      // Tail flush.
+      if !buffer.isEmpty {
+        state.hasher.update(data: buffer)
+        try fileHandle.write(contentsOf: buffer)
+        state.bytesWritten += Int64(buffer.count)
+        buffer.removeAll(keepingCapacity: true)
+      }
+    } catch {
+      // If the stream ended because we cancelled on a non-2xx/206 status,
+      // surface the HTTP error in preference to the underlying URL error.
+      if let status = consumer.responseStatus,
+        status != 200, status != 206, !(error is AcervoError)
+      {
+        if let telemetry {
+          await telemetry.capture(
+            .errorThrown(
+              phase: .fileDownload,
+              errorDescription: "File download failed with HTTP \(status)",
+              modelID: nil,
+              fileName: fileName
+            ))
+        }
+        throw AcervoError.downloadFailed(fileName: fileName, statusCode: status)
+      }
+      throw error
+    }
+
+    // If we saw zero chunks but the response status indicates failure (empty
+    // body 4xx/5xx), surface as a download error.
+    if !sawFirstChunk, let status = consumer.responseStatus,
+      status != 200, status != 206
+    {
+      throw AcervoError.downloadFailed(fileName: fileName, statusCode: status)
+    }
+
+    // If we sent Range but never saw a status (no chunks, no error) the
+    // server-ignored-range branch could not run; nothing else to do.
+    _ = serverIgnoredRange
+  }
+
+  /// Drives the parallel-range streaming path: splits the file's tail
+  /// (`[resumeOffset, sizeBytes)`) into `parallelRangeCount` equal sub-ranges,
+  /// fires one `URLSessionDataTask` per sub-range, and writes their bytes
+  /// directly to the `.part` file at the correct seek offsets.
+  ///
+  /// A separate hasher coordinator walks the part file in order, hashing
+  /// contiguous bytes from `hashedThrough` as they become available, so
+  /// SHA-256 sees the file in the canonical byte order. Memory budget per
+  /// in-flight file is bounded by `streamFlushSize × parallelRangeCount` (~1 MB).
+  fileprivate static func runParallelRangeStream(
+    request: URLRequest,
+    fileHandle: FileHandle,
+    partURL: URL,
+    manifestFile: CDNManifestFile,
+    fileName: String,
+    fileIndex: Int,
+    totalFiles: Int,
+    totalBytes: Int64,
+    resumeOffset: Int64,
+    state: StreamState,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?,
+    session: URLSession,
+    telemetry: (any AcervoTelemetryReporter)?
+  ) async throws {
+    let tailStart = resumeOffset
+    let tailEnd = manifestFile.sizeBytes  // exclusive
+    let tailLength = tailEnd - tailStart
+    precondition(tailLength > 0, "parallel-range path entered with empty tail")
+
+    // Split tail into N sub-ranges. Last absorbs remainder.
+    let count = Int64(parallelRangeCount)
+    let baseChunk = tailLength / count
+    var subRanges: [(start: Int64, end: Int64)] = []
+    subRanges.reserveCapacity(parallelRangeCount)
+    for i in 0..<parallelRangeCount {
+      let s = tailStart + Int64(i) * baseChunk
+      let e = (i == parallelRangeCount - 1) ? tailEnd : (s + baseChunk)
+      subRanges.append((s, e))
+    }
+
+    // The inherited writable file handle is flushed; the parallel-range
+    // writer below opens its own handle for the duration of the multi-range
+    // transfer (and seeks per write under a lock). The caller still closes
+    // the inherited handle on exit; closing a second handle to the same
+    // file is benign on macOS/iOS.
+    try fileHandle.synchronize()
+
+    // Writer guards concurrent `seek` + `write` to the part file with an
+    // NSLock. One shared writer per file; per-range tasks call `write(at:)`.
+    let writer = PartFileWriter(partURL: partURL)
+    try writer.open()
+
+    // Coordinator advances `hashedThrough` as contiguous bytes complete.
+    let coordinator = HasherCoordinator(
+      partURL: partURL,
+      startOffset: tailStart,
+      endOffset: tailEnd,
+      state: state,
+      manifestFile: manifestFile,
+      fileName: fileName,
+      fileIndex: fileIndex,
+      totalFiles: totalFiles,
+      totalBytes: totalBytes,
+      progress: progress
+    )
+
+    // Initial progress (resume bytes already counted via state.bytesWritten).
+    progress?(
+      AcervoDownloadProgress(
+        fileName: fileName,
+        bytesDownloaded: state.bytesWritten,
+        totalBytes: totalBytes,
+        fileIndex: fileIndex,
+        totalFiles: totalFiles
+      ))
+
+    do {
+      try await withThrowingTaskGroup(of: Void.self) { group in
+        for sub in subRanges {
+          group.addTask {
+            try await Self.runRangeSubTask(
+              request: request,
+              subStart: sub.start,
+              subEnd: sub.end,
+              writer: writer,
+              coordinator: coordinator,
+              session: session,
+              fileName: fileName,
+              telemetry: telemetry
+            )
+          }
+        }
+        try await group.waitForAll()
+      }
+    } catch {
+      writer.close()
+      throw error
+    }
+
+    // Drain the coordinator: hash any contiguous bytes that arrived after
+    // the last advance.
+    try coordinator.finalizeAfterAllRangesComplete()
+    writer.close()
+  }
+
+  /// Runs one parallel-range sub-task. Streams `Range: bytes={start}-{end-1}`,
+  /// writes each chunk to the part file at the correct offset, and signals
+  /// the hasher coordinator after every successful write so it can advance
+  /// `hashedThrough` whenever contiguous bytes become available.
+  fileprivate static func runRangeSubTask(
+    request: URLRequest,
+    subStart: Int64,
+    subEnd: Int64,
+    writer: PartFileWriter,
+    coordinator: HasherCoordinator,
+    session: URLSession,
+    fileName: String,
+    telemetry: (any AcervoTelemetryReporter)?
+  ) async throws {
+    var rangedRequest = request
+    rangedRequest.setValue(
+      "bytes=\(subStart)-\(subEnd - 1)", forHTTPHeaderField: "Range")
+
+    let (stream, task, consumer) = try session.chunkedDownload(for: rangedRequest)
+    var writeOffset = subStart
+
+    do {
+      for try await chunk in stream {
+        if let status = consumer.responseStatus,
+          status != 206 && status != 200
+        {
+          // Non-success / non-partial. Cancel and surface.
+          task.cancel()
+          if let telemetry {
+            await telemetry.capture(
+              .errorThrown(
+                phase: .fileDownload,
+                errorDescription:
+                  "Parallel-range download failed with HTTP \(status) for range \(subStart)-\(subEnd - 1)",
+                modelID: nil,
+                fileName: fileName
+              ))
+          }
+          throw AcervoError.downloadFailed(fileName: fileName, statusCode: status)
+        }
+        try writer.write(data: chunk, at: writeOffset)
+        writeOffset += Int64(chunk.count)
+        try coordinator.signalChunkComplete(throughOffset: writeOffset)
+      }
+    } catch {
+      // If the consumer captured a non-success status, surface it as the
+      // HTTP error rather than the underlying transport error.
+      if let status = consumer.responseStatus,
+        status != 200, status != 206, !(error is AcervoError)
+      {
+        throw AcervoError.downloadFailed(fileName: fileName, statusCode: status)
+      }
+      throw error
+    }
+
+    // Sub-range write completed — guarantee we wrote exactly the bytes we
+    // were promised. Off-by-one here is the highest-risk parallel-range
+    // bug, so it must fail loudly.
+    if writeOffset != subEnd {
+      throw AcervoError.downloadSizeMismatch(
+        fileName: fileName,
+        expected: subEnd - subStart,
+        actual: writeOffset - subStart
+      )
+    }
+  }
+}
+
+// MARK: - Parallel-Range Plumbing
+
+/// Lock-guarded sparse writer for the `.part` file. Multiple sub-range tasks
+/// hand their chunks here and the writer serializes the seek+write pair.
+private final class PartFileWriter: @unchecked Sendable {
+  private let partURL: URL
+  private let lock = NSLock()
+  private var handle: FileHandle?
+
+  init(partURL: URL) {
+    self.partURL = partURL
+  }
+
+  func open() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    self.handle = try FileHandle(forWritingTo: partURL)
+  }
+
+  func write(data: Data, at offset: Int64) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let h = handle else {
+      throw AcervoError.networkError(
+        NSError(
+          domain: "SwiftAcervo",
+          code: -2,
+          userInfo: [NSLocalizedDescriptionKey: "PartFileWriter handle is nil"]
+        ))
+    }
+    try h.seek(toOffset: UInt64(offset))
+    try h.write(contentsOf: data)
+  }
+
+  func close() {
+    lock.lock()
+    defer { lock.unlock() }
+    try? handle?.synchronize()
+    try? handle?.close()
+    handle = nil
+  }
+}
+
+/// Maintains `hashedThrough` for the parallel-range path. Sub-range tasks
+/// announce write-completion offsets; the coordinator reads contiguous
+/// bytes from the part file in 64 KB increments and feeds them into the
+/// hasher in canonical order.
+private final class HasherCoordinator: @unchecked Sendable {
+  private let lock = NSLock()
+  private let partURL: URL
+  private let startOffset: Int64
+  private let endOffset: Int64
+  private var hashedThrough: Int64
+  private var pendingFrontier: Int64
+  private let state: StreamState
+  private let manifestFile: CDNManifestFile
+  private let fileName: String
+  private let fileIndex: Int
+  private let totalFiles: Int
+  private let totalBytes: Int64
+  private let progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+
+  /// Read-back chunk size when feeding the hasher from disk. 64 KB is small
+  /// enough to keep transient peak memory negligible and large enough that
+  /// the syscall amortizes cleanly.
+  private static let readBackChunkSize: Int = 64 * 1024
+
+  init(
+    partURL: URL,
+    startOffset: Int64,
+    endOffset: Int64,
+    state: StreamState,
+    manifestFile: CDNManifestFile,
+    fileName: String,
+    fileIndex: Int,
+    totalFiles: Int,
+    totalBytes: Int64,
+    progress: (@Sendable (AcervoDownloadProgress) -> Void)?
+  ) {
+    self.partURL = partURL
+    self.startOffset = startOffset
+    self.endOffset = endOffset
+    self.hashedThrough = startOffset
+    self.pendingFrontier = startOffset
+    self.state = state
+    self.manifestFile = manifestFile
+    self.fileName = fileName
+    self.fileIndex = fileIndex
+    self.totalFiles = totalFiles
+    self.totalBytes = totalBytes
+    self.progress = progress
+  }
+
+  /// Called by a sub-range task after writing a chunk that completes
+  /// `[oldOffset, throughOffset)` on disk. Atomically advances
+  /// `pendingFrontier` and, if the new high-water mark equals `hashedThrough`,
+  /// drives the hasher forward over the newly-contiguous bytes.
+  func signalChunkComplete(throughOffset: Int64) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    if throughOffset > pendingFrontier {
+      pendingFrontier = throughOffset
+    }
+    try drainContiguousLocked()
+  }
+
+  /// Final drain after every sub-range completes. Pulls the remaining
+  /// contiguous tail into the hasher in case the last signal lagged.
+  func finalizeAfterAllRangesComplete() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    pendingFrontier = endOffset
+    try drainContiguousLocked()
+  }
+
+  private func drainContiguousLocked() throws {
+    // Sub-range tasks announce non-monotonic frontiers — a late chunk for
+    // range 0 can leave `pendingFrontier == hashedThrough` until range 0
+    // catches up. We only consume bytes where `hashedThrough < frontier`,
+    // and only as far forward as the on-disk file actually has bytes (the
+    // earliest range governs this).
+    guard pendingFrontier > hashedThrough else { return }
+
+    let readHandle = try FileHandle(forReadingFrom: partURL)
+    defer { try? readHandle.close() }
+
+    // We hash only contiguous bytes starting from `hashedThrough`. Without
+    // a global "all ranges before X are written" signal, we conservatively
+    // assume the earliest range's frontier is what's truly contiguous. The
+    // simpler invariant: we only advance up to `pendingFrontier`, and that
+    // value is the *maximum* offset any range has reached. To preserve
+    // contiguity we read until we either hit `pendingFrontier` or read
+    // fewer bytes than requested (which would indicate a sparse gap).
+    try readHandle.seek(toOffset: UInt64(hashedThrough))
+    var remaining = pendingFrontier - hashedThrough
+    while remaining > 0 {
+      let want = Int(min(Int64(Self.readBackChunkSize), remaining))
+      let chunk = readHandle.readData(ofLength: want)
+      if chunk.isEmpty { break }
+      state.hasher.update(data: chunk)
+      hashedThrough += Int64(chunk.count)
+      state.bytesWritten += Int64(chunk.count)
+      remaining -= Int64(chunk.count)
+      if chunk.count < want {
+        // Short read — disk doesn't have the bytes yet (sparse hole). Stop
+        // here; a later signal will pull the rest.
+        break
+      }
+    }
+
+    progress?(
+      AcervoDownloadProgress(
+        fileName: fileName,
+        bytesDownloaded: state.bytesWritten,
         totalBytes: totalBytes,
         fileIndex: fileIndex,
         totalFiles: totalFiles
