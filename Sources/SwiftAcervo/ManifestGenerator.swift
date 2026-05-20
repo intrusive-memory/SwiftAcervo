@@ -58,6 +58,26 @@ public actor ManifestGenerator {
   /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
   private var telemetry: (any AcervoTelemetryReporter)? = nil
 
+  /// The slug-level canonical "main" repo for this manifest. When `nil`, falls back to `modelId`.
+  ///
+  /// For single-component models, `primaryRepo == modelId`. For multi-component models,
+  /// every component manifest carries the **same** `primaryRepo` (the spec-level value).
+  private let primaryRepo: String?
+
+  /// The full list of HF repo strings belonging to this manifest's slug.
+  ///
+  /// For single-component models, `components == [modelId]`. For multi-component models,
+  /// the full set in spec order. Every component manifest carries the **same** array.
+  private let components: [String]?
+
+  /// Override for the CDN `slug` field. When set, the manifest's `slug` is derived from
+  /// this value instead of from `modelId`.
+  ///
+  /// Used in multi-component spec flows where `modelId` is the shared slug-level identifier
+  /// (e.g. `"flux2-klein-4b"`) but each component needs its own CDN path key (e.g.
+  /// `"black-forest-labs_FLUX.2-vae"`). Callers pass the component's HF repo string here.
+  private let slugOverride: String?
+
   /// File names that must never appear inside the generated manifest
   /// (the manifest itself, and hidden macOS cruft).
   private static let excludedFileNames: Set<String> = [
@@ -72,9 +92,56 @@ public actor ManifestGenerator {
     ".huggingface/"
   ]
 
-  public init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {
+  /// Creates a `ManifestGenerator` for a single-component model.
+  ///
+  /// When `primaryRepo` and `components` are omitted, the manifest's `primaryRepo`
+  /// defaults to `modelId` and `components` defaults to `[modelId]` — the canonical
+  /// single-component shape. Pass them explicitly when using a `--slug` override
+  /// (where `modelId` is the slug but `primaryRepo` is the underlying HF repo).
+  ///
+  /// - Parameters:
+  ///   - modelId: The manifest's `modelId` field. When `nil`, derived from the directory name.
+  ///   - primaryRepo: The manifest's `primaryRepo` field. Defaults to `modelId` when `nil`.
+  ///   - components: The manifest's `components` array. Defaults to `[modelId]` when `nil`.
+  ///   - manifestVersion: Schema version to write (default: `CDNManifest.supportedVersion`).
+  public init(
+    modelId: String? = nil,
+    primaryRepo: String? = nil,
+    components: [String]? = nil,
+    manifestVersion: Int = CDNManifest.supportedVersion
+  ) {
     self.modelId = modelId
     self.manifestVersion = manifestVersion
+    self.primaryRepo = primaryRepo
+    self.components = components
+    self.slugOverride = nil
+  }
+
+  /// Creates a `ManifestGenerator` for a component in a multi-component model.
+  ///
+  /// Every component manifest in a multi-component slug carries the **same** `modelId`
+  /// (the spec-level slug identifier like `"flux2-klein-4b"`), the same `primaryRepo`,
+  /// and the same `components` array. The per-component CDN path key (`slug`) is
+  /// derived from `componentRepo`.
+  ///
+  /// - Parameters:
+  ///   - modelId: The shared slug-level identifier written into every component manifest.
+  ///   - componentRepo: The component's own HF repo string; used to derive the CDN `slug` field.
+  ///   - primaryRepo: The slug-level canonical main repo (shared across all component manifests).
+  ///   - components: The full list of HF repo strings for this slug (shared across all manifests).
+  ///   - manifestVersion: Schema version to write (default: `CDNManifest.supportedVersion`).
+  public init(
+    modelId: String,
+    componentRepo: String,
+    primaryRepo: String,
+    components: [String],
+    manifestVersion: Int = CDNManifest.supportedVersion
+  ) {
+    self.modelId = modelId
+    self.manifestVersion = manifestVersion
+    self.primaryRepo = primaryRepo
+    self.components = components
+    self.slugOverride = componentRepo
   }
 
   /// Attaches or removes a telemetry reporter.
@@ -140,14 +207,20 @@ public actor ManifestGenerator {
     manifestFiles.sort { $0.path < $1.path }
 
     let resolvedModelId = modelId ?? Self.derivedModelId(from: resolvedDirectory)
-    let slug = Self.slug(from: resolvedModelId)
+    // When a slugOverride is set (multi-component spec flow), the CDN `slug` field
+    // is derived from the component's own HF repo string rather than `modelId`.
+    // This allows all component manifests to share the same `modelId` (the
+    // spec-level slug) while each occupying its own CDN path key.
+    let slug = Self.slug(from: slugOverride ?? resolvedModelId)
     let manifest = CDNManifest(
       manifestVersion: manifestVersion,
       modelId: resolvedModelId,
       slug: slug,
       updatedAt: Self.iso8601Now(),
       files: manifestFiles,
-      manifestChecksum: CDNManifest.computeChecksum(from: manifestFiles.map(\.sha256))
+      manifestChecksum: CDNManifest.computeChecksum(from: manifestFiles.map(\.sha256)),
+      primaryRepo: primaryRepo,
+      components: components
     )
 
     let manifestURL = resolvedDirectory.appendingPathComponent("manifest.json")

@@ -13,9 +13,12 @@ export R2_ACCESS_KEY_ID="..."
 export R2_SECRET_ACCESS_KEY="..."
 
 # Full pipeline: download from HuggingFace → generate manifest → verify → upload to R2
-acervo ship --model-id "mlx-community/Qwen2.5-7B-Instruct-4bit"
+acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
 
 # Done! Model is now available on CDN.
+
+# Dry-run first (no credentials needed) to verify manifest shape:
+acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --dry-run --output-dir /tmp/manifests
 ```
 
 ---
@@ -56,7 +59,7 @@ export STAGING_DIR="/path/to/staging"            # (default: ./models/staging)
 **One command does everything:**
 
 ```bash
-acervo ship --model-id "mlx-community/Qwen2.5-7B-Instruct-4bit"
+acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
 ```
 
 **Steps**:
@@ -68,22 +71,111 @@ acervo ship --model-id "mlx-community/Qwen2.5-7B-Instruct-4bit"
 
 **Options**:
 ```
---model-id TEXT           Model ID in org/repo format (required)
---staging-dir PATH        Directory for staged files (default: ./models/staging)
+<modelId>                  HuggingFace model ID in org/repo format (required
+                           unless --spec is used)
+--slug <slug>              Override manifest modelId with this slug. The
+                           uploaded manifest will have modelId=<slug>,
+                           primaryRepo=<modelId>, components=[<modelId>].
+--spec <path>              Path to a multi-component spec JSON (see below).
+--dry-run                  Generate manifests and write to --output-dir;
+                           skip R2 upload. No credentials required.
+--output-dir <path>        Where to write manifests in dry-run mode
+                           (default: a unique tempdir, path printed on stdout).
+--output <path>            Override staging directory root.
 ```
 
-**Example**:
+**Example — single component**:
 ```bash
-acervo ship --model-id "mlx-community/Qwen2.5-7B-Instruct-4bit"
-# Output:
-# Downloading from HuggingFace...
-# [████████████████████] 100% (4.2 GB)
-# Generating manifest...
-# Verifying integrity (CHECK 1-6)...
-# Uploading to R2...
-# [████████████████████] 100% (4.2 GB)
-# ✓ Upload complete
+acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
 ```
+
+**Example — single component with explicit slug**:
+```bash
+# Uploaded manifest will have:
+#   modelId: "qwen-7b-4bit"
+#   primaryRepo: "mlx-community/Qwen2.5-7B-Instruct-4bit"
+#   components: ["mlx-community/Qwen2.5-7B-Instruct-4bit"]
+acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --slug qwen-7b-4bit
+```
+
+---
+
+## Multi-Component Models: `--spec`
+
+For models that consist of multiple HuggingFace repos (e.g. Flux2 Klein 4B with
+transformer + VAE + text-encoder), create a spec JSON file and pass it via `--spec`.
+
+### Spec File Format
+
+```json
+{
+  "modelId": "flux2-klein-4b",
+  "primaryRepo": "black-forest-labs/FLUX.2-klein-4B",
+  "components": [
+    "black-forest-labs/FLUX.2-klein-4B",
+    "black-forest-labs/FLUX.2-vae",
+    "google/t5-v1_1-xxl"
+  ]
+}
+```
+
+**Fields**:
+- `modelId` — The shared slug-level identifier written into every component manifest.
+  Consumers use this to address the model (e.g. `Acervo.availability("flux2-klein-4b")`).
+- `primaryRepo` — The slug-level canonical "main" HF repo. Every component manifest
+  carries the **same** `primaryRepo` value (not each component's own repo). This is
+  how consumers fan out across components under one logical slug.
+- `components` — All HF repos belonging to this slug. One manifest is generated and
+  uploaded per entry.
+
+**Invariant**: Every component manifest carries the same `(modelId, primaryRepo, components)`
+triple. The per-component CDN path key (`slug` field) is derived from each component's HF repo.
+
+**Upload**:
+```bash
+# Stage each component first (run acervo download for each repo), then:
+acervo ship --spec flux2-spec.json
+```
+
+> **Note**: `--spec` with live upload is for operator-tended migration. Use `--dry-run`
+> to verify manifest shape before touching live R2 credentials.
+
+---
+
+## Dry-Run Mode: `--dry-run`
+
+`--dry-run` generates manifests from pre-staged files and writes them to disk, skipping
+all network I/O (no HuggingFace download, no R2 upload). Useful for:
+- Inspecting manifest output in tests and CI
+- Verifying spec file correctness before a live upload
+- Running CLI tests without R2 credentials
+
+**Single-component dry-run**:
+```bash
+# Files must already be staged at <STAGING_DIR>/org_repo/ (or --output override)
+acervo ship org/repo --dry-run --output-dir /tmp/manifests
+# Prints: /tmp/manifests/org_repo-manifest.json
+```
+
+**Single-component with slug, dry-run**:
+```bash
+acervo ship org/repo --slug my-slug --dry-run --output-dir /tmp/manifests
+# Manifest has: modelId="my-slug", primaryRepo="org/repo", components=["org/repo"]
+```
+
+**Multi-component dry-run**:
+```bash
+acervo ship --spec flux2-spec.json --dry-run --output-dir /tmp/manifests
+# Prints one path per component:
+#   /tmp/manifests/black-forest-labs_FLUX.2-klein-4B-manifest.json
+#   /tmp/manifests/black-forest-labs_FLUX.2-vae-manifest.json
+#   /tmp/manifests/google_t5-v1_1-xxl-manifest.json
+# Each manifest has: modelId="flux2-klein-4b", primaryRepo="black-forest-labs/FLUX.2-klein-4B",
+#                    components=[all three repos]
+```
+
+**Output directory default**: when `--output-dir` is omitted, a unique tempdir is created
+under `$TMPDIR` and its path is printed to stdout before the per-manifest paths.
 
 ---
 
@@ -329,12 +421,14 @@ rm -rf ./models/staging/mlx-community_Qwen2.5-7B-Instruct-4bit/
 
 ## Manifest Format
 
-After generation, the manifest looks like:
+After generation, the manifest looks like (single-component example):
 
 ```json
 {
   "manifestVersion": 1,
   "modelId": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+  "primaryRepo": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+  "components": ["mlx-community/Qwen2.5-7B-Instruct-4bit"],
   "slug": "mlx-community_Qwen2.5-7B-Instruct-4bit",
   "updatedAt": "2026-04-18T10:30:00Z",
   "files": [
@@ -352,21 +446,39 @@ After generation, the manifest looks like:
       "path": "tokenizer.json",
       "sha256": "ijkl9012....",
       "sizeBytes": 567890
-    },
-    {
-      "path": "tokenizer_config.json",
-      "sha256": "mnop3456....",
-      "sizeBytes": 456
     }
   ],
   "manifestChecksum": "qrst7890...."
 }
 ```
 
+For a multi-component slug, every component manifest carries the **same** `modelId`,
+`primaryRepo`, and `components`, but each has its own unique `slug` (derived from
+the component's HF repo) which determines its CDN path:
+
+```json
+{
+  "manifestVersion": 1,
+  "modelId": "flux2-klein-4b",
+  "primaryRepo": "black-forest-labs/FLUX.2-klein-4B",
+  "components": [
+    "black-forest-labs/FLUX.2-klein-4B",
+    "black-forest-labs/FLUX.2-vae",
+    "google/t5-v1_1-xxl"
+  ],
+  "slug": "black-forest-labs_FLUX.2-vae",
+  "updatedAt": "2026-04-18T10:30:00Z",
+  "files": [ ... ],
+  "manifestChecksum": "..."
+}
+```
+
 This manifest is:
 - Used by consuming apps to verify downloads
-- Stored on CDN alongside model files
+- Stored on CDN alongside model files at `models/{slug}/manifest.json`
 - Not user-editable (auto-generated and verified)
+- Required to carry all three new fields (`modelId`, `primaryRepo`, `components`);
+  manifests missing any field will fail to decode
 
 ---
 
