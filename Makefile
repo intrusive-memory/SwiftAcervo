@@ -57,8 +57,9 @@ build-acervo: resolve
 install-acervo: resolve
 	xcodebuild -scheme $(ACERVO_SCHEME) -destination $(DESTINATION) build
 	@mkdir -p $(BIN_DIR)
-	@PRODUCT_DIR=$$(find $(DERIVED_DATA)/SwiftAcervo-*/Build/Products/Debug \
-	  -name $(ACERVO_BINARY) -type f 2>/dev/null | head -1 | xargs dirname); \
+	@PRODUCT_DIR=$$(find $(DERIVED_DATA) \
+	  -maxdepth 5 -path "*/Build/Products/Debug/$(ACERVO_BINARY)" -type f \
+	  2>/dev/null | xargs ls -t 2>/dev/null | head -1 | xargs dirname); \
 	if [ -n "$$PRODUCT_DIR" ]; then \
 	  cp "$$PRODUCT_DIR/$(ACERVO_BINARY)" $(BIN_DIR)/; \
 	  echo "Installed $(ACERVO_BINARY) to $(BIN_DIR)/ (Debug)"; \
