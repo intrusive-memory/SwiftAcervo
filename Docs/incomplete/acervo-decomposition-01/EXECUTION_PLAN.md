@@ -1,11 +1,14 @@
 ---
-operation_name: TBD — assigned at /mission-supervisor start (THE RITUAL)
+operation_name: OPERATION DRAWER DIVIDERS
 iteration: 01
-state: refined
-status: refined 2026-05-23 — 15 sorties, one extraction per sortie + closure; ready for /mission-supervisor start
+state: running
+status: launched 2026-05-23 — S1 (ManifestAccess extraction) dispatching first
 source_requirements: ./REQUIREMENTS.md
 source_plan: ../acervo-swift-decomposition-plan.md
 created: 2026-05-23
+starting_point_commit: 492d54f6c5a9a906196bda5b48cd8ca80c8b3e91
+mission_branch: mission/drawer-dividers/01
+worktree_path: /Users/stovak/Projects/SwiftAcervo-decomp
 ---
 
 # EXECUTION_PLAN.md — Acervo.swift decomposition iteration 01
