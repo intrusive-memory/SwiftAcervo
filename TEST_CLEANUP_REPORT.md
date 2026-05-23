@@ -1,3 +1,10 @@
+---
+operation_name: OPERATION VAULT BROOM
+iteration: 03
+mission_slug: vault-broom
+state: completed
+---
+
 # TEST_CLEANUP_REPORT.md
 
 **Mission**: OPERATION VAULT BROOM 03  

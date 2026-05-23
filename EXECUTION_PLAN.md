@@ -1,11 +1,11 @@
 ---
 operation_name: OPERATION VAULT BROOM
 iteration: 03
-state: incomplete
+state: completed
 mission_slug: vault-broom
 mission_branch: mission/vault-broom/03
 starting_point_commit: 04895964df6ca325a41642c2ffc2e3a50f8d1f9b
-status: refined — ready to execute
+status: executed and closed (KEEP verdict, see brief)
 source_requirements: REQUIREMENTS.md
 predecessor: Docs/complete/vault-broom-02/
 state_file: Docs/incomplete/vault-broom-03/SUPERVISOR_STATE.md

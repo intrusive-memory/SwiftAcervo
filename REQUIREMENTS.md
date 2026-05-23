@@ -1,8 +1,8 @@
 ---
 operation_name: OPERATION VAULT BROOM
 iteration: 03
-state: incomplete
-status: draft
+state: completed
+status: executed
 closes_drift_from: ../../complete/vault-broom-02/
 audit_date: 2026-05-21
 spec_refined: 2026-05-22

@@ -4,7 +4,7 @@ iteration: 03
 mission_slug: vault-broom
 mission_branch: mission/vault-broom/03
 starting_point_commit: 04895964df6ca325a41642c2ffc2e3a50f8d1f9b
-state: incomplete
+state: completed
 plan: ../../../EXECUTION_PLAN.md
 ---
 
