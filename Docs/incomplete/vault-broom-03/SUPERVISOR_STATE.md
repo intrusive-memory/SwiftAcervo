@@ -71,7 +71,7 @@ plan: ../../../EXECUTION_PLAN.md
 | Max turns | 75 |
 | Entry criteria | F1 audit (working tree clean, on mission/vault-broom/03, development is ancestor of HEAD); first sortie — no prerequisite sortie |
 | Exit criteria | See `EXECUTION_PLAN.md` § Sortie 1 — 10 machine-verifiable checks |
-| Commit SHA | `ae7f5803bd0f9eabeff4a27f32cb924b6c888bbf` |
+| Commit SHA | `ae7f5803bd0f9eabeff4a27f32cb924b6c888bbf` (main S1 work); `42ef68cee482ffeed207e4d9d7df8191d9507806` (doc-comment fixup for the literal S3CDNClient grep gate) |
 | Verification | `make build` exit 0; `make test` exit 0 (564 SwiftAcervoTests + 64 AcervoToolTests = 628 tests); `git grep -nE "\baws\b\|CDNUploader\|requireAWS" Sources/acervo/` empty; `git grep -nE "putObject\|deleteObject\|listObjects\|SigV4\|S3CDNClient" Sources/acervo/` empty; `bin/acervo ship --help` and `bin/acervo upload --help` both show `--keep-orphans`. |
 
 ### Sortie 2: Documentation sweep + API_REFERENCE audit + CHANGELOG entry
@@ -110,6 +110,7 @@ All six controls from `EXECUTION_PLAN.md` § Framework controls are in force:
 | 2026-05-22T00:00:00Z | WU1 | S1 | Model: opus | Complexity score 22 (≥13). Task complexity high (>35 turns, 6-10 files), foundation=1 (S2 depends), risk=3 (test rewrite + new CLI flag + library call-site swap). Per execution.md §4a override: foundation work establishing patterns for ≥1 dependent. |
 | 2026-05-22T00:00:00Z | WU1 | S1 | Dispatch budget: 75 turns | Per `EXECUTION_PLAN.md` § S1 — refine Pass 2 estimate ~59 turns; oversized by heuristic; splitting forbidden by design (no half-state tree). |
 | 2026-05-23T03:53:11Z | WU1 | S1 | COMPLETED (`ae7f5803`) | Atomic CLI consolidation landed in one commit. CDNUploader.swift + CDNUploaderTests.swift + IntegrityStepTests.swift deleted; ShipCommand/UploadCommand now delegate to `Acervo.publishModel` via a new `PublishRunner` test seam. `--keep-orphans` flag added on both commands (defaults to `false`, i.e. orphan-prune is the new default). `--dry-run` implemented entirely in the CLI; no library API change (F5 preserved). Exit criteria for Sortie 1 all met; build + test gates exit 0. |
+| 2026-05-23T03:55:00Z | WU1 | S1 | Doc-comment fixup (`42ef68c`) | Removed `S3CDNClient` mention from a `PublishRunner.swift` doc comment to satisfy the literal `git grep -nE "S3CDNClient" Sources/acervo/` exit-criteria gate. No behavior change. |
 
 ## Status Summary
 
