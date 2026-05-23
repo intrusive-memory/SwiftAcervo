@@ -457,9 +457,16 @@ extension Acervo {
         continue
       }
 
-      // Must contain config.json to be a valid model
-      let configURL = itemURL.appendingPathComponent("config.json")
-      guard fm.fileExists(atPath: configURL.path) else {
+      // Must contain at least one of the three validity markers to be a real
+      // model directory. Directories with NONE of these are empty stubs
+      // (typically from cancelled downloads) and are excluded from the listing
+      // without being removed from disk. Use `gcEmptyModelDirectories()` to
+      // physically remove them.
+      //
+      //   - config.json     — standard transformers / MLX root marker
+      //   - model_index.json — diffusers pipeline root marker
+      //   - manifest.json   — EM-1 byte-equal CDN manifest artifact
+      guard hasModelValidityMarker(in: itemURL, fm: fm) else {
         continue
       }
 
@@ -493,6 +500,105 @@ extension Acervo {
     models.sort { $0.id < $1.id }
 
     return models
+  }
+
+  // MARK: - Empty-directory detection
+
+  /// Returns `true` when the directory at `url` contains at least one of the
+  /// three model validity markers (`config.json`, `model_index.json`,
+  /// `manifest.json`).
+  ///
+  /// Used as the listing-time filter in `listModels(in:)` and as the
+  /// retention criterion in `gcEmptyModelDirectories(in:)`.
+  ///
+  /// - Parameters:
+  ///   - url: The model directory to probe.
+  ///   - fm: The `FileManager` to use (injected to avoid redundant calls in
+  ///     the tight listing loop).
+  private static func hasModelValidityMarker(in url: URL, fm: FileManager) -> Bool {
+    fm.fileExists(atPath: url.appendingPathComponent("config.json").path)
+      || fm.fileExists(atPath: url.appendingPathComponent("model_index.json").path)
+      || fm.fileExists(atPath: url.appendingPathComponent(AcervoDownloader.manifestFilename).path)
+  }
+
+  // MARK: - Garbage collection
+
+  /// Physically removes empty-stub model directories from the shared models
+  /// directory.
+  ///
+  /// **Destructive** — this method permanently deletes directories from disk.
+  /// Only directories that have **none** of the three model validity markers
+  /// (`config.json`, `model_index.json`, `manifest.json`) are removed; any
+  /// directory that carries at least one marker is left untouched regardless
+  /// of its contents.
+  ///
+  /// The removal is per-directory atomic (each directory is deleted by a
+  /// single `FileManager.removeItem(at:)` call). A directory that cannot be
+  /// removed is silently skipped; its URL is not included in the returned
+  /// list.
+  ///
+  /// - Returns: The URLs of every directory that was successfully removed.
+  ///   Callers should log these for diagnostics.
+  /// - Throws: Errors from `FileManager` if the shared models directory
+  ///   cannot be read (e.g., does not exist yet — in which case the returned
+  ///   array is empty).
+  @discardableResult
+  public static func gcEmptyModelDirectories() throws -> [URL] {
+    try gcEmptyModelDirectories(in: sharedModelsDirectory)
+  }
+
+  /// Physically removes empty-stub model directories from the specified base
+  /// directory.
+  ///
+  /// **Destructive** — see ``gcEmptyModelDirectories()`` for the full contract.
+  /// This internal overload enables testing with temporary directories without
+  /// touching the real `sharedModelsDirectory`.
+  ///
+  /// - Parameter baseDirectory: The directory to scan for empty-stub
+  ///   subdirectories.
+  /// - Returns: The URLs of every directory that was successfully removed.
+  /// - Throws: `FileManager` errors from reading `baseDirectory`.
+  @discardableResult
+  static func gcEmptyModelDirectories(in baseDirectory: URL) throws -> [URL] {
+    let fm = FileManager.default
+
+    guard fm.fileExists(atPath: baseDirectory.path) else {
+      return []
+    }
+
+    let contents = try fm.contentsOfDirectory(
+      at: baseDirectory,
+      includingPropertiesForKeys: [.isDirectoryKey],
+      options: [.skipsHiddenFiles]
+    )
+
+    var removed: [URL] = []
+    for itemURL in contents {
+      // Only operate on directories.
+      guard
+        let resourceValues = try? itemURL.resourceValues(forKeys: [.isDirectoryKey]),
+        resourceValues.isDirectory == true
+      else {
+        continue
+      }
+
+      // Keep any directory that has at least one validity marker.
+      if hasModelValidityMarker(in: itemURL, fm: fm) {
+        continue
+      }
+
+      // Directory has none of the three markers — it is a stub.
+      // Attempt atomic removal; skip on failure (e.g., permission denied).
+      do {
+        try fm.removeItem(at: itemURL)
+        removed.append(itemURL)
+      } catch {
+        // Silently skip — caller can check the returned list to see what was removed.
+        _ = error
+      }
+    }
+
+    return removed
   }
 
   /// Returns metadata for a single model identified by its model ID.
