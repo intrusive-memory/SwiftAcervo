@@ -1,6 +1,6 @@
 ---
 purpose: Mission queue index for SwiftAcervo
-last_updated: 2026-05-21
+last_updated: 2026-05-23
 ---
 
 # Mission queue — SwiftAcervo
@@ -21,16 +21,7 @@ This file is the single source of truth for what mission work is in flight, queu
 
 _(none right now)_
 
-Note: VAULT BROOM 03 is queued (planned, no branch yet — see below). When you cut `mission/vault-broom/03`, move it from Queued → Active here.
-
 ## Queued
-
-### VAULT BROOM 03 — CLI consolidation + docs sweep + Homebrew formula
-**Path**: `Docs/incomplete/vault-broom-03/`
-**Why it's queued**: CLI today carries two parallel CDN code paths (`recache`/`delete` go through native SigV4; `ship`/`upload` still shell out to `aws` via `CDNUploader`). This is the WU3.S1 + WU3.S3-ship/upload halves that VAULT BROOM 02 never executed despite shipping the rest of the work as v0.10.1 / v0.11.0.
-**Scope**: 3 sorties — atomic CLI cleanup (delete `CDNUploader.swift` + rewrite `ShipCommand`/`UploadCommand` on `Acervo.publishModel`), docs sweep, Homebrew `awscli`-dep removal.
-**Blocks/blocked by**: Nothing. Independent.
-**Estimated effort**: ~1 working day.
 
 ### EIGHTH-MASTER 01 — Manifest-driven validity oracle + DC/CIH carry-overs
 **Path**: `Docs/incomplete/eighth-master-01/`
@@ -71,6 +62,7 @@ Note: VAULT BROOM 03 is queued (planned, no branch yet — see below). When you 
 | SWIFT ASCENDANT | 01 | 2026-04 | Complete | `Docs/complete/swift_ascendant_01_*` (loose files) |
 | TRIPWIRE GAUNTLET | 02 | 2026-04-23 | KEEP (after P1 triage) | `Docs/complete/tripwire-gauntlet-02-brief.md` |
 | VAULT BROOM | 02 | 2026-05-21 (archived) | Superseded by VAULT BROOM 03 | `Docs/complete/vault-broom-02/` |
+| VAULT BROOM | 03 | 2026-05-23 | KEEP (clean 2-sortie execution) | `Docs/complete/vault-broom-03/` |
 | SwiftAcervo v1 (original implementation) | — | (shipped) | n/a | `Docs/complete/swift-acervo-v1-implementation/` |
 | QUARTERMASTER TORRENT | 01 | 2026-05-21 | PARTIAL_SALVAGE | `Docs/complete/quartermaster-torrent-01/` |
 
