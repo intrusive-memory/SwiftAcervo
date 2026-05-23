@@ -1,6 +1,8 @@
 // SlugEnsureAvailableTests.swift
 // SwiftAcervo
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+EnsureAvailable.swift (slug-keyed multi-component).
+//
 // Sortie 3 of OPERATION QUARTERMASTER TORRENT (slug-registry/S3).
 //
 // Acceptance tests for `Acervo.ensureAvailable(slug:url:files:progress:)`:

@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+EnsureAvailable.swift (legacy/repo-keyed edge cases).
+
 import Foundation
 import Testing
 
