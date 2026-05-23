@@ -31,10 +31,14 @@ SwiftAcervo/
 │       ├── DownloadCommand.swift
 │       ├── VerifyCommand.swift
 │       ├── ManifestCommand.swift
-│       ├── CDNUploader.swift
+│       ├── DeleteCommand.swift
+│       ├── RecacheCommand.swift
+│       ├── PublishRunner.swift
 │       ├── ManifestGenerator.swift
 │       ├── HuggingFaceClient.swift
+│       ├── CredentialResolver.swift
 │       ├── ToolCheck.swift
+│       ├── ProcessRunner.swift
 │       └── Version.swift
 ├── Tests/
 │   ├── SwiftAcervoTests/         # Library unit tests
@@ -248,27 +252,53 @@ Actions:
 3. Exits with success/failure code
 
 #### UploadCommand.swift
-**Arguments**: `--model-id`, `--staging-dir`, `--endpoint`, `--bucket`
+**Arguments**: `modelId`, `directory`, `--bucket`, `--prefix`, `--endpoint`, `--dry-run`, `--force`, `--keep-orphans`, `--no-verify`, `--token`, `--source`, `--output`
 
 Actions:
-1. Verifies files and manifest
-2. Calls `CDNUploader.upload()`
-3. Uploads files and manifest to R2
-4. Verifies uploaded files
+1. Resolves credentials via `CredentialResolver`
+2. Short-circuits on `--dry-run`: generates manifest, prints summary, exits 0
+3. Delegates to `PublishRunner.run(...)` which calls `Acervo.publishModel` (CHECKs 2–6 + orphan prune)
 
 #### ShipCommand.swift
-**Arguments**: `--model-id`, `--staging-dir`
+**Arguments**: `modelId`, optional `files`, `--source`, `--output`, `--token`, `--no-verify`, `--bucket`, `--prefix`, `--endpoint`, `--dry-run`, `--force`, `--keep-orphans`
 
 Actions:
-1. Calls Download
-2. Calls Manifest
-3. Calls Verify
-4. Calls Upload
-5. Reports overall success
+1. Shells out to `hf download` via `ProcessRunner`
+2. CHECK 0: HF tree completeness check
+3. CHECK 1: HF LFS SHA-256 verification (skipped with `--no-verify`)
+4. Short-circuits on `--dry-run`: generates manifest, prints summary, exits 0
+5. Delegates to `PublishRunner.run(...)` which calls `Acervo.publishModel` (CHECKs 2–6 + orphan prune)
 
-**Type**: Orchestrates the full pipeline in one command
+**Type**: Orchestrates the full download + publish pipeline in one command
+
+#### DeleteCommand.swift
+**Arguments**: `modelId`, `--yes`
+
+Actions:
+1. Resolves credentials via `CredentialResolver`
+2. Prompts for confirmation (TTY) or requires `--yes` (non-interactive)
+3. Calls `Acervo.deleteFromCDN(...)` and maps `AcervoDeleteProgress` to stdout
+
+#### RecacheCommand.swift
+**Arguments**: `modelId`, `--keep-orphans`, `--yes`
+
+Actions:
+1. Resolves credentials via `CredentialResolver`
+2. Calls `Acervo.recache(...)` with an `hf download` closure as `fetchSource`
 
 ### Implementation Details
+
+#### PublishRunner.swift
+CLI-internal seam around `Acervo.publishModel`. Holds a swappable `override` closure so
+tests can assert call routing (e.g. `keepOrphans` propagation) and drive the pipeline
+against a mocked `URLSession` without touching the network. Production code goes straight
+through `Acervo.publishModel`. Lives in the CLI target so it does not expand the library's
+public surface.
+
+#### CredentialResolver.swift
+Resolves `AcervoCDNCredentials` from environment variables (`R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_PUBLIC_URL`, `R2_BUCKET`, `R2_REGION`).
+Throws `AcervoToolError.missingEnvironmentVariable` on missing required variables.
 
 #### ManifestGenerator.swift
 Generates manifest.json:
@@ -277,12 +307,9 @@ Generates manifest.json:
 - Computes manifest checksum (SHA-256-of-checksums)
 - Writes manifest.json
 
-#### CDNUploader.swift
-Uploads to R2 via `aws` CLI:
-- Validates files match manifest
-- Uploads each file to `s3://{bucket}/models/{slug}/{fileName}`
-- Uses environment variables for credentials
-- Verifies uploaded files against manifest
+#### ProcessRunner.swift
+Runs external subprocesses (`hf download`) synchronously via `Process`. Captures stdout/stderr
+and surfaces exit codes as `AcervoToolError.subprocessFailed` on non-zero exit.
 
 #### HuggingFaceClient.swift
 Downloads from HuggingFace:
@@ -293,9 +320,9 @@ Downloads from HuggingFace:
 
 #### ToolCheck.swift
 Validates required CLI tools:
-- Checks if `aws` is on PATH
 - Checks if `hf` is on PATH
-- Fails early with helpful message if missing
+- Fails early with a Homebrew install hint if missing
+- CDN operations use the library's native SigV4 path; no `aws` check
 
 #### Version.swift
 Current CLI version constant:

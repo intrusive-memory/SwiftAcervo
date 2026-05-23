@@ -24,7 +24,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - `Acervo.fetchManifest(for: modelId)` and `Acervo.fetchManifest(forComponent: componentId)` for raw manifest access without downloads
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
-- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download
+- CDN mutation API: `Acervo.publishModel(modelId:directory:credentials:keepOrphans:progress:)`, `Acervo.deleteFromCDN(modelId:credentials:progress:)`, `Acervo.recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:)` — native SigV4 path, no `aws` CLI
+- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download (thin wrapper around the library API)
 
 **Critical Rules**:
 - ONLY supports iOS 26.0+ and macOS 26.0+ (NEVER add code for older platforms)
