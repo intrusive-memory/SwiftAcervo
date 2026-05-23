@@ -149,7 +149,7 @@
       )
       func missingAccessKeySurfacesError() async throws {
         let parsed = try AcervoCLI.parseAsRoot(["upload", "org/repo", "/tmp/anywhere"])
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }
@@ -232,7 +232,7 @@
         if passingFlag { args.append("--keep-orphans") }
 
         let parsed = try AcervoCLI.parseAsRoot(args)
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }
@@ -280,7 +280,7 @@
         let parsed = try AcervoCLI.parseAsRoot([
           "upload", "org/repo", modelDir.path, "--dry-run",
         ])
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }

@@ -174,7 +174,7 @@
         // No env set at all from baseline. The first thing CredentialResolver
         // checks is R2_ACCESS_KEY_ID — that's the var the error must name.
         let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo"])
-        guard var cmd = parsed as? ShipCommand else {
+        guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
         }
@@ -207,7 +207,7 @@
         }
 
         let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo", "--source", "s3"])
-        guard var cmd = parsed as? ShipCommand else {
+        guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
         }
@@ -335,7 +335,7 @@
           "--dry-run",
           "--output", stagingRoot.path,
         ])
-        guard var cmd = parsed as? ShipCommand else {
+        guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
         }
