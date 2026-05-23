@@ -3,6 +3,8 @@ import Testing
 
 @testable import SwiftAcervo
 
+// Companion tests for Sources/SwiftAcervo/Acervo+Search.swift (fuzzy variant) and Sources/SwiftAcervo/Acervo+Discovery.swift (modelFamilies tests intentionally remain in this file because they exercise the families API through the search lens).
+
 /// Tests for Acervo fuzzy search: findModels(fuzzyMatching:), closestModel(to:),
 /// and modelFamilies().
 ///
