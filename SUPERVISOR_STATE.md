@@ -36,7 +36,7 @@
 
 ## Overall Status
 
-`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit COMPLETED (CIH-1 at e42f7d8, CIH-2 at 5551df2); deferred-cleanup work unit eligible to start (DC-1 PENDING).
+`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit COMPLETED (CIH-1 at e42f7d8, CIH-2 at 5551df2); deferred-cleanup work unit IN-PROGRESS (DC-1 COMPLETED at b85ffe8; DC-2 PENDING).
 
 ---
 
@@ -65,15 +65,15 @@
 - Notes: CIH-2 PARTIAL verdict for task 6 only — `StreamingPerformanceTests` class does not exist in source (parked CSR mission); perf plan created as scaffolding (all 63 correctness suites in skippedTests; no selectedTests). All other tasks COMPLETED: Makefile has test-perf and test-plan-shape; shape gate wired into CI before make test; QUEUE.md updated with two carry-forward entries. No mechanical test-plan moves needed (CIH-1 found zero misplacements).
 
 ### deferred-cleanup
-- Work unit state: PENDING (eligible to start; ci-hygiene COMPLETED)
-- Current sortie: DC-1 of 3
-- Sortie state: PENDING
+- Work unit state: IN-PROGRESS (DC-1 COMPLETED at b85ffe8; DC-2 PENDING; DC-3 PENDING)
+- Current sortie: DC-2 of 3 (DC-1 COMPLETED)
+- Sortie state: PENDING (DC-2)
 - Sortie type: code (DC-1, DC-3) / command+manual (DC-2 live R2 upload)
-- Model: tbd at dispatch
-- Complexity score: tbd at dispatch
-- Attempt: 0 of 3
-- Last verified: n/a — gated on ci-hygiene COMPLETED.
-- Notes: DC-2 requires operator-tended live R2 credentials (`ACERVO_R2_*` env vars). DC-1 now eligible to start.
+- Model: opus (DC-1, biggest sortie of mission) / tbd at dispatch (DC-2, DC-3)
+- Complexity score: 11 (DC-1) / tbd at dispatch (DC-2, DC-3)
+- Attempt: 1 of 3 (DC-1) / 0 of 3 (DC-2, DC-3)
+- Last verified: DC-1 at HEAD b85ffe8. `make build` exit 0, `make test` exit 0 (635 SwiftAcervoTests + 70 AcervoToolTests = 705 total; 2 pre-existing known issues unchanged), `make test-plan-shape` exit 0.
+- Notes: DC-2 requires operator-tended live R2 credentials (`ACERVO_R2_*` env vars). DC-1 restored the QM01-S5 CLI surface on top of PublishRunner; ManifestGenerator gained a (modelId:primaryRepo:components:slugOverride:) init; Acervo.publishModel/PublishRunner plumb the slug-registry triple end-to-end; ShipDryRunTests.swift covers --slug/--spec/--dry-run/--output-dir + nested-path emission. F7 honored — no production bugs surfaced.
 
 ---
 
@@ -105,3 +105,4 @@
 | 2026-05-23 | validity-oracle | — | Work unit COMPLETED; ci-hygiene eligible to start | All three sorties (EM-1, EM-2, EM-3) COMPLETED. CIH-1 (read-only audit) is next; dependency validity-oracle COMPLETED satisfied. |
 | 2026-05-23 | ci-hygiene | CIH-1 | COMPLETED at HEAD | Audit: 79 test suites enumerated; all on macOS/iOS plans; Performance plan missing (no perf tests yet, so QM01 planner-wrong-#1 mistake absent). 100% correctness tests. Findings: Performance plan is a blocker for CIH-2 (shape gate cannot gate non-existent plan). Recommendation: CIH-2 creates Performance plan (initially all skipped), adds Makefile `test-perf` target, adds shape gate via `jq`. No non-mechanical findings. |
 | 2026-05-23 | ci-hygiene | CIH-2 | PARTIAL (task 6 only) — StreamingPerformanceTests not in source | `StreamingPerformanceTests` class does not exist in Tests/SwiftAcervoTests/ (expected from parked CSR mission). Perf plan created as scaffolding with all 63 correctness suites in skippedTests; selectedTests omitted (not referencing non-existent class). All other tasks COMPLETED. Two carry-forward entries added to QUEUE.md: one for adding StreamingPerformanceTests class, one for populating the perf plan with real measurements. Shape gate (make test-plan-shape) wired into CI; exits 0. make build + make test + make test-plan-shape all exit 0. |
+| 2026-05-23 | deferred-cleanup | DC-1 | COMPLETED across 3 commits 30a1446 → 10688e5 → b85ffe8 | All DC-1 exit criteria met. (1) ManifestGenerator gained `(modelId:primaryRepo:components:slugOverride:)` initializer; existing single-arg init preserved for source compatibility (defaults match prior behavior). (2) Cruft exclusions extended: `.gitattributes` / `.gitignore` filenames; `*.lock` / `*.metadata` suffixes; `.cache/` path-component and prefix. (3) Acervo.publishModel + internal _publishModel + PublishRunner.run/Function typealias all gained optional primaryRepo/components/slugOverride parameters (nil defaults preserve recache + single-repo call sites). (4) ShipCommand: `modelId` is now `String?`; added `--slug`, `--spec`, `--dry-run` (already present, semantics extended), `--output-dir`; `validate()` enforces `modelId` XOR `--spec` and rejects `--spec` + `--slug`. (5) `runDryRun()` skips ToolCheck.validate(), HF download, CredentialResolver.resolve(), and PublishRunner — generates manifest(s) into `--output-dir` (or a tempdir under NSTemporaryDirectory()), prints absolute paths to stdout. (6) Live `--spec` mode iterates spec.components: per-component HF download into per-component staging subdir, then one PublishRunner.run(...) per component with the SHARED (modelId, primaryRepo, components) triple plus per-component slugOverride. (7) Tests/AcervoToolTests/ShipDryRunTests.swift adds 6 tests: --slug single-component, --spec multi-component, no-R2-credentials, flag parsing, dry-run-skips-PublishRunner, nested-path emission (depth ≥ 1) with HuggingFace cruft excluded. UploadCommandTests / ShipCommandTests updated to the 8-arg PublishRunner.Function. `make build` exit 0, `make test` exit 0 (635 + 70 = 705 total tests pass; 2 pre-existing known issues unchanged), `make test-plan-shape` exit 0. Smoke verified: `acervo ship --help` shows --slug/--spec/--dry-run/--output-dir; `acervo ship <slug> --dry-run --output-dir <dir>` exits 0 with manifest path printed and zero R2 traffic; `--slug` and `--spec` smoke paths produce manifests with expected slug-registry fields. F7 honored — no production bugs surfaced. |
