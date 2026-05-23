@@ -65,15 +65,15 @@
 - Notes: CIH-2 PARTIAL verdict for task 6 only — `StreamingPerformanceTests` class does not exist in source (parked CSR mission); perf plan created as scaffolding (all 63 correctness suites in skippedTests; no selectedTests). All other tasks COMPLETED: Makefile has test-perf and test-plan-shape; shape gate wired into CI before make test; QUEUE.md updated with two carry-forward entries. No mechanical test-plan moves needed (CIH-1 found zero misplacements).
 
 ### deferred-cleanup
-- Work unit state: IN-PROGRESS (DC-1 COMPLETED at b85ffe8; DC-2 PENDING; DC-3 PENDING)
-- Current sortie: DC-2 of 3 (DC-1 COMPLETED)
-- Sortie state: PENDING (DC-2)
-- Sortie type: code (DC-1, DC-3) / command+manual (DC-2 live R2 upload)
-- Model: opus (DC-1, biggest sortie of mission) / tbd at dispatch (DC-2, DC-3)
-- Complexity score: 11 (DC-1) / tbd at dispatch (DC-2, DC-3)
-- Attempt: 1 of 3 (DC-1) / 0 of 3 (DC-2, DC-3)
-- Last verified: DC-1 at HEAD b85ffe8. `make build` exit 0, `make test` exit 0 (635 SwiftAcervoTests + 70 AcervoToolTests = 705 total; 2 pre-existing known issues unchanged), `make test-plan-shape` exit 0.
-- Notes: DC-2 requires operator-tended live R2 credentials (`ACERVO_R2_*` env vars). DC-1 restored the QM01-S5 CLI surface on top of PublishRunner; ManifestGenerator gained a (modelId:primaryRepo:components:slugOverride:) init; Acervo.publishModel/PublishRunner plumb the slug-registry triple end-to-end; ShipDryRunTests.swift covers --slug/--spec/--dry-run/--output-dir + nested-path emission. F7 honored — no production bugs surfaced.
+- Work unit state: IN-PROGRESS (DC-1 COMPLETED at b85ffe8; DC-2a UPLOAD-IN-FLIGHT supervisor-tended; DC-2b/2c PENDING; DC-3 PENDING)
+- Current sortie: DC-2a of 3 sub-sorties (one per model)
+- Sortie state: UPLOAD-IN-FLIGHT (supervisor-tended; agent context exhausted but detached upload process continues)
+- Sortie type: code (DC-1, DC-3) / command+background (DC-2a/2b/2c — validate-then-upload, detached long-running)
+- Model: opus (DC-1) / sonnet (DC-2a; ran validation + launched upload + polled for 41min before turn-budget exhaustion) / tbd (DC-2b, DC-2c, DC-3)
+- Complexity score: 11 (DC-1) / 9 (DC-2a, BACKOFF not warranted — work is real, in flight, just on a longer wall clock than one agent context)
+- Attempt: 1 of 3 (DC-1) / agent-1 of 3 (DC-2a, polling exhausted not failure) / 0 of 3 (DC-2b, DC-2c, DC-3)
+- Last verified: DC-1 at HEAD b85ffe8 (build/test/shape-gate green). DC-2a: validation step COMPLETED — CDN manifest for pixart-sigma-xl is HTTP 404 at all five candidate paths; this is a first-upload not a re-upload. Detached upload process PID 81371 (+ child 83394) ALIVE; log at /tmp/acervo-dc2a-pixart-sigma-xl.log; staged at /private/tmp/acervo-staging/PixArt-alpha_PixArt-Sigma-XL-2-1024-MS; CHECK 0 + CHECK 4 passed; 10 small files uploaded so far (README, assets, scheduler/text_encoder configs); large transformer/vae shards next.
+- Notes: User decision 2026-05-23: split DC-2 into per-model sorties. Each sub-sortie first validates the existing CDN manifest; only re-uploads if schema is wrong. **Supervisor now owns DC-2a polling**: light-touch checks of PID + log tail every time supervisor wakes naturally for other work. When PID 81371 dies cleanly (or fails), supervisor dispatches a short "DC-2a completion" sortie that re-fetches the manifest, runs the four post-upload checks, fills DC2_UPLOAD_LOG.md, commits, advances pointer to DC-2b. DO NOT BACKOFF/retry DC-2a — that would relaunch the upload. DC-3 will additionally clean up the six var→let SourceKit warnings introduced by DC-1 in ShipCommandTests.swift (L177, 210, 338) and UploadCommandTests.swift (L152, 235, 283).
 
 ---
 
