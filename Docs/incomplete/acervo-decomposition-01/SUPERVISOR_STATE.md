@@ -14,7 +14,7 @@ status_timestamp: 2026-05-23T13:23:00Z
 | S1 | Acervo+ManifestAccess.swift (F12) | PENDING | - | |
 | S2 | Acervo+PathResolution.swift (F1) | PENDING | - | |
 | S3 | Acervo+ComponentIntegrity.swift (F11) | PENDING | - | |
-| S4 | Acervo+ComponentRegistration.swift (F9) | COMPLETED | `8ba0e6fc` | Extracted register(_:)/register(_:[])/unregister(_:) facade; 54 lines removed from Acervo.swift; ComponentRegistryTests.swift header updated. |
+| S4 | Acervo+ComponentRegistration.swift (F9) | COMPLETED | `85aa60f` | Extracted register(_:)/register(_:[])/unregister(_:) facade; 54 lines removed from Acervo.swift; ComponentRegistryTests.swift header updated. |
 | S5 | Acervo+ComponentCatalog.swift (F10) | PENDING | - | Depends on S4 |
 | S6 | Acervo+Hydration.swift (F13) | PENDING | - | Requires new HydrationCoalescerTests.swift |
 | S7 | Acervo+DeleteModel.swift (F8) | PENDING | - | |
