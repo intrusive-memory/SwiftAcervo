@@ -5,7 +5,7 @@ import SwiftAcervo
 ///
 /// `ShipCommand` and `UploadCommand` both end in a call to
 /// `Acervo.publishModel(...)`. Production code goes straight through
-/// `Acervo.publishModel`, which builds a live `S3CDNClient` and uses
+/// `Acervo.publishModel`, which manages the live HTTP traffic and uses
 /// `URLSession.shared` for the public CHECK 5 / CHECK 6 fetch. Tests
 /// register an `override` closure here to assert call routing (e.g.
 /// `keepOrphans` propagation) and drive the pipeline against a mocked
