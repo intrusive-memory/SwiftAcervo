@@ -43,20 +43,20 @@ plan: ../../../EXECUTION_PLAN.md
 
 | Name | Directory | Sorties | Dependencies | State |
 |------|-----------|---------|--------------|-------|
-| WU1: CLI consolidation + docs | `Sources/acervo/` + `Tests/AcervoToolTests/` + `Docs/` + `README.md` + `CHANGELOG.md` | 2 | none | RUNNING |
+| WU1: CLI consolidation + docs | `Sources/acervo/` + `Tests/AcervoToolTests/` + `Docs/` + `README.md` + `CHANGELOG.md` | 2 | none | RUNNING (1/2 done) |
 
 ## WU1: CLI consolidation + docs
 
-- Work unit state: RUNNING
-- Current sortie: 1 of 2
-- Sortie state: PENDING → DISPATCHED (after supervisor init commit)
-- Sortie type: code
-- Model: opus
+- Work unit state: RUNNING (S1 COMPLETED, S2 PENDING)
+- Current sortie: 2 of 2
+- Sortie state: S1 → COMPLETED; S2 PENDING
+- Sortie type: code (S1) → docs (S2)
+- Model: opus (S1); TBD for S2
 - Complexity score: 22 (task=12, ambiguity=2, foundation=5, risk=3, type=0)
 - Attempt: 1 of 3
 - Dispatch budget: 75 turns (plan §S1)
-- Last verified: supervisor init only
-- Notes: S1 is atomic — deletes `CDNUploader.swift` and rewrites every call site in one sortie. F5 (no new public library API) is the strictest constraint; `--dry-run` halts and escalates if it requires a `dryRun:` parameter on `Acervo.publishModel`.
+- Last verified: 2026-05-23T03:53Z (S1 commit `ae7f5803`); `make build` + `make test` exit 0 (564 + 64 = 628 tests)
+- Notes: S1 landed atomically. `--dry-run` was implementable CLI-only via a pre-flight manifest-generation loop; no library API change required (F5 preserved). The `--keep-orphans` flag added on both `ship` and `upload` defaults to `false`, so orphan-prune is now the default — operators scripting around the old additive behavior must add the flag explicitly. The aws-binary path is fully gone: `ToolCheck.validate()` only checks `hf`; `CDNUploader.swift`, `CDNUploaderTests.swift`, and `IntegrityStepTests.swift` are deleted.
 
 ## Sortie Status
 
@@ -64,13 +64,15 @@ plan: ../../../EXECUTION_PLAN.md
 
 | Field | Value |
 |-------|-------|
-| State | PENDING (about to dispatch) |
+| State | COMPLETED |
 | Model | opus |
 | Complexity score | 22 |
 | Attempt | 1/3 |
 | Max turns | 75 |
 | Entry criteria | F1 audit (working tree clean, on mission/vault-broom/03, development is ancestor of HEAD); first sortie — no prerequisite sortie |
 | Exit criteria | See `EXECUTION_PLAN.md` § Sortie 1 — 10 machine-verifiable checks |
+| Commit SHA | `ae7f5803bd0f9eabeff4a27f32cb924b6c888bbf` |
+| Verification | `make build` exit 0; `make test` exit 0 (564 SwiftAcervoTests + 64 AcervoToolTests = 628 tests); `git grep -nE "\baws\b\|CDNUploader\|requireAWS" Sources/acervo/` empty; `git grep -nE "putObject\|deleteObject\|listObjects\|SigV4\|S3CDNClient" Sources/acervo/` empty; `bin/acervo ship --help` and `bin/acervo upload --help` both show `--keep-orphans`. |
 
 ### Sortie 2: Documentation sweep + API_REFERENCE audit + CHANGELOG entry
 
@@ -107,10 +109,11 @@ All six controls from `EXECUTION_PLAN.md` § Framework controls are in force:
 | 2026-05-22T00:00:00Z | — | — | Mission kickoff committed | User selected "Commit as kickoff" for uncommitted EXECUTION_PLAN.md / REQUIREMENTS.md refinements. Kickoff commit = `04895964`. |
 | 2026-05-22T00:00:00Z | WU1 | S1 | Model: opus | Complexity score 22 (≥13). Task complexity high (>35 turns, 6-10 files), foundation=1 (S2 depends), risk=3 (test rewrite + new CLI flag + library call-site swap). Per execution.md §4a override: foundation work establishing patterns for ≥1 dependent. |
 | 2026-05-22T00:00:00Z | WU1 | S1 | Dispatch budget: 75 turns | Per `EXECUTION_PLAN.md` § S1 — refine Pass 2 estimate ~59 turns; oversized by heuristic; splitting forbidden by design (no half-state tree). |
+| 2026-05-23T03:53:11Z | WU1 | S1 | COMPLETED (`ae7f5803`) | Atomic CLI consolidation landed in one commit. CDNUploader.swift + CDNUploaderTests.swift + IntegrityStepTests.swift deleted; ShipCommand/UploadCommand now delegate to `Acervo.publishModel` via a new `PublishRunner` test seam. `--keep-orphans` flag added on both commands (defaults to `false`, i.e. orphan-prune is the new default). `--dry-run` implemented entirely in the CLI; no library API change (F5 preserved). Exit criteria for Sortie 1 all met; build + test gates exit 0. |
 
 ## Status Summary
 
 - Mission state: RUNNING
-- Sorties COMPLETED: 0 / 2
-- Sorties active: 1 (S1, dispatching)
+- Sorties COMPLETED: 1 / 2 (S1)
+- Sorties active: 0 (S2 PENDING, gated on supervisor dispatch)
 - Blockers: none
