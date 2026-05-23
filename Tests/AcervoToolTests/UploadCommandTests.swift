@@ -306,11 +306,13 @@
     private let lock = NSLock()
     private var _value: Bool?
     var value: Bool? {
-      lock.lock(); defer { lock.unlock() }
+      lock.lock()
+      defer { lock.unlock() }
       return _value
     }
     func set(_ v: Bool) {
-      lock.lock(); defer { lock.unlock() }
+      lock.lock()
+      defer { lock.unlock() }
       _value = v
     }
   }

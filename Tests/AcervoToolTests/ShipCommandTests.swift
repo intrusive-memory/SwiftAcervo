@@ -365,11 +365,13 @@
     private let lock = NSLock()
     private var _fired = false
     var fired: Bool {
-      lock.lock(); defer { lock.unlock() }
+      lock.lock()
+      defer { lock.unlock() }
       return _fired
     }
     func mark() {
-      lock.lock(); defer { lock.unlock() }
+      lock.lock()
+      defer { lock.unlock() }
       _fired = true
     }
   }

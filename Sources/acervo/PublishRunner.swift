@@ -20,13 +20,14 @@ enum PublishRunner {
   /// but lifted to a value so it can be swapped out in tests. The
   /// `telemetry:` parameter is omitted because the CLI never wires
   /// telemetry today.
-  typealias Function = @Sendable (
-    _ modelId: String,
-    _ directory: URL,
-    _ credentials: AcervoCDNCredentials,
-    _ keepOrphans: Bool,
-    _ progress: (@Sendable (AcervoPublishProgress) -> Void)?
-  ) async throws -> CDNManifest
+  typealias Function =
+    @Sendable (
+      _ modelId: String,
+      _ directory: URL,
+      _ credentials: AcervoCDNCredentials,
+      _ keepOrphans: Bool,
+      _ progress: (@Sendable (AcervoPublishProgress) -> Void)?
+    ) async throws -> CDNManifest
 
   /// Tests set this to capture calls and short-circuit the live pipeline.
   /// Production leaves it `nil`, which means `run(...)` delegates straight

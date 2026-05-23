@@ -96,7 +96,7 @@ let package = Package(
         .iOS(.v26)
     ],
     dependencies: [
-        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.14.1")
+        .package(url: "https://github.com/intrusive-memory/SwiftAcervo.git", from: "0.15.0")
     ],
     targets: [
         .target(
