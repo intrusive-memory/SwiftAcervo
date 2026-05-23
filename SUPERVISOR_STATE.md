@@ -43,21 +43,22 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 
 ## Overall Status
 
-`RUNNING` — S5 COMPLETED (commits e62400e + 671a1cb); S6 PENDING.
+`RUNNING` — S6 COMPLETED (commit 0d28f86); S7 PENDING.
 
 ---
 
 ## Per-Work-Unit State
 
 ### acervo-decomposition
-- Work unit state: RUNNING (S1–S5 COMPLETED; S6–S15 queued)
-- Current sortie: S6 of 15 (PENDING)
-- Last completed: S5 — sortie state COMPLETED at commits e62400e + 671a1cb
+- Work unit state: RUNNING (S1–S6 COMPLETED; S7–S15 queued)
+- Current sortie: S7 of 15 (PENDING)
+- Last completed: S6 — sortie state COMPLETED at commit 0d28f86
 - S1 summary: Extracted `Acervo+ManifestAccess.swift` (65 lines, 4 fetchManifest overloads). Acervo.swift reduced from 2777 to 2718 lines (59-line delta, matches plan estimate). All builds + tests + shape gate pass. ManifestFetchTests.swift marked with source-of-record comment.
 - S2 summary: Extracted `Acervo+PathResolution.swift` (235 lines, 6 public symbols + 3 internal helpers). Acervo.swift reduced from 2718 to 2490 lines (228-line delta, within 2475-2510 estimate). import Security moved to new file. AcervoManager.swift untouched. All builds + tests + shape gate pass. AcervoPathTests.swift marked with source-of-record comment.
 - S3 summary: Extracted `Acervo+ComponentIntegrity.swift` (107 lines, 2 public symbols + 2 internal baseDirectory overloads). Acervo.swift reduced from 2490 to 2387 lines (103-line delta, within 2380–2400 estimate). IntegrityVerification.swift untouched. All builds + tests + shape gate pass. IntegrityVerificationTests.swift marked with source-of-record comment.
 - S4 summary: Extracted `Acervo+ComponentRegistration.swift` (58 lines, 3 public symbols: register×2 + unregister). Acervo.swift reduced from 2387 to 2333 lines (54-line delta, within estimate). ComponentRegistry.swift untouched. All builds + tests + shape gate pass. ComponentRegistryTests.swift header names both source files (facade + actor).
 - S5 summary: Extracted `Acervo+ComponentCatalog.swift` (176 lines, 8 public symbols + internal overloads). Acervo.swift reduced from 2333 to 2165 lines (168-line delta, within 2155-2180 estimate). Created `ComponentCatalogQueriesTests.swift` with 8 tests (1 lifted + 7 new). CatalogHydrationTests.swift updated with header comment + lifted test removed (reserved for S6 hydration-driven tests). Pre-lift: 1 test in CatalogHydrationTests; post-lift: 8 tests total across both files. make build/test/test-plan-shape all pass (70 tests).
+- S6 summary: Extracted `Acervo+Hydration.swift` (120 lines, including `HydrationCoalescer` actor). Acervo.swift reduced from 2165 to 2050 lines (115-line delta, within 2045–2065 estimate). Created `HydrationCoalescerTests.swift` with 4 tests using injectable fetch closure + AtomicCounter: Case A (same-key coalesces, counter==1), Case B (different-key runs independently, counter==2), sequential re-fetch, 10-concurrent coalescing. HydrateComponentTests.swift and HydrationTests.swift header comments added. HydrationCoalescer symbol ONLY in Acervo+Hydration.swift. Case A confirmed: counter==1 (F7 gate passed — no bug). Case B confirmed: counter==2. make build/test (646 Swift Testing + 70 XCTest)/test-plan-shape all pass.
 - Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor captured the pre-S1 snapshot at launch commit 492d54f as the baseline. **State-file location lesson**: every future sortie dispatch must explicitly name the canonical state file path (`/Users/stovak/Projects/SwiftAcervo-decomp/SUPERVISOR_STATE.md`, worktree root) to prevent agents from inventing duplicates.
 
 ---
@@ -71,6 +72,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 | S3 | COMPLETED | 1/3 | 8f89f5b | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S4 | COMPLETED | 1/3 | 85aa60f | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S5 | COMPLETED | 1/3 | e62400e + 671a1cb | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
+| S6 | COMPLETED | 1/3 | 0d28f86 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 
 ---
 
@@ -102,4 +104,5 @@ This mission (DRAWER DIVIDERS) and EIGHTH-MASTER do not share source files (deco
 | 2026-05-23 | S4 | Model: haiku | Complexity score 2 — smallest extraction in the mission (~55 LOC, 3-method facade over ComponentRegistry actor). |
 | 2026-05-23 | S4 | COMPLETED at commit 85aa60f | Acervo.swift 2387→2333 (−54). ComponentRegistry.swift byte-identical. Tests + shape gate green. Test file header names BOTH source files (facade + actor) since the test exercises both. |
 | 2026-05-23 | S5 | COMPLETED at commits e62400e + 671a1cb | Acervo.swift 2333→2165 (−168, within 2155-2180 estimate). Created Acervo+ComponentCatalog.swift (176 lines, 8 public symbols). Created ComponentCatalogQueriesTests.swift (8 tests: 1 lifted + 7 new). CatalogHydrationTests.swift: header added, lifted test removed, placeholder left for S6 hydration tests. Pre-lift: 1 test; post-lift: 8 tests. Total test run: 70 tests pass. All gates green. |
+| 2026-05-23 | S6 | COMPLETED at commit 0d28f86 | Acervo.swift 2165→2050 (−115, within 2045–2065 estimate). Created Acervo+Hydration.swift (120 lines: HydrationCoalescer actor + extension Acervo { hydrateComponent }). Created HydrationCoalescerTests.swift (4 tests: Case A same-key coalesces counter==1, Case B different-keys counter==2, sequential re-fetch, 10-concurrent). HydrateComponentTests.swift + HydrationTests.swift header comments added. HydrationCoalescer symbol only in Acervo+Hydration.swift (grep confirmed). F7: no production bug found — coalescer behaves correctly. All gates green (646 Swift Testing + 70 XCTest). |
 | 2026-05-23 | (supervisor) | State-file location reconciled at b3f09b4 reverted/cleanup | S4 agent wrote its state update to a NEW duplicate at `Docs/incomplete/acervo-decomposition-01/SUPERVISOR_STATE.md` (wrong path) instead of this canonical worktree-root file. Supervisor: (a) folded S4's data into this file, (b) deleted the duplicate, (c) future sortie dispatches will name the canonical path explicitly to prevent recurrence. |
