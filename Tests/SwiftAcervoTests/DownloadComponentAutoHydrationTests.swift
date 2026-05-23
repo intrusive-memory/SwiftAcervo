@@ -1,4 +1,8 @@
 // DownloadComponentAutoHydrationTests.swift
+// SwiftAcervoTests
+//
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentDownloads.swift (auto-hydration on download).
+//
 // SwiftAcervo tests — OPERATION TRIPWIRE GAUNTLET Sortie 7.
 //
 // Mutation check: exercises the auto-hydration branch in Acervo.swift

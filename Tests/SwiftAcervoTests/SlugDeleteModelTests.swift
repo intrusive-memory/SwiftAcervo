@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+DeleteModel.swift (slug-keyed variant).
+//
 // SlugDeleteModelTests.swift
 // SwiftAcervoTests
 //

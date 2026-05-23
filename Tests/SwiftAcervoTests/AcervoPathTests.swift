@@ -1,3 +1,4 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+PathResolution.swift
 import Foundation
 import Testing
 

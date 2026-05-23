@@ -1,6 +1,6 @@
 ---
 purpose: Mission queue index for SwiftAcervo
-last_updated: 2026-05-23
+last_updated: 2026-05-23 (DRAWER DIVIDERS COMPLETE; EIGHTH-MASTER DC-2/DC-3 partial deferral)
 ---
 
 # Mission queue — SwiftAcervo
@@ -47,6 +47,10 @@ _(none right now)_
 | SwiftAcervo telemetry/instrumentation | `Docs/REQUIREMENTS-instrumentation.md` (status: draft) | Yes; P3 priority. Becomes its own mission when prioritized |
 | Bit-rot detection (file matches size, SHA differs) | EIGHTH-MASTER 01 §1.4 (out of scope) | Follow-up after EIGHTH-MASTER ships |
 | Auto-remediation of `.partial` model state | EIGHTH-MASTER 01 §1.4 (out of scope) | Consumer-side; tracked from consumer libraries (Vinetas, SwiftBruja) |
+| Populate SwiftAcervo-Performance.xctestplan with real perf measurements — CIH-2 created the plan as scaffolding (all 63 correctness suites in `skippedTests`; no perf tests exist yet). A future mission must add a `StreamingPerformanceTests` class (or equivalent), register it in the plan's `selectedTests`, and remove it from `skippedTests`. Origin: `StreamingPerformanceTests` was anticipated by the parked QUARTERMASTER-02 / CSR-* chunked-streaming rebuild mission; see revival conditions in the Parked section. | `Docs/incomplete/eighth-master-01/` (CIH-2 deliverable) | Yes; activate when the CSR-* mission is revived (new mission name required per parked plan revival conditions) |
+| Add `StreamingPerformanceTests` source class before referencing it in SwiftAcervo-Performance.xctestplan — CIH-2's perf plan scaffolding could not use `selectedTests: ["StreamingPerformanceTests"]` because the class does not exist in source (it was expected from the parked CSR mission). The plan instead skips all 63 correctness suites. Once the class is added, update the plan's `selectedTests` and clear `skippedTests`. | `Docs/incomplete/eighth-master-01/` (CIH-2 PARTIAL finding) | Yes; prerequisite for the CSR-* revival mission |
+| **DC-2 deferred — Vinetas live R2 re-upload** of `pixart-sigma-xl`, `flux2-klein-4b`, `flux2-klein-9b` so their CDN manifests carry the slug-registry schema fields and nested-path file enumeration. DC-2a was attempted 2026-05-23 against pixart-sigma-xl (first-upload — manifest was 404 on CDN, not a re-upload); cancelled after ~2h12m at ~2.6 MB/s effective throughput with ~12 GB transferred and ~15-20 GB still to go. Single-threaded sequential upload via `acervo ship` is too slow for these multi-GB diffuser repos on residential upstream. DC-2b and DC-2c never started. Specs at `Docs/incomplete/eighth-master-01/dc2-specs/pixart-sigma-xl.json` (and the two others to be authored when revived). Staging dir at `/private/tmp/acervo-staging/PixArt-alpha_PixArt-Sigma-XL-2-1024-MS/` preserved for now. | `Docs/incomplete/eighth-master-01/DC2_UPLOAD_LOG.md` (cancellation log) | Yes; revive when `acervo ship` gains parallel multipart, OR a faster upload tool is in place (rclone parallel, `aws s3 cp` with no write timeout), OR a faster connection is available. |
+| **DC-3 (a) deferred — remove `withKnownIssue` wraps in `Tests/AcervoToolTests/CDNManifestFetchTests*` + the 2 useless-`try` warnings inside those wraps.** Original DC-3 scope had three parts: (a) wrap removal, (b) useless-try cleanup, (c) the 6 var→let warnings from DC-1. The DRAWER DIVIDERS-01 merge ships (c) only — (a) requires DC-2 to have shipped new-schema manifests to live R2 (otherwise the wrapped tests would hard-fail). (b) is tied to (a) — the `try`s are only "useless" once the wrap is removed. Both defer with DC-2. | EIGHTH-MASTER 01 plan, Sortie DC-3 | Yes; runs together as a single small sortie immediately after DC-2 successfully ships. |
 
 ## Closed
 

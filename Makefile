@@ -5,6 +5,8 @@ IOS_DESTINATION = 'platform=iOS Simulator,name=iPhone 17,OS=26.1'
 
 MACOS_TESTPLAN = SwiftAcervo-macOS
 IOS_TESTPLAN = SwiftAcervo-iOS
+PERF_TESTPLAN = SwiftAcervo-Performance
+TESTPLAN_DIR = .swiftpm/xcode/xcshareddata/xctestplans
 
 ACERVO_SCHEME = acervo
 ACERVO_BINARY = acervo
@@ -23,7 +25,7 @@ DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 # SwiftAcervo-iOS   plan → SwiftAcervoTests only (acervo CLI target uses
 #                          Foundation.Process, which is unavailable on iOS)
 
-.PHONY: build test test-ios clean resolve lint help release \
+.PHONY: build test test-ios test-perf test-plan-shape clean resolve lint help release \
         build-acervo install-acervo release-acervo \
         test-acervo-unit test-acervo-cdn
 
@@ -40,6 +42,34 @@ test-ios:
 	  -skipPackagePluginValidation \
 	  ONLY_ACTIVE_ARCH=YES \
 	  COMPILER_INDEX_STORE_ENABLE=NO
+
+test-perf:
+	xcodebuild test -scheme $(TEST_SCHEME) -testPlan $(PERF_TESTPLAN) \
+	  -destination $(DESTINATION)
+
+# Shape gate: assert no test class except StreamingPerformanceTests appears in
+# skippedTests on the CI plans (macOS + iOS). The Performance plan is excluded
+# because it legitimately skips most suites until a real perf test is added.
+# Exits non-zero and names the offending class if the invariant is violated.
+test-plan-shape:
+	@echo "==> Validating test plan shape (CI plans only)..."
+	@for PLAN in $(TESTPLAN_DIR)/SwiftAcervo-macOS.xctestplan \
+	             $(TESTPLAN_DIR)/SwiftAcervo-iOS.xctestplan; do \
+	  OFFENDERS=$$(jq -r ' \
+	    .testTargets \
+	    | map(.skippedTests // []) \
+	    | flatten \
+	    | map(select(. != "StreamingPerformanceTests")) \
+	    | .[] \
+	  ' "$$PLAN" 2>/dev/null); \
+	  if [ -n "$$OFFENDERS" ]; then \
+	    echo "FAIL: $$(basename $$PLAN) has disallowed skippedTests entries:"; \
+	    echo "$$OFFENDERS" | sed 's/^/  - /'; \
+	    exit 1; \
+	  fi; \
+	  echo "  OK: $$(basename $$PLAN)"; \
+	done
+	@echo "==> All CI test plans pass shape gate."
 
 clean:
 	xcodebuild clean -scheme $(SCHEME) -destination $(DESTINATION)
@@ -96,6 +126,8 @@ help:
 	@echo "  build                    - Build the SwiftAcervo scheme"
 	@echo "  test                     - Run macOS test plan (SwiftAcervoTests + AcervoToolTests)"
 	@echo "  test-ios                 - Run iOS test plan (SwiftAcervoTests only) on iPhone 17 simulator"
+	@echo "  test-perf                - Run performance test plan (opt-in; not run in CI)"
+	@echo "  test-plan-shape          - Validate CI test plans have no disallowed skippedTests entries"
 	@echo "  clean                    - Clean build artifacts"
 	@echo "  resolve                  - Resolve Swift package dependencies"
 	@echo "  lint                     - Format all Swift source files"

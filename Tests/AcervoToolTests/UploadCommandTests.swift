@@ -149,7 +149,7 @@
       )
       func missingAccessKeySurfacesError() async throws {
         let parsed = try AcervoCLI.parseAsRoot(["upload", "org/repo", "/tmp/anywhere"])
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }
@@ -214,7 +214,7 @@
 
         let capture = KeepOrphansCaptureBox()
         PublishRunner.reset()
-        PublishRunner.override = { _, _, _, keepOrphans, _ in
+        PublishRunner.override = { _, _, _, keepOrphans, _, _, _, _ in
           capture.set(keepOrphans)
           // Return a synthetic manifest so the command body completes cleanly.
           return CDNManifest(
@@ -232,7 +232,7 @@
         if passingFlag { args.append("--keep-orphans") }
 
         let parsed = try AcervoCLI.parseAsRoot(args)
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }
@@ -271,7 +271,7 @@
 
         let called = ShipPublishCallBox()
         PublishRunner.reset()
-        PublishRunner.override = { _, _, _, _, _ in
+        PublishRunner.override = { _, _, _, _, _, _, _, _ in
           called.mark()
           throw TestSentinelError.publishShouldNotBeCalled
         }
@@ -280,7 +280,7 @@
         let parsed = try AcervoCLI.parseAsRoot([
           "upload", "org/repo", modelDir.path, "--dry-run",
         ])
-        guard var cmd = parsed as? UploadCommand else {
+        guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
         }

@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+Discovery.swift (filesystem edge cases).
+
 import Foundation
 import Testing
 

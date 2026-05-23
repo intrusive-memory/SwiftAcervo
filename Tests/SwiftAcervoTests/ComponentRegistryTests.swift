@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentRegistration.swift and Sources/SwiftAcervo/ComponentRegistry.swift
+
 import Foundation
 import Testing
 

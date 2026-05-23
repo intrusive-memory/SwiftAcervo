@@ -1,6 +1,8 @@
 // SlugEnsureAvailableTests.swift
 // SwiftAcervo
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+EnsureAvailable.swift (slug-keyed multi-component).
+//
 // Sortie 3 of OPERATION QUARTERMASTER TORRENT (slug-registry/S3).
 //
 // Acceptance tests for `Acervo.ensureAvailable(slug:url:files:progress:)`:
@@ -497,6 +499,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         case .available: return true
         case .downloading: return true
         case .notAvailable: return false  // should never happen for a pre-materialized component
+        case .partial: return false  // EM-1: also never expected for a pre-materialized component
         }
       }
       #expect(allValid, "All callback states should be .available or .downloading; got \(receivedStates)")
