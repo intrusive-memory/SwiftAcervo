@@ -41,10 +41,10 @@
 
     @Test("Published manifest fetches, decodes, and passes verifyChecksum()")
     func manifestVerifiesOnCDN() async throws {
-      let uploader = CDNUploader()
-      let manifest = try await uploader.verifyManifestOnCDN(
+      let manifest = try await VerifyCommand.fetchCDNManifest(
         publicBaseURL: Self.publicBaseURL,
-        slug: Self.slug
+        slug: Self.slug,
+        session: .shared
       )
 
       #expect(manifest.verifyChecksum(), "CDN manifest must pass verifyChecksum()")
@@ -54,10 +54,10 @@
 
     @Test("Spot-checking the smallest published file recomputes to the manifest SHA-256")
     func spotCheckSmallestFileMatchesManifest() async throws {
-      let uploader = CDNUploader()
-      let manifest = try await uploader.verifyManifestOnCDN(
+      let manifest = try await VerifyCommand.fetchCDNManifest(
         publicBaseURL: Self.publicBaseURL,
-        slug: Self.slug
+        slug: Self.slug,
+        session: .shared
       )
 
       // Pick the smallest entry to keep the download cheap.
@@ -66,11 +66,12 @@
         return
       }
 
-      try await uploader.spotCheckFileOnCDN(
+      try await VerifyCommand.spotCheckCDNFile(
         publicBaseURL: Self.publicBaseURL,
         slug: Self.slug,
         filename: smallest.path,
-        expectedSHA256: smallest.sha256
+        expectedSHA256: smallest.sha256,
+        session: .shared
       )
     }
   }

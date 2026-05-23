@@ -9,6 +9,42 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`acervo ship` and `acervo upload` no longer require the `aws` CLI.** CDN uploads now
+  go through the library's native SigV4 client (`Acervo.publishModel`). The `aws` binary
+  is not checked for, not invoked, and not listed as a runtime dependency. Only `hf`
+  (HuggingFace CLI) is required, and only by `ship` and `download`.
+
+- **Orphan prune is now the default for `ship` and `upload`.** After a successful publish,
+  CDN keys not referenced by the new manifest are deleted. This matches the manifest-truth
+  model that `recache` already follows. The previous additive-only behavior (no deletes) is
+  preserved via a new `--keep-orphans` flag.
+
+  > **Operator upgrade note**: If you have scripts or workflows that rely on the previous
+  > additive-only behavior of `acervo ship` or `acervo upload` — for example, to keep
+  > prior-version files on the CDN alongside a new upload — add `--keep-orphans` to your
+  > invocation to restore the old behavior. Without the flag, keys not in the new manifest
+  > are deleted after CHECK 6 passes.
+
+- **`--keep-orphans` flag added to `acervo ship` and `acervo upload`.** Pass this flag to
+  skip the orphan-prune step. Default (no flag) prunes.
+
+### Removed
+
+- **`CDNUploader` (internal).** The internal `CDNUploader` class that shelled out to
+  `aws s3 sync` has been deleted. `ShipCommand` and `UploadCommand` now call
+  `Acervo.publishModel` directly, which drives all CDN traffic through the native SigV4
+  stack. There is no public API change — `CDNUploader` was always an internal implementation
+  detail.
+
+### Internal
+
+- **CLI tests rewritten against `MockURLProtocol`.** `ShipCommandTests` and
+  `UploadCommandTests` no longer test for `aws` subprocess invocations. All CDN-path
+  assertions now drive a `MockURLProtocol`-backed `URLSession`, matching the pattern
+  already established by `S3CDNClientTests` and `PublishModelTests`.
+
 ---
 
 ## [0.14.0] - 2026-05-18

@@ -72,11 +72,13 @@ brew tap intrusive-memory/tap
 brew install acervo
 ```
 
-Requires Apple Silicon (M1+) and macOS 26+. The `aws` and `hf` CLIs are required at runtime for upload and download operations:
+Requires Apple Silicon (M1+) and macOS 26+. The `hf` CLI is required at runtime for download operations:
 
 ```bash
-brew install awscli huggingface-hub
+brew install huggingface-hub
 ```
+
+CDN uploads use the library's native SigV4 client — no `aws` CLI required.
 
 ### Swift Package Manager
 

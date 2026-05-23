@@ -2,35 +2,32 @@ import Foundation
 
 /// Errors surfaced by the `acervo` CLI tool.
 ///
-/// Additional cases are added by later sorties; this enum is intentionally
-/// open-ended and only needs to carry enough cases to satisfy the current
-/// sortie's compile surface.
+/// Cases are CLI-facing surfaces — none of them leak into the library
+/// (`Sources/SwiftAcervo/`). The library has its own `AcervoError`.
 enum AcervoToolError: Error, CustomStringConvertible {
   /// A required external CLI tool was not found on `PATH`.
   case missingTool(String)
 
-  /// A file in the staging directory is zero bytes. The manifest
-  /// generator refuses to write a manifest that references a
-  /// zero-byte file (CHECK 2 from the acervo tool requirements).
+  /// A file in the staging directory is zero bytes. Surfaced by the
+  /// manifest generator before any upload begins (CHECK 2).
   case zeroByteFile(String)
 
   /// After writing `manifest.json`, the re-read manifest's
   /// `manifestChecksum` did not match the recomputed checksum
-  /// (CHECK 3 from the acervo tool requirements).
+  /// (CHECK 3).
   case manifestChecksumMismatch(path: String)
 
   /// A file listed in the manifest was mutated between manifest
-  /// generation and the pre-upload integrity sweep
-  /// (CHECK 4 from the acervo tool requirements).
+  /// generation and the pre-upload integrity sweep (CHECK 4).
   case stagingMutation(filename: String, expected: String, actual: String)
 
   /// A file served by the CDN did not match the SHA-256 recorded
-  /// in the manifest (CHECK 6 from the acervo tool requirements).
+  /// in the manifest (CHECK 6).
   case cdnChecksumMismatch(filename: String, expected: String, actual: String)
 
-  /// An invocation of the `aws` CLI exited with a non-zero status.
-  /// `stderr` carries the captured error output.
-  case awsProcessFailed(command: String, exitCode: Int32, stderr: String)
+  /// An external subprocess (e.g. `hf download`) exited with a non-zero
+  /// status. `stderr` carries the captured error output.
+  case subprocessFailed(command: String, exitCode: Int32, stderr: String)
 
   /// A CDN HTTP fetch did not return HTTP 200.
   case cdnHTTPStatus(url: String, statusCode: Int)
@@ -39,8 +36,7 @@ enum AcervoToolError: Error, CustomStringConvertible {
   /// `CDNManifest.verifyChecksum()` (CHECK 5).
   case cdnManifestChecksumInvalid(url: String)
 
-  /// A required environment variable was not set when invoking
-  /// `aws` (for example, `R2_ACCESS_KEY_ID`).
+  /// A required environment variable was not set when invoking the CLI.
   case missingEnvironmentVariable(String)
 
   /// A destructive subcommand was invoked without `--yes` and stdin is
@@ -74,8 +70,8 @@ enum AcervoToolError: Error, CustomStringConvertible {
     case .cdnChecksumMismatch(let filename, let expected, let actual):
       return
         "CDN checksum mismatch for \(filename) (CHECK 6 failed): expected \(expected), got \(actual)"
-    case .awsProcessFailed(let command, let exitCode, let stderr):
-      return "aws command failed (\(command)) with exit code \(exitCode): \(stderr)"
+    case .subprocessFailed(let command, let exitCode, let stderr):
+      return "subprocess failed (\(command)) with exit code \(exitCode): \(stderr)"
     case .cdnHTTPStatus(let url, let statusCode):
       return "CDN fetch failed for \(url): HTTP \(statusCode)"
     case .cdnManifestChecksumInvalid(let url):
@@ -93,22 +89,16 @@ enum AcervoToolError: Error, CustomStringConvertible {
 }
 
 /// Validates that external CLI tools required by `acervo` are available on
-/// `PATH`. Call `ToolCheck.validate()` early in any command that shells out
-/// to `aws` or `huggingface-cli`.
+/// `PATH`. After the v0.14.x cleanup the only external tool the CLI shells
+/// out to is the HuggingFace CLI (`hf`); R2 traffic is driven through the
+/// native publish pipeline in `SwiftAcervo`.
 enum ToolCheck {
-  /// Verify that both `aws` and `huggingface-cli` are available on `PATH`.
+  /// Verify that `hf` is available on `PATH`.
   ///
   /// On any missing tool, prints the matching Homebrew hint to stderr
   /// and throws `AcervoToolError.missingTool`. Succeeds silently when
-  /// both tools are present.
+  /// the tool is present.
   static func validate() throws {
-    if !isToolAvailable(name: "aws") {
-      let message =
-        "error: required tool 'aws' not found on PATH. Install it with: brew install awscli\n"
-      FileHandle.standardError.write(Data(message.utf8))
-      throw AcervoToolError.missingTool("aws")
-    }
-
     if !isToolAvailable(name: "hf") {
       let message =
         "error: required tool 'hf' not found on PATH. Install it with: brew install huggingface-hub\n"
@@ -118,9 +108,8 @@ enum ToolCheck {
   }
 
   /// Public-to-the-CLI version of `isToolAvailable`. Subcommands that
-  /// only depend on a subset of the legacy tool surface (e.g. `recache`
-  /// needs `hf` but not `aws`) call this directly instead of going
-  /// through the all-or-nothing `validate()`.
+  /// only depend on a specific tool can call this directly instead of
+  /// going through `validate()`.
   static func isToolOnPath(name: String) -> Bool {
     isToolAvailable(name: name)
   }

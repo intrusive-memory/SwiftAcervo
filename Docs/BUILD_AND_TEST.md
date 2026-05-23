@@ -14,8 +14,9 @@
 - **Make** (for Makefile targets)
 
 For CLI operations (`acervo` tool):
-- `aws` CLI (for R2 uploads): `brew install awscli`
 - `hf` CLI (for HuggingFace downloads): `brew install huggingface-hub`
+
+CDN uploads use the library's native SigV4 client. No `aws` CLI is required.
 
 ### Make Targets
 
@@ -273,10 +274,10 @@ acervo upload --model-id "org/repo"
 ```
 
 **What it does**:
-1. Verifies manifest and files
-2. Uploads all files to R2 via `aws` CLI
-3. Verifies uploaded files match manifest
-4. Reports success/failure per file
+1. Verifies manifest and files (CHECKs 2–4)
+2. Uploads all files to CDN via the native SigV4 client
+3. Verifies uploaded files match manifest (CHECKs 5–6)
+4. Prunes orphan CDN keys not referenced by the new manifest
 
 **Options**:
 ```
@@ -420,16 +421,14 @@ export PATH="$(pwd)/bin:$PATH"  # Add to PATH
 
 ### R2 Upload Fails: "Access Denied"
 
-Check credentials:
+Check that credentials are set:
 ```bash
-echo $R2_ACCESS_KEY_ID
-echo $R2_SECRET_ACCESS_KEY
+test -n "$R2_ACCESS_KEY_ID" && echo "set" || echo "not set"
+test -n "$R2_SECRET_ACCESS_KEY" && echo "set" || echo "not set"
 ```
 
-Verify with `aws`:
-```bash
-aws --endpoint-url $R2_ENDPOINT s3 ls s3://$R2_BUCKET/
-```
+Ensure the API token has `Object:Write` permission on the R2 bucket. Get tokens
+from the Cloudflare dashboard under R2 → API Tokens.
 
 ### HuggingFace Download Fails: "Authentication Failed"
 
