@@ -1,3 +1,4 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+Availability.swift (three-state tier).
 import CryptoKit
 import Foundation
 import Testing

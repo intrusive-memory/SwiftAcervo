@@ -1,6 +1,9 @@
 // EM2ValidityOracleTests.swift
 // SwiftAcervo
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+Availability.swift (oracle plumbing)
+// and Sources/SwiftAcervo/ValidityOracle.swift.
+//
 // Sortie EM-2 of OPERATION EIGHTH-MASTER iteration 01
 // (validity-oracle / manifest-driven 3-tier availability).
 //
