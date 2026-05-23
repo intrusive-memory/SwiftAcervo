@@ -26,9 +26,9 @@ _(none right now)_
 ### EIGHTH-MASTER 01 — Manifest-driven validity oracle + DC/CIH carry-overs
 **Path**: `Docs/incomplete/eighth-master-01/`
 **Why it's queued**: 2026-05-20 audit revealed `Acervo.availability()`'s presence-only validity check is wrong in both directions (Qwen3-Coder-Next-4bit false-positive; FLUX.2-klein-4B false-negative). Plus five sorties of carry-over work from the parked QUARTERMASTER iter02 plan that are tightly bound to the same artifact (local `manifest.json`).
-**Scope**: §1 validity oracle + §2 local-manifest unification + DC-1/DC-2/DC-3 + CIH-1/CIH-2. EXECUTION_PLAN not yet refined.
-**Blocks/blocked by**: Soft-depends on QUARTERMASTER 01's PARTIAL_SALVAGE merge landing first (the slug-registry work it preserves is load-bearing for §1's manifest-cache fallback path).
-**Estimated effort**: TBD pending plan refinement; rough cut ~3-5 sorties for §1+§2, plus DC-* (operator-tended) + CIH-*.
+**Scope**: §1 validity oracle + §2 local-manifest unification + CIH-1/CIH-2 (CI hygiene) + DC-1/DC-2/DC-3 (CLI port to PublishRunner architecture + live re-uploads + cleanup) sequenced last. EXECUTION_PLAN not yet refined.
+**Blocks/blocked by**: Salvage landed via PR mission/quartermaster-salvage/01 (S1–S4 library work). S5's CLI `--slug`/`--spec`/`--dry-run`/`--output-dir` flags did NOT carry over (v0.15.0 removed `CDNUploader`; S5 must be ported, not cherry-picked) — that port is now folded into DC-1 and sequenced at the end of the mission per 2026-05-23 decision.
+**Estimated effort**: TBD pending plan refinement; rough cut ~3-5 sorties for §1+§2, plus CIH-* + DC-* (DC-1 now includes the S5 CLI port).
 
 ## Parked
 

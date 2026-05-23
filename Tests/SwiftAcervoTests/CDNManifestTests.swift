@@ -16,6 +16,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [
@@ -33,6 +35,8 @@ struct CDNManifestTests {
 
     #expect(manifest.manifestVersion == 1)
     #expect(manifest.modelId == "org/repo")
+    #expect(manifest.primaryRepo == "org/repo")
+    #expect(manifest.components == ["org/repo"])
     #expect(manifest.slug == "org_repo")
     #expect(manifest.files.count == 1)
     #expect(manifest.files[0].path == "config.json")
@@ -45,6 +49,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [
@@ -75,6 +81,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [
@@ -95,6 +103,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [
@@ -172,6 +182,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 0,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [],
@@ -193,6 +205,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 99,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [],
@@ -215,6 +229,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [
@@ -238,6 +254,8 @@ struct CDNManifestTests {
     let json = """
       {
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [],
@@ -256,6 +274,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/actual-repo",
+          "primaryRepo": "org/actual-repo",
+          "components": ["org/actual-repo"],
           "slug": "org_actual_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [],
@@ -299,6 +319,8 @@ struct CDNManifestTests {
       {
           "manifestVersion": 1,
           "modelId": "org/repo",
+          "primaryRepo": "org/repo",
+          "components": ["org/repo"],
           "slug": "org_repo",
           "updatedAt": "2026-03-22T00:00:00Z",
           "files": [

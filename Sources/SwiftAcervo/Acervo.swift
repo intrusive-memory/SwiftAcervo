@@ -1195,6 +1195,114 @@ extension Acervo {
   }
 }
 
+// MARK: - Delete Model (slug-keyed)
+
+extension Acervo {
+
+  /// Deletes all component directories for a slug-keyed model.
+  ///
+  /// Resolves the manifest for `slug` (via the cache or a network fetch) to
+  /// obtain the full list of component repos, then removes each component's
+  /// on-disk folder unconditionally — **no existence check before removal**.
+  ///
+  /// ## Error model
+  ///
+  /// - Component folder does not exist → no-op success for that component.
+  /// - Some component folders present, others not → deletes the ones that
+  ///   exist and succeeds.
+  /// - Manifest cannot be fetched (HTTP error) → throws
+  ///   ``AcervoError/manifestFetchFailed(slug:status:)`` because Acervo
+  ///   cannot know what to delete without the manifest.
+  /// - `FileManager.removeItem` fails on an **existing** folder
+  ///   (permission denied, I/O error, etc.) → throws the underlying
+  ///   filesystem error verbatim.
+  ///
+  /// ## URL resolution rule
+  ///
+  /// Mirrors ``availability(slug:url:telemetry:)``:
+  /// - `url` supplied → the manifest is fetched from that URL; `slug` is the
+  ///   on-disk identifier.
+  /// - `url` omitted + slug parses as `"org/repo"` → the canonical CDN
+  ///   manifest URL is derived.
+  /// - `url` omitted + slug does not parse as `"org/repo"` → throws
+  ///   ``AcervoError/urlRequiredForSlug(_:)``.
+  ///
+  /// - Parameters:
+  ///   - slug: The NAME_SLUG identifying the model (may be `"org/repo"` for
+  ///     HF-style slugs or a plain slug when a `url` is provided).
+  ///   - url: Optional manifest URL. If `nil` and `slug` is `"org/repo"`,
+  ///     the URL is derived from the canonical CDN path.
+  /// - Throws: ``AcervoError/urlRequiredForSlug(_:)`` when URL resolution is
+  ///   impossible, ``AcervoError/manifestFetchFailed(slug:status:)`` on HTTP
+  ///   failures, or a filesystem error when a present folder cannot be removed.
+  ///
+  /// ```swift
+  /// // HF-style slug — URL derived automatically:
+  /// try await Acervo.deleteModel(slug: "black-forest-labs/FLUX.2-klein-4B")
+  ///
+  /// // Opaque slug — explicit manifest URL required:
+  /// try await Acervo.deleteModel(
+  ///     slug: "flux2-klein-4b",
+  ///     url: URL(string: "https://cdn.example/flux2-klein-4b/manifest.json")!
+  /// )
+  /// ```
+  public static func deleteModel(slug: String, url: URL? = nil) async throws {
+    try await deleteModel(slug: slug, url: url, in: sharedModelsDirectory, session: nil)
+  }
+
+  /// Internal overload of ``deleteModel(slug:url:)`` that accepts a custom
+  /// base directory and an injected `URLSession` for tests.
+  ///
+  /// - Parameters:
+  ///   - slug: The slug identifying the model.
+  ///   - url: Optional manifest URL.
+  ///   - baseDirectory: Base directory to resolve component folder paths against.
+  ///   - session: Injected `URLSession` for tests (uses `SecureDownloadSession`
+  ///     when `nil`).
+  static func deleteModel(
+    slug: String,
+    url: URL? = nil,
+    in baseDirectory: URL,
+    session: URLSession? = nil
+  ) async throws {
+    // Resolve manifest URL per the API model (mirrors availability(slug:url:)).
+    let manifestURL: URL
+    if let url {
+      manifestURL = url
+    } else if isOrgRepoSlug(slug) {
+      manifestURL = ManifestCache.derivedURL(forSlug: slug)
+    } else {
+      throw AcervoError.urlRequiredForSlug(slug)
+    }
+
+    // Fetch manifest (cache-aware). Throws manifestFetchFailed on HTTP errors.
+    let manifest = try await fetchSlugManifest(
+      slug: slug,
+      manifestURL: manifestURL,
+      session: session
+    )
+
+    // Delete each component folder unconditionally.
+    // Per the exit criterion: no existence check before removeItem.
+    // CocoaError.fileNoSuchFile (code 4 / NSFileNoSuchFileError) → no-op success.
+    // Any other removeItem failure → re-throw verbatim.
+    for componentRepo in manifest.components {
+      let folderURL = baseDirectory.appendingPathComponent(slugify(componentRepo))
+      do {
+        try FileManager.default.removeItem(at: folderURL)
+      } catch let error as CocoaError where error.code == .fileNoSuchFile {
+        // Folder does not exist — treat as success (no-op).
+        _ = error
+      }
+      // Clear the per-component ManifestCache entry (idempotent).
+      await ManifestCache.shared.remove(slug: componentRepo, url: nil)
+    }
+
+    // Clear the slug-level ManifestCache entry (idempotent).
+    await ManifestCache.shared.remove(slug: slug, url: url)
+  }
+}
+
 // MARK: - Component Registration
 
 extension Acervo {
@@ -2051,5 +2159,457 @@ extension Acervo {
     }
     let strict = isModelAvailable(modelId, in: baseDirectory)
     return strict ? .available : .notAvailable
+  }
+}
+
+// MARK: - Availability (slug-keyed, multi-component aggregation)
+
+extension Acervo {
+
+  /// Returns the three-state availability for a slug, fetching the CDN
+  /// manifest and aggregating across every component the slug declares.
+  ///
+  /// This is the slug-registry-mission entry point introduced in
+  /// `slug-registry/S2`. Unlike the legacy ``availability(_:)``, which is
+  /// strictly offline and reflects only what is cached on disk, this method
+  /// fetches the manifest (via the manifest cache or the network if needed)
+  /// to discover the component list, then fans out across every component to
+  /// build the aggregate.
+  ///
+  /// ## Slug + URL resolution rule
+  ///
+  /// * If `url` is supplied, it is used verbatim as the manifest fetch URL.
+  ///   The `slug` is treated purely as the on-disk directory key.
+  /// * If `url` is `nil` and `slug` parses as `"org/repo"` (single forward
+  ///   slash, non-empty halves), the canonical CDN manifest URL is derived
+  ///   from the slug.
+  /// * If `url` is `nil` and `slug` does NOT parse as `"org/repo"`, the
+  ///   method throws ``AcervoError/urlRequiredForSlug(_:)``.
+  /// * If manifest fetch returns a non-2xx status, the method throws
+  ///   ``AcervoError/manifestFetchFailed(slug:status:)``.
+  ///
+  /// ## Aggregation
+  ///
+  /// Per-component states are collapsed via the same
+  /// ``AvailabilityAggregator/aggregate(_:)`` helper that
+  /// ``ensureAvailable(slug:url:files:progress:)`` (S3) consumes:
+  ///
+  /// * Every component `.available` → `.available`
+  /// * Any component `.downloading` → `.downloading(weightedAverage)` where
+  ///   the weight is the component's manifest-declared total bytes
+  /// * Otherwise → `.notAvailable`
+  ///
+  /// ## Telemetry
+  ///
+  /// Exactly one ``AcervoTelemetryEvent/modelAvailabilityResolved(slug:manifestURL:componentCount:result:)``
+  /// is emitted per call, regardless of call shape (derived URL, explicit
+  /// URL, single-component, multi-component). Error paths emit
+  /// ``AcervoTelemetryEvent/errorThrown(phase:errorDescription:modelID:fileName:)``
+  /// instead and skip the availability-resolved event.
+  ///
+  /// - Parameters:
+  ///   - slug: The slug-level identifier. May or may not look like
+  ///     `"org/repo"`.
+  ///   - url: An explicit manifest URL. `nil` triggers slug-based URL
+  ///     derivation (which requires the slug to parse as `"org/repo"`).
+  ///   - telemetry: Optional reporter. Exactly one event is captured per
+  ///     successful call.
+  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
+  /// - Throws: ``AcervoError/urlRequiredForSlug(_:)`` when the slug needs an
+  ///   explicit URL and none was supplied;
+  ///   ``AcervoError/manifestFetchFailed(slug:status:)`` when the manifest
+  ///   fetch returns a non-2xx HTTP status;
+  ///   ``AcervoError/networkError(_:)`` on transport failures;
+  ///   ``AcervoError/manifestDecodingFailed(_:)`` on malformed JSON.
+  public static func availability(
+    slug: String,
+    url: URL? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) async throws -> ModelAvailability {
+    try await availability(
+      slug: slug,
+      url: url,
+      in: sharedModelsDirectory,
+      telemetry: telemetry
+    )
+  }
+
+  /// Custom-base-directory and session-injecting overload of
+  /// ``availability(slug:url:telemetry:)``.
+  ///
+  /// Internal test seam. `session` defaults to `nil` which delegates to
+  /// ``SecureDownloadSession/shared``; tests inject a `MockURLProtocol`-backed
+  /// session.
+  static func availability(
+    slug: String,
+    url: URL? = nil,
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
+  ) async throws -> ModelAvailability {
+    // ---- Resolve the manifest URL per the (slug, url?) contract. ----
+    let manifestURL: URL
+    if let explicit = url {
+      manifestURL = explicit
+    } else if isOrgRepoSlug(slug) {
+      manifestURL = ManifestCache.derivedURL(forSlug: slug)
+    } else {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: "Slug '\(slug)' is not 'org/repo' and no URL was supplied.",
+            modelID: slug,
+            fileName: nil
+          ))
+      }
+      throw AcervoError.urlRequiredForSlug(slug)
+    }
+
+    // ---- Fetch the manifest (cache-aware). ----
+    let manifest: CDNManifest
+    do {
+      manifest = try await fetchSlugManifest(
+        slug: slug,
+        manifestURL: manifestURL,
+        session: session
+      )
+    } catch let error as AcervoError {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.errorDescription ?? "\(error)",
+            modelID: slug,
+            fileName: nil
+          ))
+      }
+      throw error
+    } catch {
+      if let telemetry {
+        await telemetry.capture(
+          .errorThrown(
+            phase: .manifestDownload,
+            errorDescription: error.localizedDescription,
+            modelID: slug,
+            fileName: nil
+          ))
+      }
+      throw AcervoError.networkError(error)
+    }
+
+    // ---- Fan out across components and aggregate. ----
+    // Single-component case: `components == [primaryRepo]` and the
+    // per-component state is just the legacy repo-keyed availability for
+    // that one repo. Multi-component case: each component is resolved
+    // independently via the same legacy probe (offline; cached manifest +
+    // InFlightDownloads). The aggregator collapses them.
+    var inputs: [ComponentAvailabilityInput] = []
+    inputs.reserveCapacity(manifest.components.count)
+    for component in manifest.components {
+      let state = await availability(component, in: baseDirectory)
+      let bytes = await componentTotalBytes(component, in: baseDirectory)
+      inputs.append(
+        ComponentAvailabilityInput(availability: state, bytesTotal: bytes))
+    }
+    let aggregate = AvailabilityAggregator.aggregate(inputs)
+
+    // Exactly one availability-resolved event per call. Branches all funnel
+    // through this single emission point.
+    if let telemetry {
+      let resultLabel: String
+      switch aggregate {
+      case .available: resultLabel = "available"
+      case .notAvailable: resultLabel = "notAvailable"
+      case .downloading(let p): resultLabel = "downloading(\(p))"
+      }
+      await telemetry.capture(
+        .modelAvailabilityResolved(
+          slug: slug,
+          manifestURL: manifestURL.absoluteString,
+          componentCount: manifest.components.count,
+          result: resultLabel
+        ))
+    }
+    return aggregate
+  }
+
+  /// Returns `true` when `slug` parses as `"org/repo"` with a single
+  /// non-empty forward-slash separator. Matches the resolution rule in
+  /// ``availability(slug:url:telemetry:)``.
+  static func isOrgRepoSlug(_ slug: String) -> Bool {
+    let parts = slug.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 2 else { return false }
+    return !parts[0].isEmpty && !parts[1].isEmpty
+  }
+
+  /// Best-effort total-bytes lookup for a component, used as the
+  /// aggregator's per-component weight. Returns `nil` when the local
+  /// cached manifest is absent for this component (in which case the
+  /// aggregator falls back to equal-weight averaging across all
+  /// components).
+  static func componentTotalBytes(_ modelId: String, in baseDirectory: URL) async -> Int64? {
+    guard let cached = AcervoDownloader.loadCachedManifest(for: modelId, in: baseDirectory)
+    else {
+      return nil
+    }
+    return cached.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
+  }
+
+  /// Cache-aware manifest fetch for the slug-keyed APIs. Hits
+  /// ``ManifestCache/shared`` first; on miss, downloads from
+  /// `manifestURL` and stores under both `(slug, nil)` and
+  /// `(slug, manifestURL)` lookup shapes (which collapse to the same key
+  /// when `manifestURL == derivedURL(forSlug: slug)`).
+  ///
+  /// Non-2xx responses throw ``AcervoError/manifestFetchFailed(slug:status:)``
+  /// (NOT ``manifestDownloadFailed(statusCode:)``) so UI code can branch on
+  /// slug-resolution failure specifically.
+  static func fetchSlugManifest(
+    slug: String,
+    manifestURL: URL,
+    session injectedSession: URLSession?
+  ) async throws -> CDNManifest {
+    // 1) Cache hit?
+    if let cached = await ManifestCache.shared.manifest(slug: slug, url: manifestURL) {
+      return cached
+    }
+    // 2) Network fetch.
+    let session = injectedSession ?? SecureDownloadSession.shared
+    let request = URLRequest(url: manifestURL)
+    let data: Data
+    let response: URLResponse
+    (data, response) = try await session.data(for: request)
+    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+      throw AcervoError.manifestFetchFailed(slug: slug, status: http.statusCode)
+    }
+    let manifest: CDNManifest
+    do {
+      manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
+    } catch {
+      throw AcervoError.manifestDecodingFailed(error)
+    }
+    // 3) Store under the explicit URL (preserves the (slug, explicitURL)
+    // key) — when `manifestURL == derivedURL(forSlug: slug)`, this is
+    // also the canonical (slug, nil) entry per ManifestCache's contract.
+    await ManifestCache.shared.store(manifest, slug: slug, url: manifestURL)
+    return manifest
+  }
+}
+
+// MARK: - Ensure Available (slug-keyed, multi-component)
+
+extension Acervo {
+
+  /// Ensures all components of a slug-keyed model are available locally,
+  /// downloading any that are missing.
+  ///
+  /// This is the slug-registry-mission entry point introduced in
+  /// `slug-registry/S3`. It mirrors ``availability(slug:url:telemetry:)``'s
+  /// slug + URL resolution rule and extends the existing
+  /// ``ensureAvailable(_:files:progress:telemetry:)`` to multi-component models.
+  ///
+  /// ## Slug + URL resolution rule
+  ///
+  /// * If `url` is supplied, it is used verbatim as the manifest fetch URL.
+  ///   The `slug` is treated purely as the on-disk directory key.
+  /// * If `url` is `nil` and `slug` parses as `"org/repo"` (single forward
+  ///   slash, non-empty halves), the canonical CDN manifest URL is derived
+  ///   from the slug.
+  /// * If `url` is `nil` and `slug` does NOT parse as `"org/repo"`, the
+  ///   method throws ``AcervoError/urlRequiredForSlug(_:)``.
+  /// * If manifest fetch returns a non-2xx status, the method throws
+  ///   ``AcervoError/manifestFetchFailed(slug:status:)``.
+  ///
+  /// ## Multi-component download
+  ///
+  /// Once the slug's manifest is resolved, each entry in `manifest.components`
+  /// is downloaded in sequence via the existing repo-keyed
+  /// ``ensureAvailable(_:files:progress:telemetry:)`` path. Download
+  /// deduplication (``InFlightDownloads``) is keyed by `(modelId, file)` via
+  /// the per-component calls, preserving the existing dedup contract.
+  ///
+  /// ## Progress aggregation
+  ///
+  /// The `progress:` callback receives a bytes-weighted aggregate across all
+  /// components, computed via ``AvailabilityAggregator/aggregate(_:)`` — the
+  /// same helper that ``availability(slug:url:telemetry:)`` uses.  Every
+  /// component tick fires the caller's callback with the current aggregate
+  /// state, so the callback rate is proportional to the total download activity
+  /// across components (not just the last-started one).
+  ///
+  /// ## HF-repo regression protection
+  ///
+  /// The existing ``ensureAvailable(_:files:progress:telemetry:)`` signature is
+  /// preserved unchanged; it continues to use the repo-keyed path and is not
+  /// rerouted through this method.
+  ///
+  /// - Parameters:
+  ///   - slug: The slug-level identifier. May or may not look like `"org/repo"`.
+  ///   - url: An explicit manifest URL. `nil` triggers slug-based URL derivation
+  ///     (which requires the slug to parse as `"org/repo"`).
+  ///   - files: An array of file names to download within each component. Pass
+  ///     `[]` to download every file in each component's manifest.
+  ///   - progress: An optional callback invoked periodically with the aggregate
+  ///     download progress across all components. Must be `@Sendable`.
+  ///   - telemetry: Optional reporter.
+  /// - Throws: ``AcervoError/urlRequiredForSlug(_:)`` when the slug needs an
+  ///   explicit URL and none was supplied;
+  ///   ``AcervoError/manifestFetchFailed(slug:status:)`` when the manifest
+  ///   fetch returns a non-2xx HTTP status;
+  ///   any error from the underlying per-component download (network failures,
+  ///   integrity errors, etc.).
+  public static func ensureAvailable(
+    slug: String,
+    url: URL? = nil,
+    files: [String],
+    progress: (@Sendable (ModelAvailability) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) async throws {
+    try await ensureAvailable(
+      slug: slug,
+      url: url,
+      files: files,
+      progress: progress,
+      in: sharedModelsDirectory,
+      telemetry: telemetry
+    )
+  }
+
+  /// Internal test seam for ``ensureAvailable(slug:url:files:progress:telemetry:)``.
+  ///
+  /// Accepts a custom `baseDirectory` and injected `URLSession` so tests can
+  /// drive the full path via `MockURLProtocol` without touching
+  /// `sharedModelsDirectory` or the live CDN.
+  static func ensureAvailable(
+    slug: String,
+    url: URL? = nil,
+    files: [String],
+    progress: (@Sendable (ModelAvailability) -> Void)? = nil,
+    in baseDirectory: URL,
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
+  ) async throws {
+    // ---- Resolve the manifest URL per the (slug, url?) contract. ----
+    // (Identical resolution rule to availability(slug:url:in:telemetry:session:).)
+    let manifestURL: URL
+    if let explicit = url {
+      manifestURL = explicit
+    } else if isOrgRepoSlug(slug) {
+      manifestURL = ManifestCache.derivedURL(forSlug: slug)
+    } else {
+      throw AcervoError.urlRequiredForSlug(slug)
+    }
+
+    // ---- Fetch the manifest (cache-aware). ----
+    let manifest: CDNManifest
+    do {
+      manifest = try await fetchSlugManifest(
+        slug: slug,
+        manifestURL: manifestURL,
+        session: session
+      )
+    } catch let error as AcervoError {
+      throw error
+    } catch {
+      throw AcervoError.networkError(error)
+    }
+
+    // ---- Per-component state tracking for aggregate progress. ----
+    // We maintain a mutable state vector — one entry per component — and
+    // recompute the aggregate via AvailabilityAggregator.aggregate(_:) on
+    // every callback tick. This is the same helper that availability(slug:url:)
+    // uses, guaranteeing the two paths cannot drift.
+    //
+    // The vector is captured by reference (class box) so the per-component
+    // progress closures can mutate it concurrently. We guard mutations with an
+    // NSLock so the aggregate snapshot is always coherent.
+    let componentIds = manifest.components
+    let componentCount = componentIds.count
+
+    // State box: holds the current (availability, bytesTotal) pair for each
+    // component index.
+    final class ComponentStateBox: @unchecked Sendable {
+      var states: [ComponentAvailabilityInput]
+      let lock = NSLock()
+      init(count: Int) {
+        states = Array(
+          repeating: ComponentAvailabilityInput(availability: .notAvailable, bytesTotal: nil),
+          count: count
+        )
+      }
+      func update(index: Int, availability: ModelAvailability, bytesTotal: Int64?) {
+        lock.lock()
+        defer { lock.unlock() }
+        states[index] = ComponentAvailabilityInput(
+          availability: availability, bytesTotal: bytesTotal)
+      }
+      func snapshot() -> [ComponentAvailabilityInput] {
+        lock.lock()
+        defer { lock.unlock() }
+        return states
+      }
+    }
+
+    let stateBox = ComponentStateBox(count: componentCount)
+
+    // ---- Download each component sequentially. ----
+    for (index, componentId) in componentIds.enumerated() {
+      // Determine the total bytes for this component (best-effort; used as
+      // the aggregator weight). Read from the local cached manifest if present;
+      // the actual bytes will be known after the first successful download.
+      let componentBytesTotal = await componentTotalBytes(componentId, in: baseDirectory)
+
+      // Build a per-component progress closure that:
+      //   1. Updates the component's slot in the state box.
+      //   2. Aggregates across all slots via AvailabilityAggregator.
+      //   3. Fires the caller's progress callback with the aggregate.
+      let capturedIndex = index
+      let componentProgress: (@Sendable (AcervoDownloadProgress) -> Void)? = progress.map {
+        outerProgress in
+        let box = stateBox
+        let total = componentBytesTotal
+        return { @Sendable (p: AcervoDownloadProgress) in
+          // Translate per-component AcervoDownloadProgress into a ModelAvailability
+          // state for this component slot.
+          let componentState: ModelAvailability = p.overallProgress >= 1.0
+            ? .available : .downloading(progress: p.overallProgress)
+          box.update(index: capturedIndex, availability: componentState, bytesTotal: total)
+          let aggregate = AvailabilityAggregator.aggregate(box.snapshot())
+          outerProgress(aggregate)
+        }
+      }
+
+      // Mark this component as downloading in the state box before we start,
+      // so that any aggregate snapshot taken before the first progress tick
+      // reflects the fact that work is in flight.
+      stateBox.update(
+        index: index, availability: .downloading(progress: 0.0),
+        bytesTotal: componentBytesTotal)
+      if let progress {
+        progress(AvailabilityAggregator.aggregate(stateBox.snapshot()))
+      }
+
+      // Delegate to the existing repo-keyed ensureAvailable, which handles:
+      //   - Fast-path if already on disk (cached manifest + size check).
+      //   - InFlightDownloads deduplication keyed by modelId.
+      //   - Per-file SHA-256 verification.
+      try await ensureAvailable(
+        componentId,
+        files: files,
+        progress: componentProgress,
+        in: baseDirectory,
+        telemetry: telemetry,
+        session: session
+      )
+
+      // Component finished: mark it as available.
+      let finalBytes = await componentTotalBytes(componentId, in: baseDirectory)
+        ?? componentBytesTotal
+      stateBox.update(index: index, availability: .available, bytesTotal: finalBytes)
+      if let progress {
+        progress(AvailabilityAggregator.aggregate(stateBox.snapshot()))
+      }
+    }
   }
 }
