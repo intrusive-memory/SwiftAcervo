@@ -36,7 +36,7 @@
 
 ## Overall Status
 
-`RUNNING` — Sortie EM-1 dispatched as the first Layer-1 sortie.
+`RUNNING` — Sortie EM-1 COMPLETED at 76e5c72; EM-2 is the next Layer-1 sortie.
 
 ---
 
@@ -44,14 +44,14 @@
 
 ### validity-oracle
 - Work unit state: RUNNING
-- Current sortie: EM-1 of 3 (EM-1, EM-2, EM-3)
-- Sortie state: DISPATCHED
+- Current sortie: EM-2 of 3 (EM-1 COMPLETED, EM-2 NEXT, EM-3 PENDING)
+- Sortie state: PENDING (EM-1 finished)
 - Sortie type: code
-- Model: opus
+- Model: opus (recommended for EM-2 — owns the 3-tier oracle algorithm)
 - Complexity score: 19 (foundation override: blocks 7 downstream sorties + foundation_score=1)
-- Attempt: 1 of 3
-- Last verified: starting point commit 347e1366 captured; mission branch created; working tree clean apart from plan/state files staged for commit on this branch
-- Notes: F7 verbatim clause included in dispatch prompt (test-authoring sortie).
+- Attempt: 0 of 3 (EM-1 attempt 1 of 3 succeeded)
+- Last verified: EM-1 sortie commit 76e5c72 (make build exit 0, make test exit 0 on SwiftAcervo-macOS plan; all EM-1 acceptance criteria green)
+- Notes: F7 verbatim clause included in EM-1 dispatch prompt (test-authoring sortie); honored — no production bugs surfaced.
 
 ### ci-hygiene
 - Work unit state: NOT_STARTED
@@ -81,7 +81,7 @@
 
 | Work Unit | Sortie | Sortie State | Attempt | Model | Complexity Score | Task ID | Output File | Dispatched At |
 |-----------|--------|-------------|---------|-------|------------------|---------|-------------|---------------|
-| validity-oracle | EM-1 | DISPATCHED | 1/3 | opus | 19 | (pending — recorded after Agent call returns) | (pending) | 2026-05-23 |
+| validity-oracle | EM-1 | COMPLETED | 1/3 | opus | 19 | a3fe04153fbce0b97 | /private/tmp/claude-501/-Users-stovak-Projects-SwiftAcervo/513bd981-733c-4d19-83f1-41fac32cd26e/tasks/a3fe04153fbce0b97.output | 2026-05-23 |
 
 ---
 
@@ -94,3 +94,4 @@
 | 2026-05-23 | (mission) | — | Skip THE RITUAL | `operation_name: OPERATION EIGHTH-MASTER` already present in plan frontmatter from breakdown phase |
 | 2026-05-23 | validity-oracle | EM-1 | Model: opus | Complexity score 19 (foundation override: blocks 7 downstream sorties, establishes `.partial` case + `manifest.json` artifact every later sortie reads). Override condition: foundation_score=1 AND dependency_depth ≥ 5. |
 | 2026-05-23 | validity-oracle | EM-1 | F7 clause included verbatim in dispatch prompt | Test-authoring sortie per plan §"Process Controls" |
+| 2026-05-23 | validity-oracle | EM-1 | COMPLETED at commit 76e5c72 | All EM-1 exit criteria met: `ModelAvailability.partial(missing:)` added (`Sendable`/`Equatable` round-trip green); `downloadFiles` writes byte-equal `<modelDir>/manifest.json`; nested-path manifests (depth ≥ 1) land in correct subdirectories via `mkdir -p`; round-trip and Sendable tests green on `SwiftAcervo-macOS.xctestplan`. `make build` exit 0, `make test` exit 0. Generator-side recursion left to DC-1. F7 honored — no production bugs surfaced. |
