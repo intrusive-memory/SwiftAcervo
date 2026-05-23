@@ -1,6 +1,8 @@
 // SlugAvailabilityTests.swift
 // SwiftAcervo
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+SlugAvailability.swift.
+//
 // Sortie 2 of OPERATION QUARTERMASTER TORRENT (slug-registry/S2).
 //
 // Acceptance tests for `Acervo.availability(slug:url:telemetry:)`:
