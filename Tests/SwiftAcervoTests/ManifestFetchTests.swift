@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+ManifestAccess.swift
+
 import Foundation
 import Testing
 
