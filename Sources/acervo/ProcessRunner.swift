@@ -4,16 +4,15 @@ import Foundation
 ///
 /// Historically every command built a `Process`, wired stdout/stderr
 /// through `Pipe()` instances, drained them into `Data`, and discarded
-/// stdout on success — which meant the `hf` and `aws` subprocesses were
-/// running silently with their own progress bars never reaching the
-/// user's terminal.
+/// stdout on success — which meant `hf`'s file-level progress bar never
+/// reached the user's terminal.
 ///
 /// `ProcessRunner.run` changes the default so that, unless the caller
 /// passes `quiet: true`, stdout and stderr are inherited from the parent
-/// process. That lets `hf download`'s file-level progress and
-/// `aws s3 sync`'s transfer progress flow through to the user live. In
-/// quiet mode we preserve the old drain-and-capture behaviour so stderr
-/// is still available for error messages and pipe buffers cannot fill.
+/// process. That lets `hf download`'s progress flow through to the user
+/// live. In quiet mode we preserve the old drain-and-capture behaviour so
+/// stderr is still available for error messages and pipe buffers cannot
+/// fill.
 enum ProcessRunner {
 
   /// Result of a finished subprocess.
@@ -34,7 +33,7 @@ enum ProcessRunner {
   ///   - quiet: When `true`, drain stdout/stderr through pipes and
   ///     capture stderr for error reporting. When `false`, inherit the
   ///     parent's stdout/stderr so subprocess progress bars pass through.
-  /// - Throws: `AcervoToolError.awsProcessFailed` when `Process.run`
+  /// - Throws: `AcervoToolError.subprocessFailed` when `Process.run`
   ///   itself fails to launch the binary.
   static func run(
     executableURL: URL,
@@ -63,10 +62,9 @@ enum ProcessRunner {
         process.standardError = errPipe
       } else {
         // Let the subprocess talk directly to the user's terminal. This is
-        // what makes `hf download` and `aws s3 sync` render their native
-        // progress bars. In non-TTY contexts (CI logs, pipes) the child
-        // will still emit its regular line-oriented output, which is what
-        // we want there too.
+        // what makes `hf download` render its native progress bar. In
+        // non-TTY contexts (CI logs, pipes) the child will still emit its
+        // regular line-oriented output, which is what we want there too.
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
       }
@@ -74,7 +72,7 @@ enum ProcessRunner {
       do {
         try process.run()
       } catch {
-        throw AcervoToolError.awsProcessFailed(
+        throw AcervoToolError.subprocessFailed(
           command: label,
           exitCode: -1,
           stderr: "failed to launch \(label): \(error.localizedDescription)"
@@ -93,7 +91,7 @@ enum ProcessRunner {
       process.waitUntilExit()
       return Result(exitCode: process.terminationStatus, capturedStderr: capturedStderr)
     #else
-      throw AcervoToolError.awsProcessFailed(
+      throw AcervoToolError.subprocessFailed(
         command: label,
         exitCode: -1,
         stderr: "ProcessRunner is only available on macOS"

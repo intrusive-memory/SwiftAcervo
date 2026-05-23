@@ -261,7 +261,7 @@ struct DownloadCommand: AsyncParsableCommand {
           : result.capturedStderr
         let message = "error: hf download exited \(result.exitCode): \(stderrText)\n"
         FileHandle.standardError.write(Data(message.utf8))
-        throw AcervoToolError.awsProcessFailed(
+        throw AcervoToolError.subprocessFailed(
           command: "hf download",
           exitCode: result.exitCode,
           stderr: stderrText

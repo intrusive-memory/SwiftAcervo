@@ -6,57 +6,62 @@ import SwiftAcervo
 /// intrusive-memory CDN in a single atomic pipeline.
 ///
 /// `ship` is the primary day-to-day entry point: it combines the full
-/// `download` pipeline (CHECK 1) with the full `upload` pipeline
-/// (CHECKs 2–6). The staging directory is the bridge between the two
-/// phases and defaults to `$STAGING_DIR/<slug>` or
+/// `download` pipeline (CHECK 0 + CHECK 1) with the full upload pipeline
+/// (CHECKs 2–6 + orphan-prune). The staging directory is the bridge
+/// between the two phases and defaults to `$STAGING_DIR/<slug>` or
 /// `/tmp/acervo-staging/<slug>`.
 ///
-/// **Download phase (CHECK 1)**:
+/// **Download phase (CHECK 0 + CHECK 1)**:
 /// - Shells out to `hf download` into the staging directory.
+/// - Walks the HF tree listing to confirm every advertised file is present
+///   at the expected size (CHECK 0).
 /// - Verifies each downloaded file's SHA-256 against the HuggingFace LFS
-///   API (skipped if `--no-verify` is set).
+///   API (CHECK 1; skipped if `--no-verify` is set).
 ///
-/// **Upload phase (CHECKs 2–6)**:
-/// 1. `ManifestGenerator.generate` — refuses zero-byte files (CHECK 2),
-///    writes manifest, re-reads and verifies checksum (CHECK 3).
-/// 2. `CDNUploader.verifyBeforeUpload` — re-hashes files against the
-///    manifest before spawning any `aws` process (CHECK 4).
-/// 3. `CDNUploader.sync` — mirrors the staging dir to R2.
-/// 4. `CDNUploader.uploadManifest` — copies `manifest.json` to R2.
-/// 5. `CDNUploader.verifyManifestOnCDN` — fetches the CDN manifest and
-///    validates its checksum (CHECK 5).
-/// 6. `CDNUploader.spotCheckFileOnCDN("config.json", ...)` — verifies
-///    at least one file's bytestream matches after replication (CHECK 6).
+/// **Upload phase (CHECKs 2–6 + orphan prune)**:
+/// All CDN-side work is delegated to `Acervo.publishModel(...)`, which
+/// runs the frozen 11-step ship sequence (manifest gen, CHECK 4 re-hash,
+/// existing-key list, file PUTs, manifest-LAST PUT, CHECK 5/6 readback,
+/// orphan prune).
 struct ShipCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "ship",
     abstract: "Download a model from HuggingFace and mirror it to the CDN.",
     discussion: """
-      Runs the full 6-step integrity pipeline in one command:
+      Runs the full integrity pipeline in one command:
 
-        CHECK 1  Download files from HuggingFace and verify each file's SHA-256
-                 against the HuggingFace LFS API. (Skip with --no-verify.)
+        CHECK 0  HF tree completeness — every file the HF API advertises
+                 must be present in staging at the expected size.
+        CHECK 1  HF LFS verify — recompute each downloaded file's SHA-256
+                 and assert it matches the HF LFS API. (Skip with --no-verify.)
         CHECK 2  Refuse to generate a manifest if any file is zero bytes.
         CHECK 3  Re-read manifest.json after writing and verify its checksum.
         CHECK 4  Re-hash every staged file against the manifest before uploading.
         CHECK 5  Fetch manifest.json from the CDN and validate its checksum.
-        CHECK 6  Download config.json from the CDN and verify its SHA-256.
+        CHECK 6  Download config.json (or the first manifest entry) from the
+                 CDN and verify its SHA-256.
+
+      Orphan prune runs by default — CDN keys not referenced by the new
+      manifest are deleted after CHECK 6 passes. Pass `--keep-orphans` to
+      preserve the previous additive-only behavior.
 
       REQUIRED ENVIRONMENT VARIABLES
         HF_TOKEN               HuggingFace token (or pass --token)
         R2_ACCESS_KEY_ID       Cloudflare R2 access key
         R2_SECRET_ACCESS_KEY   Cloudflare R2 secret key
+        R2_ENDPOINT            S3-compatible endpoint URL
+        R2_PUBLIC_URL          Public CDN base URL used for CHECK 5/6
 
       OPTIONAL ENVIRONMENT VARIABLES
         R2_BUCKET              Bucket name (default: intrusive-memory-models)
-        R2_ENDPOINT            S3-compatible endpoint URL
-        R2_PUBLIC_URL          Public CDN base URL used for CHECK 5/6
+        R2_REGION              Region (default: auto)
         STAGING_DIR            Staging root (default: /tmp/acervo-staging)
 
       EXAMPLES
         acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
         acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit config.json tokenizer.json
         acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --no-verify --dry-run
+        acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --keep-orphans
       """
   )
 
@@ -109,16 +114,24 @@ struct ShipCommand: AsyncParsableCommand {
 
   @Flag(
     name: .customLong("dry-run"),
-    help: "Pass --dryrun to aws; no files are transferred."
+    help:
+      "Generate and verify the manifest, then print a 'would upload' summary without contacting the CDN."
   )
   var dryRun: Bool = false
 
   @Flag(
     name: .customLong("force"),
     help:
-      "Pass --exact-timestamps to aws s3 sync. Changes comparison semantics so files with newer local timestamps trigger re-upload. This is NOT a force-upload-everything switch; files whose timestamps match the remote are still skipped."
+      "Reserved flag retained for argv compatibility with the pre-v0.14.x shell-out pipeline. The native publish path always uploads exactly the manifest's file set, so this flag is a no-op today."
   )
   var force: Bool = false
+
+  @Flag(
+    name: .customLong("keep-orphans"),
+    help:
+      "Skip the orphan-prune step. By default, keys on the CDN not referenced by the new manifest are deleted."
+  )
+  var keepOrphans: Bool = false
 
   @OptionGroup var progressOptions: ProgressOptions
 
@@ -131,8 +144,12 @@ struct ShipCommand: AsyncParsableCommand {
       throw ValidationError("Unsupported --source '\(source)'. Only 'hf' is supported.")
     }
 
-    let resolvedBucket = try resolveBucket()
-    let resolvedEndpoint = try resolveEndpoint()
+    // Resolve every required env var up front so we fail fast before
+    // touching disk or the network.
+    let credentials = try CredentialResolver.resolve(
+      bucketOverride: bucket,
+      endpointOverride: endpoint
+    )
 
     let stagingRoot = Self.resolveStagingRoot(override: output)
     let slug = Self.slug(from: modelId)
@@ -143,7 +160,7 @@ struct ShipCommand: AsyncParsableCommand {
       withIntermediateDirectories: true
     )
 
-    // ── DOWNLOAD PHASE (CHECK 1) ──────────────────────────────────────────
+    // ── DOWNLOAD PHASE (CHECK 0 + CHECK 1) ────────────────────────────────
 
     try runHuggingFaceDownload(into: stagingURL)
 
@@ -226,86 +243,48 @@ struct ShipCommand: AsyncParsableCommand {
       )
     }
 
-    // ── UPLOAD PHASE (CHECKs 2–6) ────────────────────────────────────────
+    // ── DRY-RUN SHORT-CIRCUIT (pre-flight only, no PUTs) ─────────────────
+    //
+    // `--dry-run` runs manifest generation locally (so the operator still
+    // gets the CHECK 2 / CHECK 3 signal) and then prints what would be
+    // uploaded without contacting the CDN. Implemented entirely in the CLI
+    // so we do not need to add a `dryRun:` parameter to
+    // `Acervo.publishModel` (REQUIREMENTS §3.1.3 / framework control F5).
 
-    let publicBaseURL = Self.resolvePublicBaseURL()
-
-    // CHECK 2+3: generate manifest, refuse zero-byte files, verify on re-read.
-    let generator = ManifestGenerator(modelId: modelId)
-    let reporterBox = ManifestProgressReporterBox(quiet: progressOptions.quiet)
-    let manifestURL = try await generator.generate(
-      directory: stagingURL,
-      progress: { completed, total in
-        reporterBox.handle(completed: completed, total: total)
-      }
-    )
-    FileHandle.standardOutput.write(
-      Data("manifest written to \(manifestURL.path)\n".utf8)
-    )
-
-    let manifestData = try Data(contentsOf: manifestURL)
-    let manifest = try JSONDecoder().decode(CDNManifest.self, from: manifestData)
-
-    // CHECK 4: re-hash every file against the manifest before spawning aws.
-    let uploader = CDNUploader()
-    let check4Reporter = ProgressReporter(
-      label: "CHECK 4 re-hash: ",
-      total: manifest.files.count,
-      quiet: progressOptions.quiet
-    )
-    try await uploader.verifyBeforeUpload(
-      directory: stagingURL, manifest: manifest, reporter: check4Reporter
-    )
-    FileHandle.standardOutput.write(
-      Data("CHECK 4 passed: all staged files match the manifest.\n".utf8)
-    )
-
-    // Sync files to CDN.
-    try await uploader.sync(
-      localDirectory: stagingURL,
-      slug: slug,
-      bucket: resolvedBucket,
-      endpoint: resolvedEndpoint,
-      dryRun: dryRun,
-      force: force,
-      quiet: progressOptions.quiet
-    )
-
-    // Upload manifest separately after sync completes.
-    try await uploader.uploadManifest(
-      localURL: manifestURL,
-      slug: slug,
-      bucket: resolvedBucket,
-      endpoint: resolvedEndpoint,
-      dryRun: dryRun,
-      quiet: progressOptions.quiet
-    )
-    FileHandle.standardOutput.write(
-      Data("manifest.json uploaded to CDN.\n".utf8)
-    )
-
-    // CHECK 5: verify manifest is fetchable and checksums on CDN.
-    _ = try await uploader.verifyManifestOnCDN(publicBaseURL: publicBaseURL, slug: slug)
-    FileHandle.standardOutput.write(
-      Data("CHECK 5 passed: CDN manifest verified.\n".utf8)
-    )
-
-    // CHECK 6: spot-check config.json on CDN.
-    if let configEntry = manifest.files.first(where: { $0.path == "config.json" }) {
-      try await uploader.spotCheckFileOnCDN(
-        publicBaseURL: publicBaseURL,
-        slug: slug,
-        filename: "config.json",
-        expectedSHA256: configEntry.sha256
+    if dryRun {
+      let generator = ManifestGenerator(modelId: modelId)
+      let reporterBox = ManifestProgressReporterBox(quiet: progressOptions.quiet)
+      let manifestURL = try await generator.generate(
+        directory: stagingURL,
+        progress: { completed, total in
+          reporterBox.handle(completed: completed, total: total)
+        }
       )
+      let manifestData = try Data(contentsOf: manifestURL)
+      let manifest = try JSONDecoder().decode(CDNManifest.self, from: manifestData)
+      let totalBytes = manifest.files.reduce(into: Int64(0)) { $0 += $1.sizeBytes }
       FileHandle.standardOutput.write(
-        Data("CHECK 6 passed: config.json spot-check succeeded.\n".utf8)
+        Data(
+          "dry-run: would upload \(manifest.files.count) files (\(totalBytes) bytes total) to models/\(slug)/ on \(credentials.bucket).\n"
+            .utf8
+        )
       )
-    } else {
-      FileHandle.standardOutput.write(
-        Data("CHECK 6 skipped: config.json not present in manifest.\n".utf8)
-      )
+      return
     }
+
+    // ── UPLOAD PHASE (delegated to Acervo.publishModel) ──────────────────
+
+    let reporter = PublishProgressReporter(
+      quiet: progressOptions.quiet,
+      style: .ship
+    )
+    _ = try await PublishRunner.run(
+      modelId: modelId,
+      directory: stagingURL,
+      credentials: credentials,
+      keepOrphans: keepOrphans,
+      progress: { event in reporter.handle(event) }
+    )
 
     FileHandle.standardOutput.write(
       Data("Ship complete for \(modelId).\n".utf8)
@@ -356,7 +335,7 @@ struct ShipCommand: AsyncParsableCommand {
           : result.capturedStderr
         let message = "error: hf download exited \(result.exitCode): \(stderrText)\n"
         FileHandle.standardError.write(Data(message.utf8))
-        throw AcervoToolError.awsProcessFailed(
+        throw AcervoToolError.subprocessFailed(
           command: "hf download",
           exitCode: result.exitCode,
           stderr: stderrText
@@ -366,22 +345,6 @@ struct ShipCommand: AsyncParsableCommand {
   }
 
   // MARK: - Helpers
-
-  private func resolveBucket() throws -> String {
-    if let bucket { return bucket }
-    if let env = ProcessInfo.processInfo.environment["R2_BUCKET"], !env.isEmpty {
-      return env
-    }
-    throw AcervoToolError.missingEnvironmentVariable("R2_BUCKET")
-  }
-
-  private func resolveEndpoint() throws -> String {
-    if let endpoint { return endpoint }
-    if let env = ProcessInfo.processInfo.environment["R2_ENDPOINT"], !env.isEmpty {
-      return env
-    }
-    throw AcervoToolError.missingEnvironmentVariable("R2_ENDPOINT")
-  }
 
   private static func resolveStagingRoot(override: String?) -> URL {
     if let override, !override.isEmpty {
@@ -395,14 +358,5 @@ struct ShipCommand: AsyncParsableCommand {
 
   private static func slug(from modelId: String) -> String {
     modelId.replacingOccurrences(of: "/", with: "_")
-  }
-
-  private static func resolvePublicBaseURL() -> URL {
-    if let raw = ProcessInfo.processInfo.environment["R2_PUBLIC_URL"],
-      let url = URL(string: raw)
-    {
-      return url
-    }
-    return URL(string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev")!
   }
 }

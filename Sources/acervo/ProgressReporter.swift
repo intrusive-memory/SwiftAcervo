@@ -8,7 +8,7 @@ import Progress
 /// `@OptionGroup var progressOptions: ProgressOptions` in a subcommand adds
 /// a `--quiet` / `-q` flag. Default behaviour is "show progress"; the flag
 /// suppresses both the Swift TUI progress bar and the live passthrough of
-/// subprocess stdio (hf / aws).
+/// subprocess stdio (currently just `hf`).
 struct ProgressOptions: ParsableArguments {
   @Flag(
     name: [.short, .customLong("quiet")],

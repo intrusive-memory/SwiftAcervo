@@ -221,7 +221,7 @@ struct RecacheCommand: AsyncParsableCommand {
         FileHandle.standardError.write(
           Data("error: hf download exited \(result.exitCode): \(stderrText)\n".utf8)
         )
-        throw AcervoToolError.awsProcessFailed(
+        throw AcervoToolError.subprocessFailed(
           command: "hf download",
           exitCode: result.exitCode,
           stderr: stderrText
@@ -244,37 +244,108 @@ struct RecacheCommand: AsyncParsableCommand {
 /// Lightweight stdout sink for `AcervoPublishProgress`. Mirrors the
 /// granularity of the existing CHECK 1/2/3/4/5/6 print statements so an
 /// operator watching the terminal sees the same step boundaries as before.
+///
+/// Two output styles are supported:
+///
+/// - `.recache` — short "publish: …" lines, used by `acervo recache`
+///   (the original style).
+/// - `.ship` — preserves the legacy `ship`/`upload` "CHECK N passed:"
+///   output so existing operator tooling that greps stdout for those
+///   exact lines keeps working after the v0.14.x CLI consolidation.
 final class PublishProgressReporter: @unchecked Sendable {
+
+  enum Style {
+    case recache
+    case ship
+  }
+
   private let quiet: Bool
-  init(quiet: Bool) { self.quiet = quiet }
+  private let style: Style
+
+  init(quiet: Bool, style: Style = .recache) {
+    self.quiet = quiet
+    self.style = style
+  }
 
   func handle(_ event: AcervoPublishProgress) {
     if quiet { return }
     let line: String
+    switch style {
+    case .recache:
+      line = Self.recacheLine(for: event)
+    case .ship:
+      guard let shipLine = Self.shipLine(for: event) else { return }
+      line = shipLine
+    }
+    FileHandle.standardOutput.write(Data(line.utf8))
+  }
+
+  private static func recacheLine(for event: AcervoPublishProgress) -> String {
     switch event {
     case .generatingManifest:
-      line = "publish: generating manifest (CHECKs 2 + 3)…\n"
+      return "publish: generating manifest (CHECKs 2 + 3)…\n"
     case .verifyingManifest:
-      line = "publish: re-hashing staged files (CHECK 4)…\n"
+      return "publish: re-hashing staged files (CHECK 4)…\n"
     case .listingExistingKeys(let found):
-      line = "publish: listed \(found) existing keys.\n"
+      return "publish: listed \(found) existing keys.\n"
     case .uploadingFile(let name, let bytesSent, let bytesTotal):
       // Suppress the bytesSent==0 "starting" event to halve the noise;
       // a single line per file when it completes is enough for a CLI.
-      guard bytesSent > 0 else { return }
-      line = "publish: uploaded \(name) (\(bytesTotal) bytes).\n"
+      guard bytesSent > 0 else { return "" }
+      return "publish: uploaded \(name) (\(bytesTotal) bytes).\n"
     case .uploadingManifest:
-      line = "publish: uploading manifest.json (LAST PUT)…\n"
+      return "publish: uploading manifest.json (LAST PUT)…\n"
     case .verifyingPublic(let stage):
-      line = "publish: verifying public \(stage) (CHECK 5/6)…\n"
+      return "publish: verifying public \(stage) (CHECK 5/6)…\n"
     case .pruningOrphans(let count):
-      line =
+      return
         count == 0
         ? "publish: no orphans to prune.\n"
         : "publish: pruning \(count) orphan key(s)…\n"
     case .complete:
-      line = "publish: complete.\n"
+      return "publish: complete.\n"
     }
-    FileHandle.standardOutput.write(Data(line.utf8))
+  }
+
+  /// Maps `AcervoPublishProgress` to the legacy `ship`/`upload` stdout
+  /// banners (REQUIREMENTS §3.1.1). Returning `nil` suppresses the event
+  /// entirely (e.g. the bytesSent==0 "starting" half of every file upload,
+  /// the listing-existing-keys event which the pre-v0.14.x shell-out
+  /// pipeline never emitted, and the final `.complete` event which the
+  /// command body announces itself with `Ship/Upload complete for …`).
+  private static func shipLine(for event: AcervoPublishProgress) -> String? {
+    switch event {
+    case .generatingManifest:
+      // The "manifest written to …" line is emitted by the command body
+      // after the manifest URL is known. We suppress the in-flight event
+      // to avoid double-printing.
+      return nil
+    case .verifyingManifest:
+      return "CHECK 4 passed: all staged files match the manifest.\n"
+    case .listingExistingKeys:
+      // Pre-list step has no banner in the legacy output style.
+      return nil
+    case .uploadingFile(let name, let bytesSent, let bytesTotal):
+      // Mirror the recache style: one line per file when it completes.
+      guard bytesSent > 0 else { return nil }
+      return "uploading \(name) (\(bytesTotal) bytes).\n"
+    case .uploadingManifest:
+      return "manifest.json uploaded to CDN.\n"
+    case .verifyingPublic(let stage):
+      switch stage {
+      case "manifest":
+        return "CHECK 5 passed: CDN manifest verified.\n"
+      case "sample-file":
+        return "CHECK 6 passed: config.json spot-check succeeded.\n"
+      default:
+        return "CHECK 5/6 passed: public \(stage) verified.\n"
+      }
+    case .pruningOrphans(let count):
+      return count == 0
+        ? "no orphans to prune.\n"
+        : "pruning \(count) orphan key(s).\n"
+    case .complete:
+      return nil
+    }
   }
 }

@@ -1,4 +1,5 @@
 import ArgumentParser
+import CryptoKit
 import Foundation
 import SwiftAcervo
 
@@ -133,12 +134,12 @@ struct VerifyCommand: AsyncParsableCommand {
 
     let publicBase = Self.resolvePublicBaseURL()
 
-    let uploader = CDNUploader()
     let manifest: CDNManifest
     do {
-      manifest = try await uploader.verifyManifestOnCDN(
+      manifest = try await Self.fetchCDNManifest(
         publicBaseURL: publicBase,
-        slug: slug
+        slug: slug,
+        session: .shared
       )
     } catch {
       FileHandle.standardError.write(
@@ -206,5 +207,76 @@ struct VerifyCommand: AsyncParsableCommand {
 
   private static func slug(from modelId: String) -> String {
     modelId.replacingOccurrences(of: "/", with: "_")
+  }
+
+  /// Fetches `<publicBaseURL>/models/<slug>/manifest.json` over plain
+  /// HTTPS, decodes it, and runs `verifyChecksum()` (CHECK 5 readback).
+  ///
+  /// `session` is injectable so smoke tests can drive this against a
+  /// stubbed URLSession instead of the live CDN.
+  static func fetchCDNManifest(
+    publicBaseURL: URL,
+    slug: String,
+    session: URLSession
+  ) async throws -> CDNManifest {
+    let manifestURL =
+      publicBaseURL
+      .appendingPathComponent("models", isDirectory: true)
+      .appendingPathComponent(slug, isDirectory: true)
+      .appendingPathComponent("manifest.json")
+    let request = URLRequest.cacheBypassing(
+      url: manifestURL,
+      cacheBuster: UUID().uuidString
+    )
+    let (data, response) = try await session.data(for: request)
+    guard let http = response as? HTTPURLResponse else {
+      throw AcervoToolError.cdnHTTPStatus(url: manifestURL.absoluteString, statusCode: -1)
+    }
+    guard http.statusCode == 200 else {
+      throw AcervoToolError.cdnHTTPStatus(
+        url: manifestURL.absoluteString, statusCode: http.statusCode)
+    }
+    let manifest = try JSONDecoder().decode(CDNManifest.self, from: data)
+    guard manifest.verifyChecksum() else {
+      throw AcervoToolError.cdnManifestChecksumInvalid(url: manifestURL.absoluteString)
+    }
+    return manifest
+  }
+
+  /// Spot-checks a single file on the CDN by SHA-256 (CHECK 6 readback).
+  static func spotCheckCDNFile(
+    publicBaseURL: URL,
+    slug: String,
+    filename: String,
+    expectedSHA256: String,
+    session: URLSession
+  ) async throws {
+    let fileURL =
+      publicBaseURL
+      .appendingPathComponent("models", isDirectory: true)
+      .appendingPathComponent(slug, isDirectory: true)
+      .appendingPathComponent(filename)
+    let request = URLRequest.cacheBypassing(
+      url: fileURL,
+      cacheBuster: expectedSHA256
+    )
+    let (data, response) = try await session.data(for: request)
+    guard let http = response as? HTTPURLResponse else {
+      throw AcervoToolError.cdnHTTPStatus(url: fileURL.absoluteString, statusCode: -1)
+    }
+    guard http.statusCode == 200 else {
+      throw AcervoToolError.cdnHTTPStatus(
+        url: fileURL.absoluteString, statusCode: http.statusCode)
+    }
+    let actual = Self.sha256Hex(of: data)
+    guard actual == expectedSHA256 else {
+      throw AcervoToolError.cdnChecksumMismatch(
+        filename: filename, expected: expectedSHA256, actual: actual)
+    }
+  }
+
+  private static func sha256Hex(of data: Data) -> String {
+    let digest = SHA256.hash(data: data)
+    return digest.map { String(format: "%02x", $0) }.joined()
   }
 }
