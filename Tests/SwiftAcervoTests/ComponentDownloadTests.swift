@@ -1,6 +1,8 @@
 // ComponentDownloadTests.swift
 // SwiftAcervoTests
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentDownloads.swift (basic download cases).
+//
 // Tests for registry-aware download and deletion API:
 // Acervo.downloadComponent, ensureComponentReady,
 // ensureComponentsReady, and deleteComponent.

@@ -1,6 +1,8 @@
 // ComponentIntegrationTests.swift
 // SwiftAcervoTests
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentDownloads.swift (full integration paths).
+//
 // Full lifecycle integration tests for the Component Registry v2 API.
 // Covers register -> download-simulate -> access -> verify -> delete -> unregister.
 // Also includes backward compatibility tests verifying v1 API unchanged.
