@@ -43,30 +43,26 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 
 ## Overall Status
 
-`RUNNING` — S1 (Acervo+ManifestAccess.swift extraction) dispatching as the first Layer-1 sortie.
+`RUNNING` — S1 COMPLETED (commit 5428627); S2 PENDING.
 
 ---
 
 ## Per-Work-Unit State
 
 ### acervo-decomposition
-- Work unit state: RUNNING
-- Current sortie: S1 of 15
-- Sortie state: DISPATCHED
-- Sortie type: code (mechanical cut-paste + companion test header comment + build/test gate)
-- Model: haiku (S1 is leaf-only, smallest extraction, validates the template; ~58 LOC move, no test changes beyond a header comment)
-- Complexity score: 4 (task complexity 3, foundation 1 for validating the template, risk 0, type modifier 0)
-- Attempt: 1 of 3
-- Last verified: starting point `492d54f` inherited from eighth-master tip; worktree clean apart from this state file + frontmatter update staged for the launch commit.
-- Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor will capture the pre-S1 snapshot from the launch commit as the baseline.
+- Work unit state: RUNNING (S1 COMPLETED; S2–S15 queued)
+- Current sortie: S2 of 15 (PENDING)
+- Last completed: S1 — sortie state COMPLETED at commit 5428627
+- S1 summary: Extracted `Acervo+ManifestAccess.swift` (65 lines, 4 fetchManifest overloads). Acervo.swift reduced from 2777 to 2718 lines (59-line delta, matches plan estimate). All builds + tests + shape gate pass. ManifestFetchTests.swift marked with source-of-record comment.
+- Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor captured the pre-S1 snapshot at launch commit 492d54f as the baseline.
 
 ---
 
-## Active Agents
+## Completed Sorties
 
-| Sortie | Sortie State | Attempt | Model | Complexity | Task ID | Output File | Dispatched At |
-|--------|-------------|---------|-------|------------|---------|-------------|---------------|
-| S1 | DISPATCHED | 1/3 | haiku | 4 | (pending — recorded after Agent call returns) | (pending) | 2026-05-23 |
+| Sortie | Sortie State | Attempt | Commit SHA | Completed At | build/test/shape-gate |
+|--------|-------------|---------|-----------|--------------|----------------------|
+| S1 | COMPLETED | 1/3 | 5428627 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 
 ---
 
@@ -79,6 +75,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 | 2026-05-23 | (mission) | Worktree created at /Users/stovak/Projects/SwiftAcervo-decomp | Isolation from concurrently-running EIGHTH-MASTER DC-2a upload in primary checkout |
 | 2026-05-23 | (mission) | THE RITUAL: OPERATION DRAWER DIVIDERS | Inline name (one big drawer → labeled compartments); user can rename via /mission-supervisor name-feature regenerate later |
 | 2026-05-23 | S1 | Model: haiku | Complexity score 4 — smallest extraction (4 fetchManifest overloads, ~58 LOC, leaf, zero internal callers from siblings, pure facade over AcervoDownloader). Haiku is the right tool to validate the extraction template before larger sorties. |
+| 2026-05-23 | S1 | COMPLETED at commit 5428627 | Template validation successful. Created Acervo+ManifestAccess.swift (65 lines). Acervo.swift reduced from 2777→2718 lines. All exit criteria met: make build/test/test-plan-shape pass; grep fetchManifest empty in Acervo.swift; test file header comment added. Ready for S2 dispatch. |
 
 ---
 
