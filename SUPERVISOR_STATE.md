@@ -43,16 +43,33 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 
 ## Overall Status
 
-`RUNNING` — S14 COMPLETED (commit 37c5be9); S15 PENDING.
+`COMPLETED` — All 15 sorties COMPLETED. Mission HEAD: b20af9b (doc update) + state update.
 
 ---
 
 ## Per-Work-Unit State
 
 ### acervo-decomposition
-- Work unit state: RUNNING (S1–S14 COMPLETED; S15 queued)
-- Current sortie: S15 of 15 (PENDING)
-- Last completed: S14 — sortie state COMPLETED at commit 37c5be9
+- Work unit state: COMPLETED (S1–S15 COMPLETED)
+- Current sortie: S15 of 15 (COMPLETED)
+- Last completed: S15 — sortie state COMPLETED at commit b20af9b (doc update); state commit follows
+
+#### Mission Summary
+
+| Metric | Value |
+|--------|-------|
+| Total commits (S1–S15) | 20 commits across 15 sorties |
+| Starting Acervo.swift LOC | 2777 |
+| Final Acervo.swift LOC | 51 |
+| Reduction | 2726 lines removed (98.2% reduction) |
+| Acervo+*.swift file count | 15 (14 new + 1 pre-existing Acervo+CDNMutation.swift) |
+| Total Acervo+*.swift LOC | 3452 lines across 15 files |
+| Public-API signature delta | EMPTY — zero symbols renamed or dropped |
+| make build exit code | 0 |
+| make test exit code | 0 |
+| make test-plan-shape exit code | 0 |
+| Docs/PROJECT_STRUCTURE.md | Updated — directory tree + Core API section reflect new file layout |
+| Docs/API_REFERENCE.md | Skipped — no line-number references to Acervo.swift found |
 - S1 summary: Extracted `Acervo+ManifestAccess.swift` (65 lines, 4 fetchManifest overloads). Acervo.swift reduced from 2777 to 2718 lines (59-line delta, matches plan estimate). All builds + tests + shape gate pass. ManifestFetchTests.swift marked with source-of-record comment.
 - S2 summary: Extracted `Acervo+PathResolution.swift` (235 lines, 6 public symbols + 3 internal helpers). Acervo.swift reduced from 2718 to 2490 lines (228-line delta, within 2475-2510 estimate). import Security moved to new file. AcervoManager.swift untouched. All builds + tests + shape gate pass. AcervoPathTests.swift marked with source-of-record comment.
 - S3 summary: Extracted `Acervo+ComponentIntegrity.swift` (107 lines, 2 public symbols + 2 internal baseDirectory overloads). Acervo.swift reduced from 2490 to 2387 lines (103-line delta, within 2380–2400 estimate). IntegrityVerification.swift untouched. All builds + tests + shape gate pass. IntegrityVerificationTests.swift marked with source-of-record comment.
@@ -89,6 +106,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 | S12 | COMPLETED | 1/3 | c9a3320 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S13 | COMPLETED | 1/3 | e9a1657 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S14 | COMPLETED | 1/3 | 37c5be9 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
+| S15 | COMPLETED | 1/3 | b20af9b + state commit | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 
 ---
 
@@ -132,3 +150,5 @@ This mission (DRAWER DIVIDERS) and EIGHTH-MASTER do not share source files (deco
 | 2026-05-23 | S13 | ComponentStateBox promoted from inside-function to file-scope | Original location was a `final class` declared INSIDE the function body. To move into a sibling file cleanly (and reduce nesting noise), it was promoted to file-scope with `private` visibility. Behaviorally identical; same NSLock-guarded state vector consumed only by the slug-keyed ensureAvailable. |
 | 2026-05-23 | S13 | COMPLETED at commit e9a1657 | Acervo.swift 710→362 (−348). Created Acervo+EnsureAvailable.swift (377 lines, 2 MARK subsections). Both ensureAvailable overloads + ComponentStateBox moved cleanly. Cross-file reachability of S12's internal helpers (isOrgRepoSlug/componentTotalBytes/fetchSlugManifest) confirmed by build success. All gates green. S14 PENDING. |
 | 2026-05-23 | S14 | COMPLETED at commit 37c5be9 | Acervo.swift 362→51 (−311). Created Acervo+ComponentDownloads.swift (331 lines, 2 MARK subsections: Downloads + Deletion). MILESTONE: Acervo.swift is now the pure enum shell (51 lines). Symbols moved: downloadComponent×2, ensureComponentReady×2, ensureComponentsReady×2, deleteComponent×2 (all public + internal test-seam overloads). Companion headers added to ComponentDownloadTests.swift, DownloadComponentAutoHydrationTests.swift, ComponentIntegrationTests.swift. All gates green (70 XCTest). S15 PENDING (closure). |
+| 2026-05-23 | S15 | COMPLETED at commit b20af9b | Closure sortie. Verified Acervo.swift = 51 lines (enum shell only: version, offlineModeEnvironmentVariable, isOfflineModeActive). 15 Acervo+*.swift files confirmed (14 new + Acervo+CDNMutation.swift pre-existing); total 3452 lines. Public-API signature delta: EMPTY (zero symbols renamed/dropped). Updated Docs/PROJECT_STRUCTURE.md: directory tree + Core API section now lists all 15 Acervo+*.swift files with one-sentence concern descriptions. API_REFERENCE.md: no line-number references found, skipped. Final gates: make build ✓ / make test ✓ / make test-plan-shape ✓. |
+| 2026-05-23 | (mission) | **OPERATION DRAWER DIVIDERS — MISSION COMPLETED** | All 15 sorties COMPLETED. Acervo.swift reduced 2777→51 lines (98.2%). 14 new Acervo+*.swift extension files. Zero public-API drift. All CI gates green at mission HEAD. |
