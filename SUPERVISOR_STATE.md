@@ -36,7 +36,7 @@
 
 ## Overall Status
 
-`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit COMPLETED (CIH-1 at e42f7d8, CIH-2 at TBD-CIH2); deferred-cleanup work unit eligible to start (DC-1 PENDING).
+`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit COMPLETED (CIH-1 at e42f7d8, CIH-2 at 5551df2); deferred-cleanup work unit eligible to start (DC-1 PENDING).
 
 ---
 
@@ -54,7 +54,7 @@
 - Notes: F7 verbatim clause included in EM-3 dispatch prompt (test-authoring sortie); honored — no production bugs surfaced. listModels() now accepts config.json OR model_index.json OR manifest.json as validity markers. gcEmptyModelDirectories() is destructive-only-for-stubs, safe against real model directories. AcervoManager does not expose a localModels() surface so no parallel GC method added there.
 
 ### ci-hygiene
-- Work unit state: COMPLETED (CIH-1 COMPLETED at e42f7d8, CIH-2 COMPLETED at TBD-CIH2)
+- Work unit state: COMPLETED (CIH-1 COMPLETED at e42f7d8, CIH-2 COMPLETED at 5551df2)
 - Current sortie: CIH-2 of 2 (CIH-1 COMPLETED, CIH-2 COMPLETED)
 - Sortie state: COMPLETED
 - Sortie type: read-only audit (CIH-1), mechanical fixes (CIH-2)
