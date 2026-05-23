@@ -497,6 +497,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         case .available: return true
         case .downloading: return true
         case .notAvailable: return false  // should never happen for a pre-materialized component
+        case .partial: return false  // EM-1: also never expected for a pre-materialized component
         }
       }
       #expect(allValid, "All callback states should be .available or .downloading; got \(receivedStates)")

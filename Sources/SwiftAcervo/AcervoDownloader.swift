@@ -230,6 +230,30 @@ extension AcervoDownloader {
     session: URLSession = SecureDownloadSession.shared,
     telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws -> CDNManifest {
+    let (manifest, _) = try await downloadManifestWithBytes(
+      for: modelId,
+      session: session,
+      telemetry: telemetry
+    )
+    return manifest
+  }
+
+  /// Same contract as `downloadManifest(for:session:telemetry:)`, but also
+  /// returns the *raw wire bytes* that decoded into the validated manifest.
+  ///
+  /// EM-1 (validity-oracle/manifest-persistence) introduced this variant so
+  /// `downloadFiles` can persist the byte-equal CDN manifest to
+  /// `<model-dir>/manifest.json` after a successful download. Returning the
+  /// decoded `CDNManifest` *and* the bytes side-by-side is the only way to
+  /// honor REQUIREMENTS §2's "the local file must be byte-equal to the CDN
+  /// manifest" invariant — round-tripping through `JSONEncoder` is not
+  /// guaranteed to reproduce the wire bytes (key order, formatting, optional
+  /// field omission, etc. all differ across producers).
+  static func downloadManifestWithBytes(
+    for modelId: String,
+    session: URLSession = SecureDownloadSession.shared,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+  ) async throws -> (CDNManifest, Data) {
     // Refuse the fetch up front when offline mode is active. This must run
     // BEFORE any URLSession call so callers can rely on the gate to keep the
     // process completely offline (no DNS, no socket, no proxy).
@@ -385,7 +409,7 @@ extension AcervoDownloader {
       )
     }
 
-    return manifest
+    return (manifest, data)
   }
 }
 
@@ -396,7 +420,21 @@ extension AcervoDownloader {
   /// Filename for the locally-cached copy of the CDN manifest, stored at the
   /// root of each model's directory. Hidden (leading dot) to keep it from
   /// appearing in casual listings, but otherwise a regular file.
+  ///
+  /// EM-1 retains this hidden filename for the legacy self-validating
+  /// re-encoded cache. The byte-equal CDN manifest is written separately to
+  /// `manifestFilename` (visible `manifest.json`) — see
+  /// `persistManifestBytes(_:slug:in:)`.
   static let cachedManifestFilename = ".acervo-manifest.json"
+
+  /// Filename for the byte-equal copy of the CDN manifest, stored at the
+  /// root of each model's directory.
+  ///
+  /// REQUIREMENTS §2 invariant: this file MUST be byte-equal to the CDN
+  /// manifest the model came from. The validity oracle (EM-2) reads this
+  /// file as the source of truth for which files the model declares.
+  /// Consumers can also read it directly with any JSON decoder.
+  static let manifestFilename = "manifest.json"
 
   /// Persists a validated `CDNManifest` to disk inside the model's directory.
   ///
@@ -423,6 +461,44 @@ extension AcervoDownloader {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     let data = try encoder.encode(manifest)
+    try data.write(to: url, options: [.atomic])
+  }
+
+  /// Persists the raw CDN manifest bytes to `<model-dir>/manifest.json`
+  /// atomically.
+  ///
+  /// REQUIREMENTS §2 invariant: the bytes on disk MUST be byte-equal to the
+  /// bytes received from the CDN. Round-tripping through `JSONEncoder` is
+  /// NOT acceptable because key order, optional-field omission, and
+  /// number-formatting all vary across producers; the only way to honor
+  /// byte-equality is to write the exact bytes we read off the wire.
+  ///
+  /// The write is atomic (`Data.write(to:options: [.atomic])` which uses
+  /// `NSData`'s temp-file-plus-rename under the hood — POSIX `rename(2)`
+  /// guarantees the destination either points at the old file or the new
+  /// file with no in-between state). The parent directory is created
+  /// with `mkdir -p` semantics.
+  ///
+  /// - Parameters:
+  ///   - data: The raw CDN manifest bytes, as returned by
+  ///     `downloadManifestWithBytes`. Caller is expected to have already
+  ///     validated the decoded manifest via that helper.
+  ///   - slug: The filesystem slug for the model (e.g., `org_repo`). This
+  ///     MUST be the manifest's own `slug` field — the helper takes it as
+  ///     an explicit parameter rather than re-deriving from `data` so the
+  ///     caller's intent (which slug should own these bytes) is explicit
+  ///     and auditable.
+  ///   - baseDirectory: The shared-models base directory. The manifest is
+  ///     written to `{baseDirectory}/{slug}/manifest.json`.
+  /// - Throws: Directory creation or atomic-write failures.
+  static func persistManifestBytes(
+    _ data: Data,
+    slug: String,
+    in baseDirectory: URL
+  ) throws {
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    try ensureDirectory(at: modelDir)
+    let url = modelDir.appendingPathComponent(manifestFilename)
     try data.write(to: url, options: [.atomic])
   }
 
@@ -1183,8 +1259,15 @@ extension AcervoDownloader {
     session: URLSession = SecureDownloadSession.shared,
     telemetry: (any AcervoTelemetryReporter)? = nil
   ) async throws {
-    // Step 1: Fetch and validate the manifest
-    let manifest = try await downloadManifest(for: modelId, session: session, telemetry: telemetry)
+    // Step 1: Fetch and validate the manifest. We capture the raw bytes
+    // here so we can persist the byte-equal CDN manifest to
+    // `<model-dir>/manifest.json` at the end of the run (REQUIREMENTS §2
+    // invariant — see `persistManifestBytes` doc-comment).
+    let (manifest, manifestBytes) = try await downloadManifestWithBytes(
+      for: modelId,
+      session: session,
+      telemetry: telemetry
+    )
 
     // Step 2: Determine which files to download
     let filesToDownload: [CDNManifestFile]
@@ -1462,6 +1545,23 @@ extension AcervoDownloader {
     } catch {
       logger.warning(
         "Failed to persist cached manifest for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
+    }
+
+    // EM-1: also persist the byte-equal CDN manifest to
+    // `<model-dir>/manifest.json`. REQUIREMENTS §2 invariant — the local
+    // file MUST be byte-equal to the wire bytes. This is the on-disk
+    // artifact the validity oracle (EM-2) consults. Best-effort: same
+    // rationale as the legacy `.acervo-manifest.json` write above.
+    do {
+      try persistManifestBytes(
+        manifestBytes,
+        slug: manifest.slug,
+        in: manifestBaseDirectory
+      )
+    } catch {
+      logger.warning(
+        "Failed to persist byte-equal manifest for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
     }
 

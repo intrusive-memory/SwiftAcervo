@@ -2322,6 +2322,7 @@ extension Acervo {
       case .available: resultLabel = "available"
       case .notAvailable: resultLabel = "notAvailable"
       case .downloading(let p): resultLabel = "downloading(\(p))"
+      case .partial(let missing): resultLabel = "partial(missing: \(missing.count))"
       }
       await telemetry.capture(
         .modelAvailabilityResolved(

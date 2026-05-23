@@ -109,6 +109,13 @@ enum AvailabilityAggregator {
         value = 1.0
       case .downloading(let p):
         value = p
+      case .partial:
+        // EM-1: a `.partial` component contributes the same as
+        // `.notAvailable` to a weighted-average download progress — the
+        // missing-shard state is "needs re-download", not "in flight". EM-2
+        // owns the slug-level surface for `.partial`; the aggregator stays
+        // backward-compatible until then.
+        value = 0.0
       }
       numerator += value * weight
       denominator += weight
@@ -124,6 +131,7 @@ enum AvailabilityAggregator {
         case .notAvailable: fallback += 0.0
         case .available: fallback += 1.0
         case .downloading(let p): fallback += p
+        case .partial: fallback += 0.0
         }
       }
       return .downloading(progress: clamped(fallback / count))
