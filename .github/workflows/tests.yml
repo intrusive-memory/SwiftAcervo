@@ -50,6 +50,13 @@ jobs:
             -scheme SwiftAcervo \
             -destination 'platform=macOS,arch=arm64'
 
+      # Shape gate: assert no test class except StreamingPerformanceTests appears
+      # in skippedTests on the CI test plans. Prevents accidental perf-gating
+      # of correctness tests. Runs before the test step so failures are surfaced
+      # early without burning a full build+test cycle.
+      - name: Validate test plan shape
+        run: make test-plan-shape
+
       # ACERVO_APP_GROUP_ID is supplied by the SwiftAcervo-macOS test plan
       # under .swiftpm/xcode/xcshareddata/xctestplans/. The macOS plan
       # bundles SwiftAcervoTests + AcervoToolTests; the iOS plan bundles

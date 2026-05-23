@@ -47,6 +47,8 @@ _(none right now)_
 | SwiftAcervo telemetry/instrumentation | `Docs/REQUIREMENTS-instrumentation.md` (status: draft) | Yes; P3 priority. Becomes its own mission when prioritized |
 | Bit-rot detection (file matches size, SHA differs) | EIGHTH-MASTER 01 §1.4 (out of scope) | Follow-up after EIGHTH-MASTER ships |
 | Auto-remediation of `.partial` model state | EIGHTH-MASTER 01 §1.4 (out of scope) | Consumer-side; tracked from consumer libraries (Vinetas, SwiftBruja) |
+| Populate SwiftAcervo-Performance.xctestplan with real perf measurements — CIH-2 created the plan as scaffolding (all 63 correctness suites in `skippedTests`; no perf tests exist yet). A future mission must add a `StreamingPerformanceTests` class (or equivalent), register it in the plan's `selectedTests`, and remove it from `skippedTests`. Origin: `StreamingPerformanceTests` was anticipated by the parked QUARTERMASTER-02 / CSR-* chunked-streaming rebuild mission; see revival conditions in the Parked section. | `Docs/incomplete/eighth-master-01/` (CIH-2 deliverable) | Yes; activate when the CSR-* mission is revived (new mission name required per parked plan revival conditions) |
+| Add `StreamingPerformanceTests` source class before referencing it in SwiftAcervo-Performance.xctestplan — CIH-2's perf plan scaffolding could not use `selectedTests: ["StreamingPerformanceTests"]` because the class does not exist in source (it was expected from the parked CSR mission). The plan instead skips all 63 correctness suites. Once the class is added, update the plan's `selectedTests` and clear `skippedTests`. | `Docs/incomplete/eighth-master-01/` (CIH-2 PARTIAL finding) | Yes; prerequisite for the CSR-* revival mission |
 
 ## Closed
 
