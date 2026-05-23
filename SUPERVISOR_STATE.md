@@ -43,20 +43,21 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 
 ## Overall Status
 
-`RUNNING` — S3 COMPLETED (commit 8f89f5b); S4 PENDING.
+`RUNNING` — S4 COMPLETED (commit 85aa60f); S5 PENDING. **Canonical state file location reconciled at b3f09b4** (S4's agent had written its state update to a duplicate at `Docs/incomplete/acervo-decomposition-01/SUPERVISOR_STATE.md` instead of this worktree-root file; duplicate deleted, this file is again the single source of truth).
 
 ---
 
 ## Per-Work-Unit State
 
 ### acervo-decomposition
-- Work unit state: RUNNING (S1–S3 COMPLETED; S4–S15 queued)
-- Current sortie: S4 of 15 (PENDING)
-- Last completed: S3 — sortie state COMPLETED at commit 8f89f5b
+- Work unit state: RUNNING (S1–S4 COMPLETED; S5–S15 queued)
+- Current sortie: S5 of 15 (PENDING)
+- Last completed: S4 — sortie state COMPLETED at commit 85aa60f
 - S1 summary: Extracted `Acervo+ManifestAccess.swift` (65 lines, 4 fetchManifest overloads). Acervo.swift reduced from 2777 to 2718 lines (59-line delta, matches plan estimate). All builds + tests + shape gate pass. ManifestFetchTests.swift marked with source-of-record comment.
 - S2 summary: Extracted `Acervo+PathResolution.swift` (235 lines, 6 public symbols + 3 internal helpers). Acervo.swift reduced from 2718 to 2490 lines (228-line delta, within 2475-2510 estimate). import Security moved to new file. AcervoManager.swift untouched. All builds + tests + shape gate pass. AcervoPathTests.swift marked with source-of-record comment.
 - S3 summary: Extracted `Acervo+ComponentIntegrity.swift` (107 lines, 2 public symbols + 2 internal baseDirectory overloads). Acervo.swift reduced from 2490 to 2387 lines (103-line delta, within 2380–2400 estimate). IntegrityVerification.swift untouched. All builds + tests + shape gate pass. IntegrityVerificationTests.swift marked with source-of-record comment.
-- Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor captured the pre-S1 snapshot at launch commit 492d54f as the baseline.
+- S4 summary: Extracted `Acervo+ComponentRegistration.swift` (58 lines, 3 public symbols: register×2 + unregister). Acervo.swift reduced from 2387 to 2333 lines (54-line delta, within estimate). ComponentRegistry.swift untouched. All builds + tests + shape gate pass. ComponentRegistryTests.swift header names both source files (facade + actor).
+- Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor captured the pre-S1 snapshot at launch commit 492d54f as the baseline. **State-file location lesson**: every future sortie dispatch must explicitly name the canonical state file path (`/Users/stovak/Projects/SwiftAcervo-decomp/SUPERVISOR_STATE.md`, worktree root) to prevent agents from inventing duplicates.
 
 ---
 
@@ -67,6 +68,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 | S1 | COMPLETED | 1/3 | 5428627 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S2 | COMPLETED | 1/3 | 8e7e7c8 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S3 | COMPLETED | 1/3 | 8f89f5b | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
+| S4 | COMPLETED | 1/3 | 85aa60f | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 
 ---
 
@@ -93,3 +95,8 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 - DC-3: PENDING (final test-hygiene cleanup)
 
 This mission (DRAWER DIVIDERS) and EIGHTH-MASTER do not share source files (decomp touches `Sources/SwiftAcervo/Acervo*.swift` + `Tests/SwiftAcervoTests/*`; remaining EIGHTH-MASTER work touches `Docs/`, `dc2-specs/`, `DC2_UPLOAD_LOG.md`, and `Tests/AcervoToolTests/*` for DC-3). Disjoint. Each worktree has its own SUPERVISOR_STATE.md.
+| 2026-05-23 | S3 | Model: haiku | Complexity score 4 — small leaf extraction (~100 LOC, verifyComponent + verifyAllComponents, delegates to IntegrityVerification sibling). |
+| 2026-05-23 | S3 | COMPLETED at commit 8f89f5b | Acervo.swift 2490→2387 (−103). IntegrityVerification.swift byte-identical. Tests + shape gate green. |
+| 2026-05-23 | S4 | Model: haiku | Complexity score 2 — smallest extraction in the mission (~55 LOC, 3-method facade over ComponentRegistry actor). |
+| 2026-05-23 | S4 | COMPLETED at commit 85aa60f | Acervo.swift 2387→2333 (−54). ComponentRegistry.swift byte-identical. Tests + shape gate green. Test file header names BOTH source files (facade + actor) since the test exercises both. |
+| 2026-05-23 | (supervisor) | State-file location reconciled at b3f09b4 reverted/cleanup | S4 agent wrote its state update to a NEW duplicate at `Docs/incomplete/acervo-decomposition-01/SUPERVISOR_STATE.md` (wrong path) instead of this canonical worktree-root file. Supervisor: (a) folded S4's data into this file, (b) deleted the duplicate, (c) future sortie dispatches will name the canonical path explicitly to prevent recurrence. |
