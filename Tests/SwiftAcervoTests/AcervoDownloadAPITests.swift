@@ -308,7 +308,9 @@ struct AcervoDownloadAPITests {
 
     // Loose check sees config.json.
     #expect(Acervo.isModelConfigPresent(modelId, in: tempBase))
-    // Strict check still returns false: no .acervo-manifest.json was written.
+    // Strict check returns false: no manifest was written. (The strict
+    // `isModelAvailable` helper is cached-manifest-only by design; the
+    // consumer-facing `availability(_:)` is more lenient via Tier C.)
     #expect(!Acervo.isModelAvailable(modelId, in: tempBase))
   }
 

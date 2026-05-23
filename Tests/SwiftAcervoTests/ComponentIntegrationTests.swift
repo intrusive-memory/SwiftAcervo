@@ -357,7 +357,9 @@ struct ComponentIntegrationTests {
 
     // Loose check (config.json only, no manifest) returns true.
     #expect(Acervo.isModelConfigPresent("test-org/exists", in: tempDir) == true)
-    // Strict check returns false: no manifest is cached.
+    // Strict `isModelAvailable` is cached-manifest-only by design (no
+    // manifest persisted → false). The consumer-facing `availability(_:)`
+    // is more lenient via Tier C; see EM2ValidityOracleTests.
     #expect(Acervo.isModelAvailable("test-org/exists", in: tempDir) == false)
   }
 

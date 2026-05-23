@@ -128,8 +128,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       #expect(result == .available)
     }
 
-    @Test("availability returns .notAvailable when a shard size mismatches")
-    func availability_returnsNotAvailable_whenShardSizeMismatched() async throws {
+    @Test("availability returns .partial(missing:) when a shard size mismatches (EM-2)")
+    func availability_returnsPartial_whenShardSizeMismatched() async throws {
       let tempBase = try makeTempBase()
       defer { removeTempBase(tempBase) }
 
@@ -154,26 +154,32 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         ]
       )
 
+      // EM-2: with an authoritative manifest in scope, a size mismatch is
+      // reported as `.partial(missing:)` (not `.notAvailable`). The consumer
+      // should re-download the affected shard.
       let result = await Acervo.availability(modelId, in: tempBase)
-      #expect(result == .notAvailable)
+      #expect(result == .partial(missing: ["weights.safetensors"]))
     }
 
-    @Test("availability returns .notAvailable when manifest is absent")
-    func availability_returnsNotAvailable_whenManifestAbsent() async throws {
+    @Test("availability returns .available via Tier C when manifest is absent but root marker + no shard index (EM-2)")
+    func availability_returnsAvailableViaTierC_whenManifestAbsent() async throws {
       let tempBase = try makeTempBase()
       defer { removeTempBase(tempBase) }
 
       let modelId = "test-org/no-manifest-3state"
       let modelDir = tempBase.appendingPathComponent(Acervo.slugify(modelId))
       try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-      // Write files but NO .acervo-manifest.json.
+      // Write files but NO manifest.json / .acervo-manifest.json. With no
+      // `model.safetensors.index.json` to enumerate, Tier C's last-resort
+      // heuristic accepts config.json as the root marker and reports
+      // `.available`. This is the EM-2 false-negative fix.
       try Data("{}".utf8).write(to: modelDir.appendingPathComponent("config.json"))
       try Data(repeating: 0x42, count: 1024).write(
         to: modelDir.appendingPathComponent("weights.safetensors")
       )
 
       let result = await Acervo.availability(modelId, in: tempBase)
-      #expect(result == .notAvailable)
+      #expect(result == .available)
     }
 
     @Test("availability performs zero network I/O regardless of return value")

@@ -106,8 +106,11 @@ struct AcervoAvailabilityTests {
     try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
     try Data("{}".utf8).write(to: modelDir.appendingPathComponent("config.json"))
 
-    // config.json present but no .acervo-manifest.json — strict check must
-    // return false.
+    // config.json present but no manifest — the strict `isModelAvailable`
+    // check is intentionally cached-manifest-only (Tier A) so the
+    // `ensureAvailable` fast-path does not short-circuit retries after a
+    // partial download. The consumer-facing `availability(_:)` is more
+    // lenient via the Tier-C heuristic; see EM2ValidityOracleTests.
     #expect(Acervo.isModelAvailable(modelId, in: tempBase) == false)
   }
 
@@ -208,6 +211,11 @@ struct AcervoAvailabilityTests {
       to: modelDir.appendingPathComponent("weights.safetensors")
     )
 
+    // The strict `isModelAvailable` helper is cached-manifest-only by
+    // design: a `config.json`-only model is `false` here so the
+    // `ensureAvailable` fast-path does not skip retries. The
+    // consumer-facing `availability(_:)` returns `.available` in this
+    // shape via Tier C; see EM2ValidityOracleTests.
     #expect(Acervo.isModelAvailable(modelId, in: tempBase) == false)
   }
 

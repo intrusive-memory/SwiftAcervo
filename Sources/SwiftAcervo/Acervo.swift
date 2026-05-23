@@ -981,30 +981,42 @@ extension Acervo {
   /// Strict, manifest-driven availability check against a custom base
   /// directory.
   ///
-  /// Internal overload used by tests and by `ensureAvailable(_:in:)`.
-  /// Mirrors the contract of the public `isModelAvailable(_:)` exactly:
+  /// Internal overload used by tests and by `ensureAvailable(_:in:)`. As
+  /// of EM-2 this is intentionally kept STRICTER than the
+  /// consumer-facing `availability(_:)` oracle: only Tier A (the EM-1
+  /// byte-equal `<modelDir>/manifest.json`, with the legacy
+  /// `.acervo-manifest.json` self-validating cache as a transitional
+  /// fallback) is consulted. The Tier-C heuristic is deliberately NOT
+  /// used here because it can flip `ensureAvailable`'s fast-path
+  /// short-circuit on for a model that just had a partial download
+  /// failure — the consumer expects the retry to try downloading again,
+  /// not to silently accept a `config.json`-only stub as "available".
   ///
-  /// - Loads the cached manifest at
-  ///   `{baseDirectory}/{slug}/.acervo-manifest.json` and verifies its
-  ///   self-checksum. Returns `false` if the cache is absent or corrupt.
-  /// - Verifies every file in the manifest is on disk at the recorded
-  ///   byte size via `IntegrityVerification.allManifestFilesPresentBySize`.
+  /// `availability(_:)` (the public async read API) DOES use the full
+  /// three-tier oracle including Tier C for the spec's false-negative
+  /// fix. Consumers that probe with `availability(_:)` will see
+  /// `.available` for a `config.json`-only model (Tier C); consumers
+  /// that re-invoke `ensureAvailable` after a failure will still see
+  /// the strict cached-manifest verdict here and re-attempt the
+  /// download.
   ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format.
   ///   - baseDirectory: The base directory to check for the model.
-  /// - Returns: `true` only if the cached manifest exists and every declared
-  ///   file is on disk at the recorded size.
+  /// - Returns: `true` only when an authoritative local manifest is
+  ///   present and every declared file is on disk at the recorded size.
   static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
+    let slug = slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
     guard
-      let manifest = AcervoDownloader.loadCachedManifest(
-        for: modelId,
-        in: baseDirectory
+      let manifest = ValidityOracle.loadLocalManifestEitherShape(
+        modelId: modelId,
+        modelDir: modelDir,
+        baseDirectory: baseDirectory
       )
     else {
       return false
     }
-    let modelDir = baseDirectory.appendingPathComponent(slugify(modelId))
     return IntegrityVerification.allManifestFilesPresentBySize(
       manifest: manifest,
       in: modelDir
@@ -2119,46 +2131,89 @@ extension Acervo {
 
   /// Returns the three-state availability of the specified model.
   ///
-  /// This is the canonical "is the model usable right now?" surface. Unlike
-  /// `isModelAvailable(_:)` (which returns a strict `Bool`), this method can
-  /// also surface the `.downloading` state when Sortie 6's `InFlightDownloads`
-  /// actor is wired in.
+  /// This is the canonical "is the model usable right now?" surface.
+  /// As of EM-2 it routes through the three-tier validity oracle:
   ///
-  /// This method is `async` even though the Sortie 5 implementation is
-  /// synchronous. The `async` declaration is intentional: Sortie 6 will
-  /// `await` `InFlightDownloads.shared.contains(_:)` (an actor method), and
-  /// changing the signature between sorties would require callers to be
-  /// updated twice. Declaring `async` now avoids that churn.
+  ///   - Tier A: local byte-equal `<modelDir>/manifest.json` (or, for
+  ///     pre-EM-1 downloads, the legacy `.acervo-manifest.json` cache).
+  ///   - Tier B: in-memory CDN manifest cache from the slug-registry
+  ///     work (populated by `availability(slug:url:)` /
+  ///     `ensureAvailable(slug:url:)`).
+  ///   - Tier C: heuristic — `config.json` OR `model_index.json`
+  ///     present, AND every shard enumerated in
+  ///     `model.safetensors.index.json`'s `weight_map` is on disk.
+  ///
+  /// When the oracle has an authoritative manifest (Tier A or B) but
+  /// at least one declared file is missing or wrong-size, the method
+  /// returns `.partial(missing: [...])` rather than `.available` or
+  /// `.notAvailable`. This is the audited false-positive case
+  /// (Qwen3-Coder-Next-4bit with `config.json` + a shard index but
+  /// zero shards on disk).
+  ///
+  /// When the Tier-C heuristic confirms a model without a manifest
+  /// (the FLUX.2 false-negative case: `model_index.json` plus all
+  /// subdirectory shards present), the method returns `.available`.
+  ///
+  /// The in-flight download registry is consulted first: a download
+  /// in progress always wins over disk state.
   ///
   /// This method never throws and never performs network I/O.
   ///
-  /// - Parameter modelId: A model identifier in "org/repo" format.
-  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
-  public static func availability(_ modelId: String) async -> ModelAvailability {
-    await availability(modelId, in: sharedModelsDirectory)
-  }
-
-  /// Custom-base-directory overload of `availability(_:)`.
-  ///
-  /// Internal test seam mirroring the public method's behavior against an
-  /// arbitrary base directory. Not annotated `public` so it does not widen
-  /// the API surface.
-  ///
   /// - Parameters:
   ///   - modelId: A model identifier in "org/repo" format.
-  ///   - baseDirectory: The base directory to check for the model.
-  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
-  static func availability(_ modelId: String, in baseDirectory: URL) async -> ModelAvailability {
+  ///   - verifyHashes: When `true`, after the presence-and-size pass
+  ///     succeeds the oracle stream-SHA-256 each manifest file and
+  ///     treats any mismatch as effectively missing. Default `false`.
+  ///     Hash verification streams files in 4 MB chunks via
+  ///     `CryptoKit.SHA256` and `FileHandle`, but the wall-clock cost is
+  ///     proportional to total bytes on disk — multi-minute on a 22 GB
+  ///     model. Reserve for explicit bit-rot audits, not interactive
+  ///     UI use.
+  /// - Returns: `.available`, `.downloading(progress:)`,
+  ///   `.partial(missing: [...])`, or `.notAvailable`.
+  public static func availability(
+    _ modelId: String,
+    verifyHashes: Bool = false
+  ) async -> ModelAvailability {
+    await availability(
+      modelId,
+      verifyHashes: verifyHashes,
+      in: sharedModelsDirectory
+    )
+  }
+
+  /// Custom-base-directory overload of `availability(_:verifyHashes:)`.
+  ///
+  /// Internal test seam mirroring the public method's behavior against
+  /// an arbitrary base directory. Not annotated `public` so it does
+  /// not widen the API surface.
+  static func availability(
+    _ modelId: String,
+    verifyHashes: Bool = false,
+    in baseDirectory: URL
+  ) async -> ModelAvailability {
     // Observe the in-flight registry first: a download in progress wins
-    // over any partial bytes that may already be on disk. The registry is
-    // the sole source of `.downloading`-ness — a `.part` file with no
-    // registered Task is treated as `.notAvailable`.
+    // over any partial bytes that may already be on disk. The registry
+    // is the sole source of `.downloading`-ness — a `.part` file with
+    // no registered Task is treated as one of the oracle verdicts.
     if await InFlightDownloads.shared.contains(modelId) {
       let p = await InFlightDownloads.shared.progress(for: modelId) ?? 0.0
       return .downloading(progress: p)
     }
-    let strict = isModelAvailable(modelId, in: baseDirectory)
-    return strict ? .available : .notAvailable
+
+    let verdict = await ValidityOracle.evaluate(
+      modelId: modelId,
+      in: baseDirectory,
+      verifyHashes: verifyHashes
+    )
+    switch verdict {
+    case .available:
+      return .available
+    case .partial(let missing):
+      return .partial(missing: missing)
+    case .indeterminate:
+      return .notAvailable
+    }
   }
 }
 
