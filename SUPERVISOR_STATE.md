@@ -43,16 +43,16 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 
 ## Overall Status
 
-`RUNNING` — S12 COMPLETED (commit c9a3320); S13 PENDING.
+`RUNNING` — S13 COMPLETED (commit e9a1657); S14 PENDING.
 
 ---
 
 ## Per-Work-Unit State
 
 ### acervo-decomposition
-- Work unit state: RUNNING (S1–S12 COMPLETED; S13–S15 queued)
-- Current sortie: S13 of 15 (PENDING)
-- Last completed: S12 — sortie state COMPLETED at commit c9a3320
+- Work unit state: RUNNING (S1–S13 COMPLETED; S14–S15 queued)
+- Current sortie: S14 of 15 (PENDING)
+- Last completed: S13 — sortie state COMPLETED at commit e9a1657
 - S1 summary: Extracted `Acervo+ManifestAccess.swift` (65 lines, 4 fetchManifest overloads). Acervo.swift reduced from 2777 to 2718 lines (59-line delta, matches plan estimate). All builds + tests + shape gate pass. ManifestFetchTests.swift marked with source-of-record comment.
 - S2 summary: Extracted `Acervo+PathResolution.swift` (235 lines, 6 public symbols + 3 internal helpers). Acervo.swift reduced from 2718 to 2490 lines (228-line delta, within 2475-2510 estimate). import Security moved to new file. AcervoManager.swift untouched. All builds + tests + shape gate pass. AcervoPathTests.swift marked with source-of-record comment.
 - S3 summary: Extracted `Acervo+ComponentIntegrity.swift` (107 lines, 2 public symbols + 2 internal baseDirectory overloads). Acervo.swift reduced from 2490 to 2387 lines (103-line delta, within 2380–2400 estimate). IntegrityVerification.swift untouched. All builds + tests + shape gate pass. IntegrityVerificationTests.swift marked with source-of-record comment.
@@ -65,6 +65,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 - S10 summary: Extracted `Acervo+Discovery.swift` (282 lines, §4 model listing + GC + §7 model families + §8 directory size). Acervo.swift reduced from 1479 to 1141 lines (−338). directorySize moved cleanly as private (only used by listModels(in:) — no other callers in the codebase). EM3LocalModelsHousekeepingTests.swift renamed to LocalModelsHousekeepingTests.swift via git mv; EM3 prefixes removed from Swift type names (ListModelsFilterTests, GCEmptyModelDirectoriesTests, EnsureAvailableManifestTests). No xctestplan updates required (no EM3 references in any .xctestplan file). Header comments added to AcervoDiscoveryTests.swift and AcervoFilesystemEdgeCaseTests.swift. grep -RIn 'EM3LocalModelsHousekeepingTests' Sources/ Tests/ returns empty (Docs/ references are historical plan baselines). All gates green (70 XCTest / make build / make test-plan-shape).
 - S11 summary: Extracted `Acervo+Search.swift` (217 lines, §5 pattern matching + §6 fuzzy search). Acervo.swift reduced from 1141 to 946 lines (−195, within ~195-line estimate). One extension Acervo with two MARK subsections per S10 template. Moved 8 symbols total: glob variant (findModels(matching:), findModels(matching:in:) test-support); fuzzy variant (findModels(fuzzyMatching:editDistance:), findModels(fuzzyMatching:editDistance:in:), closestModel(to:editDistance:), closestModel(to:editDistance:in:), and private helpers commonPrefixes + stripCommonPrefixes). Test file headers updated (AcervoSearchTests.swift + AcervoFuzzySearchTests.swift with note that modelFamilies tests stay in fuzzy file). All gates green (70 XCTest / make build / make test-plan-shape). S12 PENDING.
 - S12 summary: Extracted `Acervo+SlugAvailability.swift` (245 lines, §21 slug-keyed availability public method + internal test-seam overload + three internal static helpers). Acervo.swift reduced from 946 to 710 lines (−236, within 700–725 estimate). Helpers isOrgRepoSlug, componentTotalBytes, fetchSlugManifest explicitly kept internal static for S13 cross-file access. SlugAvailabilityTests.swift companion header added. All gates green (70 XCTest / make build / make test-plan-shape). S13 PENDING.
+- S13 summary: Extracted `Acervo+EnsureAvailable.swift` (377 lines, well under 450-line PARTIAL threshold — combined-file path taken). Combined two non-contiguous sections (§10 legacy repo-keyed + §22 slug-keyed multi-component) plus the file-private `ComponentStateBox` aggregator into one file with two MARK subsections, mirroring S9's pattern. Acervo.swift reduced from 710 to 362 lines (−348, slightly exceeds 380-line estimate because both sections were full-bodied with doc comments + the helper). Symbols moved: public ensureAvailable(_:files:progress:telemetry:) + internal (in:) test seam; public ensureAvailable(slug:url:files:progress:telemetry:) + internal (in:) test seam; ComponentStateBox promoted from inside-function to file-private file-scope. Cross-file reachability of isOrgRepoSlug/componentTotalBytes/fetchSlugManifest (in Acervo+SlugAvailability.swift) confirmed by successful build. Test headers updated on EnsureAvailableEmptyFilesTests.swift and SlugEnsureAvailableTests.swift; AcervoDownloadAPITests.swift already correct from S8. All gates green (70 XCTest / make build / make test-plan-shape). S14 PENDING.
 - Notes: S15 closure sortie will perform a public-API symbol delta check (`grep -REn 'public (static (func|var|let))' Sources/SwiftAcervo/Acervo*.swift`) — supervisor captured the pre-S1 snapshot at launch commit 492d54f as the baseline. **State-file location lesson**: every future sortie dispatch must explicitly name the canonical state file path (`/Users/stovak/Projects/SwiftAcervo-decomp/SUPERVISOR_STATE.md`, worktree root) to prevent agents from inventing duplicates.
 
 ---
@@ -85,6 +86,7 @@ This mission's branch was created from `mission/eighth-master/01` tip (`492d54f`
 | S10 | COMPLETED | 1/3 | 3555d5e + c57709d | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S11 | COMPLETED | 1/3 | 47b9374 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 | S12 | COMPLETED | 1/3 | c9a3320 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
+| S13 | COMPLETED | 1/3 | e9a1657 | 2026-05-23 | ✓ pass / ✓ pass / ✓ pass |
 
 ---
 
@@ -124,3 +126,6 @@ This mission (DRAWER DIVIDERS) and EIGHTH-MASTER do not share source files (deco
 | 2026-05-23 | S11 | COMPLETED at commit 47b9374 | Acervo.swift 1141→946 (−195). Created Acervo+Search.swift (217 lines: §5 pattern matching + §6 fuzzy search). One extension Acervo with two MARK subsections per S10 template. Symbols moved: glob variant (findModels(matching:), findModels(matching:in:)); fuzzy variant (findModels(fuzzyMatching:editDistance:), findModels(fuzzyMatching:editDistance:in:), closestModel(to:editDistance:), closestModel(to:editDistance:in:), commonPrefixes, stripCommonPrefixes). Test headers updated: AcervoSearchTests.swift (glob) + AcervoFuzzySearchTests.swift (fuzzy + note that modelFamilies tests stay here). All gates green (70 XCTest / make build / make test-plan-shape). S12 PENDING. |
 | 2026-05-23 | S12 | COMPLETED at commit c9a3320 | Acervo.swift 946→710 (−236). Created Acervo+SlugAvailability.swift (245 lines: §21 slug-keyed availability(slug:url:telemetry:) public + internal test-seam overload + three internal static helpers: isOrgRepoSlug, componentTotalBytes, fetchSlugManifest). Helpers explicitly marked `internal static` (not narrowed to private) for cross-file reachability by S13 (Acervo+EnsureAvailable.swift). SlugAvailabilityTests.swift header comment updated to name companion source file. All gates green (70 XCTest / make build / make test-plan-shape). S13 PENDING. |
 | 2026-05-23 | (supervisor) | State-file location reconciled at b3f09b4 reverted/cleanup | S4 agent wrote its state update to a NEW duplicate at `Docs/incomplete/acervo-decomposition-01/SUPERVISOR_STATE.md` (wrong path) instead of this canonical worktree-root file. Supervisor: (a) folded S4's data into this file, (b) deleted the duplicate, (c) future sortie dispatches will name the canonical path explicitly to prevent recurrence. |
+| 2026-05-23 | S13 | Combined-file path taken (not PARTIAL) | New file landed at 377 lines, well under the 450-line PARTIAL threshold. F6a/F6b/F6c three-way split not needed. |
+| 2026-05-23 | S13 | ComponentStateBox promoted from inside-function to file-scope | Original location was a `final class` declared INSIDE the function body. To move into a sibling file cleanly (and reduce nesting noise), it was promoted to file-scope with `private` visibility. Behaviorally identical; same NSLock-guarded state vector consumed only by the slug-keyed ensureAvailable. |
+| 2026-05-23 | S13 | COMPLETED at commit e9a1657 | Acervo.swift 710→362 (−348). Created Acervo+EnsureAvailable.swift (377 lines, 2 MARK subsections). Both ensureAvailable overloads + ComponentStateBox moved cleanly. Cross-file reachability of S12's internal helpers (isOrgRepoSlug/componentTotalBytes/fetchSlugManifest) confirmed by build success. All gates green. S14 PENDING. |
