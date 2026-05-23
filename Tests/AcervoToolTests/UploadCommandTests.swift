@@ -214,7 +214,7 @@
 
         let capture = KeepOrphansCaptureBox()
         PublishRunner.reset()
-        PublishRunner.override = { _, _, _, keepOrphans, _ in
+        PublishRunner.override = { _, _, _, keepOrphans, _, _, _, _ in
           capture.set(keepOrphans)
           // Return a synthetic manifest so the command body completes cleanly.
           return CDNManifest(
@@ -271,7 +271,7 @@
 
         let called = ShipPublishCallBox()
         PublishRunner.reset()
-        PublishRunner.override = { _, _, _, _, _ in
+        PublishRunner.override = { _, _, _, _, _, _, _, _ in
           called.mark()
           throw TestSentinelError.publishShouldNotBeCalled
         }

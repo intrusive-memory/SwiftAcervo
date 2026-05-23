@@ -80,7 +80,10 @@ extension Acervo {
     credentials: AcervoCDNCredentials,
     keepOrphans: Bool = false,
     progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    primaryRepo: String? = nil,
+    components: [String]? = nil,
+    slugOverride: String? = nil
   ) async throws -> CDNManifest {
     let client = S3CDNClient(credentials: credentials)
     return try await _publishModel(
@@ -91,7 +94,10 @@ extension Acervo {
       publicSession: .shared,
       keepOrphans: keepOrphans,
       progress: progress,
-      telemetry: telemetry
+      telemetry: telemetry,
+      primaryRepo: primaryRepo,
+      components: components,
+      slugOverride: slugOverride
     )
   }
 
@@ -114,11 +120,19 @@ extension Acervo {
     publicSession: URLSession,
     keepOrphans: Bool,
     progress: (@Sendable (AcervoPublishProgress) -> Void)?,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    primaryRepo: String? = nil,
+    components: [String]? = nil,
+    slugOverride: String? = nil
   ) async throws -> CDNManifest {
     // ---------- Step 1 — Generate manifest -------------------------------
     progress?(.generatingManifest)
-    let generator = ManifestGenerator(modelId: modelId)
+    let generator = ManifestGenerator(
+      modelId: modelId,
+      primaryRepo: primaryRepo,
+      components: components,
+      slugOverride: slugOverride
+    )
     // Step 2 (CHECK 2 — zero-byte) and step 3 (CHECK 3 — post-write
     // checksum) are enforced inside ManifestGenerator.generate. A
     // failure there throws AcervoError.manifestZeroByteFile or

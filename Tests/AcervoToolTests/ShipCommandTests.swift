@@ -323,7 +323,7 @@
         // Trap publishModel calls — dry-run must NEVER reach this.
         PublishRunner.reset()
         let publishCalled = ShipPublishCallBox()
-        PublishRunner.override = { _, _, _, _, _ in
+        PublishRunner.override = { _, _, _, _, _, _, _, _ in
           publishCalled.mark()
           throw TestSentinelError.publishShouldNotBeCalled
         }
