@@ -1,8 +1,12 @@
-// EM3LocalModelsHousekeepingTests.swift
+// LocalModelsHousekeepingTests.swift
 // SwiftAcervo
 //
-// Sortie EM-3 of OPERATION EIGHTH-MASTER iteration 01
+// Companion tests for Sources/SwiftAcervo/Acervo+Discovery.swift (EM-3 housekeeping:
+// validity-marker filter + gcEmptyModelDirectories).
+//
+// Originally authored in Sortie EM-3 of OPERATION EIGHTH-MASTER iteration 01
 // (validity-oracle / localModels housekeeping + remaining §1.3 acceptance).
+// Renamed in Sortie S10 of OPERATION DRAWER DIVIDERS to drop the mission-tag prefix.
 //
 // Covers, per the EM-3 exit criteria:
 //
@@ -75,8 +79,8 @@ private func makeStubDir(slug: String, in base: URL) throws -> URL {
 
 // MARK: - §1.3 acceptance #4 — listModels() excludes empty stubs
 
-@Suite("EM-3: listModels() filters empty-stub directories")
-struct EM3ListModelsFilterTests {
+@Suite("listModels() filters empty-stub directories")
+struct ListModelsFilterTests {
 
   /// §1.3 acceptance #4 (verbatim from REQUIREMENTS):
   /// `await Acervo.localModels()` does not include the eight empty directories
@@ -217,8 +221,8 @@ struct EM3ListModelsFilterTests {
 
 // MARK: - §1.3 acceptance #5 — gcEmptyModelDirectories() acceptance
 
-@Suite("EM-3: gcEmptyModelDirectories() acceptance")
-struct EM3GCEmptyModelDirectoriesTests {
+@Suite("gcEmptyModelDirectories() acceptance")
+struct GCEmptyModelDirectoriesTests {
 
   @Test("gcEmptyModelDirectories: removes only empty stubs, leaves real models untouched")
   func gc_removesStubsLeavesRealModels() throws {
@@ -417,8 +421,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
   ///
   /// The `MockURLProtocol` intercepts the manifest request and file requests
   /// so no network calls are made.
-  @Suite("EM-3: post-ensureAvailable manifest persistence (§1.3 acceptance #3)")
-  struct EM3EnsureAvailableManifestTests {
+  @Suite("post-ensureAvailable manifest persistence (§1.3 acceptance #3)")
+  struct EnsureAvailableManifestTests {
 
     private func sha256Hex(_ data: Data) -> String {
       SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
