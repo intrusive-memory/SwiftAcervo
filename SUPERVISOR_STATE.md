@@ -36,7 +36,7 @@
 
 ## Overall Status
 
-`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit eligible to start (CIH-1 PENDING).
+`RUNNING` — validity-oracle work unit COMPLETED (EM-1 at 76e5c72, EM-2 at b10cdb2, EM-3 at 6275e54); ci-hygiene work unit COMPLETED (CIH-1 at HEAD); deferred-cleanup work unit eligible to start (DC-1 PENDING).
 
 ---
 
@@ -54,15 +54,15 @@
 - Notes: F7 verbatim clause included in EM-3 dispatch prompt (test-authoring sortie); honored — no production bugs surfaced. listModels() now accepts config.json OR model_index.json OR manifest.json as validity markers. gcEmptyModelDirectories() is destructive-only-for-stubs, safe against real model directories. AcervoManager does not expose a localModels() surface so no parallel GC method added there.
 
 ### ci-hygiene
-- Work unit state: NOT_STARTED (eligible to start — validity-oracle COMPLETED)
-- Current sortie: CIH-1 of 2
-- Sortie state: PENDING
-- Sortie type: code (CIH-1 is read-only audit, CIH-2 is CI/Makefile changes)
-- Model: tbd at dispatch
-- Complexity score: tbd at dispatch
-- Attempt: 0 of 3
-- Last verified: n/a — gated on validity-oracle COMPLETED. validity-oracle now COMPLETED at EM-3 commit 6275e54.
-- Notes: —
+- Work unit state: IN_PROGRESS (validity-oracle COMPLETED; CIH-1 COMPLETED, CIH-2 PENDING)
+- Current sortie: CIH-1 of 2 (CIH-1 COMPLETED)
+- Sortie state: COMPLETED
+- Sortie type: read-only audit (CIH-1), mechanical fixes (CIH-2)
+- Model: haiku (read-only audit; no design judgment)
+- Complexity score: 13.5 (priority is low but dependency-pinned before CIH-2)
+- Attempt: 1 of 3
+- Last verified: CIH-1 audit at HEAD. 79 test suites catalogued; all 67 SwiftAcervoTests + 11 AcervoToolTests on macOS plan; all 67 SwiftAcervoTests on iOS plan; Performance plan does not exist (blocking for CIH-2). All 79 suites classified as correctness tests (deterministic assertions, not timing). No performance test perf-gated. Non-mechanical findings: none. `make build` exit 0, `make test` exit 0 (no code changes, sanity verified).
+- Notes: CIH1_TEST_PLAN_AUDIT.md committed; details: 79 suites, zero correctness tests on missing perf plan (QM01 mistake not present). Recommendation: CIH-2 must create Performance plan, update Makefile targets, add shape gate.
 
 ### deferred-cleanup
 - Work unit state: NOT_STARTED
@@ -103,3 +103,4 @@
 | 2026-05-23 | validity-oracle | EM-2 | COMPLETED at commit b10cdb2 | All EM-2 exit criteria met: ValidityOracle.swift implements the 3-tier algorithm (Tier A: local manifest.json + legacy .acervo-manifest.json fallback; Tier B: in-memory ManifestCache.shared; Tier C: config.json/model_index.json + weight_map enumeration); Acervo.availability(_:verifyHashes:) public API with default false; matching AcervoManager.availability(_:verifyHashes:); §1.3 acceptance #1 green via both Tier-A path and Tier-B path; §1.3 acceptance #2 green via Tier C; Tier A/B/C individually unit-tested; model_index.json equivalence test green; verifyHashes opt-in path green. `make build` exit 0, `make test` exit 0. F7 honored — no production bugs surfaced. Design decision: strict isModelAvailable helper kept cached-manifest-only to preserve ensureAvailable retry semantics after partial download failures; the lenient Tier-C heuristic lives behind async availability(_:) only. |
 | 2026-05-23 | validity-oracle | EM-3 | COMPLETED at commit 6275e54 | All EM-3 exit criteria met: Acervo.listModels() now filters directories by three validity markers (config.json OR model_index.json OR manifest.json); Acervo.gcEmptyModelDirectories() added with destructive doc-comment, atomic per-directory removal, returns removed URL list; §1.3 acceptance #3 green (post-ensureAvailable manifest.json byte-equal to CDN wire bytes via full public API through MockURLProtocol); §1.3 acceptance #4 green (11 real + 8 empty stubs → listModels returns 11); §1.3 acceptance #5 green (gcEmptyModelDirectories removes only stubs; all tests on SwiftAcervo-macOS.xctestplan; no live disk dependency). AcervoManager does not expose localModels so no parallel GC added. `make build` exit 0, `make test` exit 0 (699 total tests). F7 honored — no production bugs surfaced. |
 | 2026-05-23 | validity-oracle | — | Work unit COMPLETED; ci-hygiene eligible to start | All three sorties (EM-1, EM-2, EM-3) COMPLETED. CIH-1 (read-only audit) is next; dependency validity-oracle COMPLETED satisfied. |
+| 2026-05-23 | ci-hygiene | CIH-1 | COMPLETED at HEAD | Audit: 79 test suites enumerated; all on macOS/iOS plans; Performance plan missing (no perf tests yet, so QM01 planner-wrong-#1 mistake absent). 100% correctness tests. Findings: Performance plan is a blocker for CIH-2 (shape gate cannot gate non-existent plan). Recommendation: CIH-2 creates Performance plan (initially all skipped), adds Makefile `test-perf` target, adds shape gate via `jq`. No non-mechanical findings. |
