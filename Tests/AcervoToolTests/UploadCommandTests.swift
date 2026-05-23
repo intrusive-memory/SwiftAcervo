@@ -1,248 +1,319 @@
-//
-// UploadCommandTests.swift — Sortie 12: UploadCommand unit tests
-//
-// SEAM NOTES (no production code modified):
-//   - `UploadCommand.resolveBucket()` and `resolveEndpoint()` are `private`
-//     and cannot be called directly from tests. The credential-validation
-//     path is exercised via `CDNUploader(environment:)`, which is the public
-//     injection seam that feeds the same `R2_ACCESS_KEY_ID` /
-//     `R2_SECRET_ACCESS_KEY` checks inside `runAWS`.
-//   - `CDNUploader.buildSyncArguments` (static, package-internal) is used to
-//     assert bucket/key wiring without spawning any real process.
-//   - Argument parsing is tested by calling `UploadCommand.parse(_:)` directly.
-//   - No live R2 or HuggingFace calls are made anywhere in this file.
-//   - Sentinel values used: `"__TEST_FAKE_KEY__"` and `"__TEST_FAKE_SECRET__"`.
-//
-// P2 follow-up: add an `environment:` injection parameter to `UploadCommand`
-// so `resolveBucket` / `resolveEndpoint` can be tested without mutating the
-// real process environment. Filed as P2 per the sortie-12 hard-boundary rules.
-
 #if os(macOS)
+  // UploadCommandTests
+  //
+  // After the v0.14.x CLI consolidation `UploadCommand.run()` delegates
+  // every CDN-side step to `Acervo.publishModel(...)` via the
+  // `PublishRunner` seam. The CLI no longer spawns any `aws` subprocess,
+  // so these tests focus on argument parsing, credential resolution,
+  // call routing into `PublishRunner.override`, and the `--dry-run`
+  // short-circuit (which must not invoke `PublishRunner`).
+
+  import ArgumentParser
   import Foundation
   import Testing
 
   @testable import SwiftAcervo
   @testable import acervo
 
-  /// Unit tests for `UploadCommand` argument parsing, credential validation,
-  /// and the `CDNUploader` bucket/key wiring.
-  ///
-  /// This suite is `.serialized` because several tests exercise process-level
-  /// env var state and should not race with each other.
-  @Suite("UploadCommand Tests", .serialized)
-  final class UploadCommandTests {
+  extension ProcessEnvironmentSuite {
 
-    // MARK: - Test 1: Happy-path argument parsing
+    @Suite("UploadCommand Tests")
+    final class UploadCommandTests {
 
-    /// Verifies that every flag and option on `UploadCommand` is captured
-    /// correctly when a fully-specified argv is parsed.
-    ///
-    /// This test does NOT call `run()` — it only exercises `ArgumentParser`
-    /// parsing so no filesystem I/O or network activity occurs.
-    @Test("Happy-path argv parsing captures all flags correctly")
-    func happyPathArgvParsing() throws {
-      let cmd = try UploadCommand.parse([
-        "org/mymodel",
-        "/tmp/staging/org_mymodel",
-        "--bucket", "my-test-bucket",
-        "--prefix", "models/",
-        "--endpoint", "https://r2.example.com",
-        "--dry-run",
-        "--force",
-      ])
+      private let fm = FileManager.default
+      private var tempBinDir: URL!
+      private var savedPATH: String?
+      private var savedR2AccessKey: String?
+      private var savedR2SecretKey: String?
+      private var savedR2Bucket: String?
+      private var savedR2Endpoint: String?
+      private var savedR2PublicURL: String?
 
-      #expect(cmd.modelId == "org/mymodel")
-      #expect(cmd.directory == "/tmp/staging/org_mymodel")
-      #expect(cmd.bucket == "my-test-bucket")
-      #expect(cmd.prefix == "models/")
-      #expect(cmd.endpoint == "https://r2.example.com")
-      #expect(cmd.dryRun == true)
-      #expect(cmd.force == true)
-    }
+      init() throws {
+        tempBinDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+          .appendingPathComponent("acervo-upload-tests-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: tempBinDir, withIntermediateDirectories: true)
 
-    // MARK: - Test 2: Missing R2 credentials → CDNUploader throws clearly
+        savedPATH = ProcessInfo.processInfo.environment["PATH"]
+        savedR2AccessKey = ProcessInfo.processInfo.environment["R2_ACCESS_KEY_ID"]
+        savedR2SecretKey = ProcessInfo.processInfo.environment["R2_SECRET_ACCESS_KEY"]
+        savedR2Bucket = ProcessInfo.processInfo.environment["R2_BUCKET"]
+        savedR2Endpoint = ProcessInfo.processInfo.environment["R2_ENDPOINT"]
+        savedR2PublicURL = ProcessInfo.processInfo.environment["R2_PUBLIC_URL"]
 
-    /// Verifies that `CDNUploader` with no credentials in its injected
-    /// environment snapshot throws `AcervoToolError.missingEnvironmentVariable`
-    /// before it ever attempts to run `aws`. This exercises the same
-    /// credential-validation gate that `UploadCommand.run()` passes through
-    /// when `R2_ACCESS_KEY_ID` is absent from the process environment.
-    ///
-    /// The real process environment is NOT consulted here — the uploader
-    /// receives an entirely empty environment dict (no sentinel values needed
-    /// to trigger the failure; absence alone is sufficient).
-    @Test("Missing R2_ACCESS_KEY_ID in CDNUploader env throws missingEnvironmentVariable")
-    func missingR2AccessKeyIdThrows() async throws {
-      let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent("acervo-upload-creds-\(UUID().uuidString)", isDirectory: true)
-      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      defer { try? FileManager.default.removeItem(at: dir) }
+        try installStub(named: "hf")
+        setenv("PATH", tempBinDir.path, 1)
 
-      // Stage a real file and generate a valid manifest so verifyBeforeUpload
-      // passes (files on disk match). The credential check fires later, inside
-      // the sync step that calls runAWS.
-      let configURL = dir.appendingPathComponent("config.json")
-      try Data("{\"model\": \"test\"}".utf8).write(to: configURL, options: [.atomic])
+        unsetenv("R2_ACCESS_KEY_ID")
+        unsetenv("R2_SECRET_ACCESS_KEY")
+        unsetenv("R2_BUCKET")
+        unsetenv("R2_ENDPOINT")
+        unsetenv("R2_PUBLIC_URL")
+      }
 
-      let generator = ManifestGenerator(modelId: "test/missing-creds-model")
-      let manifestURL = try await generator.generate(directory: dir)
-      let manifest = try JSONDecoder().decode(
-        CDNManifest.self, from: Data(contentsOf: manifestURL))
+      deinit {
+        restore("R2_PUBLIC_URL", savedR2PublicURL)
+        restore("R2_ENDPOINT", savedR2Endpoint)
+        restore("R2_BUCKET", savedR2Bucket)
+        restore("R2_SECRET_ACCESS_KEY", savedR2SecretKey)
+        restore("R2_ACCESS_KEY_ID", savedR2AccessKey)
+        restore("PATH", savedPATH)
+        try? fm.removeItem(at: tempBinDir)
+        PublishRunner.reset()
+      }
 
-      // Construct an uploader with an environment that has NO credentials.
-      let uploader = CDNUploader(
-        awsExecutableURL: URL(fileURLWithPath: "/var/empty/never-exists-aws"),
-        environment: [:]
+      // MARK: - Helpers
+
+      private func restore(_ name: String, _ saved: String?) {
+        if let saved {
+          setenv(name, saved, 1)
+        } else {
+          unsetenv(name)
+        }
+      }
+
+      private func installStub(named name: String) throws {
+        let url = tempBinDir.appendingPathComponent(name)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+      }
+
+      private func setAllR2EnvVars() {
+        setenv("R2_ACCESS_KEY_ID", "__TEST_FAKE_KEY__", 1)
+        setenv("R2_SECRET_ACCESS_KEY", "__TEST_FAKE_SECRET__", 1)
+        setenv("R2_BUCKET", "test-bucket-sentinel", 1)
+        setenv("R2_ENDPOINT", "https://r2.example.com", 1)
+        setenv("R2_PUBLIC_URL", "https://cdn.example.com", 1)
+      }
+
+      private func makeStagingDirectory(slug: String) throws -> URL {
+        let root = fm.temporaryDirectory.appendingPathComponent(
+          "upload-tests-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let modelDir = root.appendingPathComponent(slug, isDirectory: true)
+        try fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: modelDir.appendingPathComponent("config.json"))
+        return modelDir
+      }
+
+      // MARK: - Argument parsing
+
+      @Test("Happy-path argv parsing captures all flags correctly")
+      func happyPathArgvParsing() throws {
+        let cmd = try UploadCommand.parse([
+          "org/mymodel",
+          "/tmp/staging/org_mymodel",
+          "--bucket", "my-test-bucket",
+          "--prefix", "models/",
+          "--endpoint", "https://r2.example.com",
+          "--dry-run",
+          "--force",
+        ])
+
+        #expect(cmd.modelId == "org/mymodel")
+        #expect(cmd.directory == "/tmp/staging/org_mymodel")
+        #expect(cmd.bucket == "my-test-bucket")
+        #expect(cmd.prefix == "models/")
+        #expect(cmd.endpoint == "https://r2.example.com")
+        #expect(cmd.dryRun == true)
+        #expect(cmd.force == true)
+        #expect(cmd.keepOrphans == false)
+      }
+
+      @Test("Missing required modelId argument causes argument-parse error")
+      func missingRequiredModelIdArgument() {
+        var thrown: Error?
+        do {
+          _ = try UploadCommand.parse([])
+        } catch {
+          thrown = error
+        }
+        #expect(thrown != nil)
+      }
+
+      @Test("Missing required directory argument causes argument-parse error")
+      func missingRequiredDirectoryArgument() {
+        var thrown: Error?
+        do {
+          _ = try UploadCommand.parse(["org/mymodel"])
+        } catch {
+          thrown = error
+        }
+        #expect(thrown != nil)
+      }
+
+      // MARK: - Credential resolution
+
+      @Test(
+        "Error surfacing: missing R2_ACCESS_KEY_ID throws missingEnvironmentVariable before pipeline starts"
       )
+      func missingAccessKeySurfacesError() async throws {
+        let parsed = try AcervoCLI.parseAsRoot(["upload", "org/repo", "/tmp/anywhere"])
+        guard var cmd = parsed as? UploadCommand else {
+          Issue.record("Expected UploadCommand")
+          return
+        }
 
-      // verifyBeforeUpload should pass (files match the manifest).
-      try await uploader.verifyBeforeUpload(directory: dir, manifest: manifest)
+        var thrown: Error?
+        do {
+          try await cmd.run()
+        } catch {
+          thrown = error
+        }
 
-      // Now attempt the sync step — this is where runAWS fires and checks
-      // for R2_ACCESS_KEY_ID in the environment snapshot.
-      var thrown: Error?
-      do {
-        try await uploader.sync(
-          localDirectory: dir,
-          slug: "test_missing_creds_model",
-          bucket: "intrusive-memory-models",
-          endpoint: "https://r2.example.com",
-          dryRun: false,
-          force: false
+        guard case .some(AcervoToolError.missingEnvironmentVariable(let varName)) = thrown else {
+          Issue.record(
+            "Expected AcervoToolError.missingEnvironmentVariable, got \(String(describing: thrown))"
+          )
+          return
+        }
+        #expect(varName == "R2_ACCESS_KEY_ID")
+      }
+
+      // MARK: - --keep-orphans propagation
+
+      @Test("--keep-orphans parses to true")
+      func keepOrphansFlagParses() throws {
+        let cmd = try UploadCommand.parse([
+          "org/repo", "/tmp/staging", "--keep-orphans",
+        ])
+        #expect(cmd.keepOrphans == true)
+      }
+
+      @Test("Default (no --keep-orphans) parses to false")
+      func keepOrphansDefaultsFalse() throws {
+        let cmd = try UploadCommand.parse(["org/repo", "/tmp/staging"])
+        #expect(cmd.keepOrphans == false)
+      }
+
+      /// End-to-end seam test: with `--keep-orphans`, the value the CLI hands
+      /// to `PublishRunner.run(...)` is `true`. Without the flag it is `false`.
+      /// Asserts call routing without spawning any network traffic.
+      @Test("--keep-orphans propagates to PublishRunner with keepOrphans: true")
+      func keepOrphansPropagatesTrue() async throws {
+        try await assertKeepOrphans(passingFlag: true, expected: true)
+      }
+
+      @Test("Omitting --keep-orphans propagates keepOrphans: false to PublishRunner")
+      func keepOrphansPropagatesFalse() async throws {
+        try await assertKeepOrphans(passingFlag: false, expected: false)
+      }
+
+      private func assertKeepOrphans(passingFlag: Bool, expected: Bool) async throws {
+        setAllR2EnvVars()
+        defer {
+          unsetenv("R2_ACCESS_KEY_ID")
+          unsetenv("R2_SECRET_ACCESS_KEY")
+          unsetenv("R2_BUCKET")
+          unsetenv("R2_ENDPOINT")
+          unsetenv("R2_PUBLIC_URL")
+        }
+
+        let modelDir = try makeStagingDirectory(slug: "org_repo")
+        defer { try? fm.removeItem(at: modelDir.deletingLastPathComponent()) }
+
+        let capture = KeepOrphansCaptureBox()
+        PublishRunner.reset()
+        PublishRunner.override = { _, _, _, keepOrphans, _ in
+          capture.set(keepOrphans)
+          // Return a synthetic manifest so the command body completes cleanly.
+          return CDNManifest(
+            manifestVersion: 1,
+            modelId: "org/repo",
+            slug: "org_repo",
+            updatedAt: "1970-01-01T00:00:00Z",
+            files: [],
+            manifestChecksum: ""
+          )
+        }
+        defer { PublishRunner.reset() }
+
+        var args = ["upload", "org/repo", modelDir.path]
+        if passingFlag { args.append("--keep-orphans") }
+
+        let parsed = try AcervoCLI.parseAsRoot(args)
+        guard var cmd = parsed as? UploadCommand else {
+          Issue.record("Expected UploadCommand")
+          return
+        }
+        try await cmd.run()
+
+        #expect(capture.value == expected)
+      }
+
+      // MARK: - --dry-run short-circuit
+
+      @Test("--dry-run short-circuits without calling PublishRunner (zero PUTs)")
+      func dryRunZeroPuts() async throws {
+        setAllR2EnvVars()
+        defer {
+          unsetenv("R2_ACCESS_KEY_ID")
+          unsetenv("R2_SECRET_ACCESS_KEY")
+          unsetenv("R2_BUCKET")
+          unsetenv("R2_ENDPOINT")
+          unsetenv("R2_PUBLIC_URL")
+        }
+
+        let modelDir = try makeStagingDirectory(slug: "org_repo")
+        defer { try? fm.removeItem(at: modelDir.deletingLastPathComponent()) }
+
+        CLIMockURLProtocol.reset()
+        defer { CLIMockURLProtocol.reset() }
+        CLIMockURLProtocol.responder = { request in
+          let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "https://stub.invalid/")!,
+            statusCode: 500,
+            httpVersion: "HTTP/1.1",
+            headerFields: [:]
+          )!
+          return (response, Data())
+        }
+
+        let called = ShipPublishCallBox()
+        PublishRunner.reset()
+        PublishRunner.override = { _, _, _, _, _ in
+          called.mark()
+          throw TestSentinelError.publishShouldNotBeCalled
+        }
+        defer { PublishRunner.reset() }
+
+        let parsed = try AcervoCLI.parseAsRoot([
+          "upload", "org/repo", modelDir.path, "--dry-run",
+        ])
+        guard var cmd = parsed as? UploadCommand else {
+          Issue.record("Expected UploadCommand")
+          return
+        }
+        try await cmd.run()
+
+        #expect(
+          called.fired == false,
+          "PublishRunner.run must not be invoked on --dry-run"
         )
-      } catch {
-        thrown = error
-      }
-
-      guard case .some(AcervoToolError.missingEnvironmentVariable(let name)) = thrown else {
-        Issue.record(
-          "Expected AcervoToolError.missingEnvironmentVariable, got \(String(describing: thrown))"
+        #expect(
+          CLIMockURLProtocol.requestCount(forMethod: "PUT") == 0,
+          "dry-run must issue zero PUT requests"
         )
-        return
       }
-      #expect(name == "R2_ACCESS_KEY_ID")
-      // Confirm the error description is user-readable and mentions the var name.
-      let desc = AcervoToolError.missingEnvironmentVariable("R2_ACCESS_KEY_ID").description
-      #expect(desc.contains("R2_ACCESS_KEY_ID"))
     }
+  }
 
-    // MARK: - Test 3: Upload path with sentinel credentials — bucket/key wiring
+  // MARK: - Test support
 
-    /// Verifies that `CDNUploader.buildSyncArguments` wires the expected
-    /// bucket and key-prefix values into the `aws s3 sync` argv.
-    ///
-    /// This test uses the static argument-builder seam — no `aws` process is
-    /// ever spawned, and no real credentials are read. Sentinel values are
-    /// supplied to `CDNUploader(environment:)` to show the seam is usable.
-    @Test("CDNUploader buildSyncArguments wires bucket and slug correctly with sentinel env")
-    func uploaderBucketKeyWiring() {
-      let sentinelEnv: [String: String] = [
-        "R2_ACCESS_KEY_ID": "__TEST_FAKE_KEY__",
-        "R2_SECRET_ACCESS_KEY": "__TEST_FAKE_SECRET__",
-      ]
-
-      // Confirm CDNUploader init accepts the injected environment snapshot.
-      let _ = CDNUploader(
-        awsExecutableURL: URL(fileURLWithPath: "/var/empty/never-exists-aws"),
-        environment: sentinelEnv
-      )
-
-      // Verify the static argument builder wires bucket and slug into the
-      // S3 path without any process spawn.
-      let stagingDir = URL(fileURLWithPath: "/tmp/acervo-staging/test_org_mymodel")
-      let args = CDNUploader.buildSyncArguments(
-        localDirectory: stagingDir,
-        slug: "test_org_mymodel",
-        bucket: "intrusive-memory-models",
-        endpoint: "https://r2.example.com",
-        dryRun: false,
-        force: false
-      )
-
-      #expect(args.contains("s3://intrusive-memory-models/models/test_org_mymodel/"))
-      #expect(args.contains(stagingDir.path))
-      #expect(args.contains("--endpoint-url"))
-      #expect(args.contains("https://r2.example.com"))
-      // Safety invariant: --delete must never appear in sync args.
-      #expect(!args.contains("--delete"))
+  /// Thread-safe capture of the `keepOrphans` value the CLI hands to
+  /// `PublishRunner.run(...)`.
+  final class KeepOrphansCaptureBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Bool?
+    var value: Bool? {
+      lock.lock()
+      defer { lock.unlock() }
+      return _value
     }
-
-    // MARK: - Test 4: Missing required argument → canonical error
-
-    /// When the required `modelId` positional argument is absent, `ArgumentParser`
-    /// must surface a parsing error. `UploadCommand.parse(_:)` throws in this
-    /// case, exercising the canonical missing-argument error path.
-    @Test("Missing required modelId argument causes argument-parse error")
-    func missingRequiredModelIdArgument() {
-      // Attempt to parse with no arguments at all.
-      var thrown: Error?
-      do {
-        _ = try UploadCommand.parse([])
-      } catch {
-        thrown = error
-      }
-      // ArgumentParser throws when required positional arguments are absent.
-      #expect(thrown != nil, "Expected parse error when modelId is missing")
-    }
-
-    // MARK: - Test 5: Missing required directory argument → canonical error
-
-    /// Similarly, `directory` is a required positional argument. Parsing
-    /// with only `modelId` (no directory) must also surface a parse error.
-    @Test("Missing required directory argument causes argument-parse error")
-    func missingRequiredDirectoryArgument() {
-      var thrown: Error?
-      do {
-        _ = try UploadCommand.parse(["org/mymodel"])
-      } catch {
-        thrown = error
-      }
-      #expect(thrown != nil, "Expected parse error when directory is missing")
-    }
-
-    // MARK: - Test 6: Sentinel credentials reach CDNUploader without touching real env
-
-    /// Confirms that constructing a `CDNUploader` with injected sentinel
-    /// credentials does NOT read `R2_ACCESS_KEY_ID` or `R2_SECRET_ACCESS_KEY`
-    /// from the real process environment.
-    ///
-    /// Strategy: unset both env vars, then construct a `CDNUploader` with
-    /// sentinel values. `verifyBeforeUpload` is called on a manifest with a
-    /// matching file on disk; if the uploader were reading the real (now-unset)
-    /// env, the subsequent `sync` call would throw `.missingEnvironmentVariable`
-    /// for a different reason. Here we assert that `verifyBeforeUpload` itself
-    /// succeeds — proving the injected snapshot is used for filesystem checks
-    /// and the real env is not consulted during that phase.
-    @Test("CDNUploader with sentinel env verifyBeforeUpload does not read real credentials")
-    func sentinelEnvDoesNotTouchRealCredentials() async throws {
-      let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        .appendingPathComponent("acervo-upload-sentinel-\(UUID().uuidString)", isDirectory: true)
-      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-      defer { try? FileManager.default.removeItem(at: dir) }
-
-      let configURL = dir.appendingPathComponent("config.json")
-      try Data("{\"test\": true}".utf8).write(to: configURL, options: [.atomic])
-
-      let generator = ManifestGenerator(modelId: "test/sentinel-model")
-      let manifestURL = try await generator.generate(directory: dir)
-      let manifest = try JSONDecoder().decode(
-        CDNManifest.self, from: Data(contentsOf: manifestURL))
-
-      // Build a CDNUploader with the injected sentinel environment.
-      // R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY from the host are NOT used.
-      let uploader = CDNUploader(
-        awsExecutableURL: URL(fileURLWithPath: "/var/empty/never-exists-aws"),
-        environment: [
-          "R2_ACCESS_KEY_ID": "__TEST_FAKE_KEY__",
-          "R2_SECRET_ACCESS_KEY": "__TEST_FAKE_SECRET__",
-        ]
-      )
-
-      // verifyBeforeUpload reads only the filesystem; it must not throw here.
-      // This is the phase prior to any `aws` spawn, so credentials are not
-      // yet checked. Reaching this assertion without throwing confirms the
-      // injected env is used and no real credential is required.
-      try await uploader.verifyBeforeUpload(directory: dir, manifest: manifest)
+    func set(_ v: Bool) {
+      lock.lock()
+      defer { lock.unlock() }
+      _value = v
     }
   }
 #endif

@@ -431,6 +431,248 @@ Error type conforming to `LocalizedError`, `Sendable`.
 
 All errors have `localizedDescription` for user-facing messages.
 
+**CDN mutation error cases** (added in v0.10.1 / v0.11.0):
+
+| Case | Description |
+|------|-------------|
+| `publishVerificationFailed(stage: String)` | Post-upload verification (CHECK 4, 5, or 6) failed. `stage` identifies which check — e.g. `"rehash"`, `"manifest-fetch"`, or `"sample-file"`. |
+| `publishOrphanPruneFailed(failedKeys: [String], publishedManifest: CDNManifest)` | `publishModel` succeeded but the orphan-prune step left one or more keys on the CDN. The new manifest is live and serving traffic; the orphans are storage waste. `failedKeys` lists the unswept keys for a targeted retry. |
+| `fetchSourceFailed(modelId: String, underlying: any Error)` | `Acervo.recache(...)`'s caller-supplied `fetchSource` closure threw. Wrapped here so the recache call site presents a single error type while preserving the original error for logging. |
+| `cdnAuthorizationFailed(operation: String)` | S3 request was rejected with HTTP 403. `operation` identifies the verb (`"put"`, `"delete"`, `"list"`, etc.). |
+| `cdnOperationFailed(operation: String, statusCode: Int, body: String)` | S3 request returned a non-2xx status or an unparseable 2xx XML body. `body` is truncated at 512 characters; the full payload is on the case value. |
+| `manifestZeroByteFile(path: String)` | CHECK 2 — `ManifestGenerator` refused to write a manifest because a staged file is zero bytes. `path` is the relative offender path. |
+| `manifestPostWriteCorrupted(path: String)` | CHECK 3 — the manifest was written and re-read, but the round-tripped checksum did not match. The manifest is removed from disk before this error is thrown. |
+| `manifestRelativePathOutsideBase(file: String, base: String)` | A staged file could not be expressed as a relative path under the staging base. Indicates a `/tmp` vs `/private/tmp` symlink mismatch that survived resolution. |
+
+---
+
+## CDN Mutation API
+
+The CDN mutation surface is the set of static methods on `Acervo` that write to
+Cloudflare R2. All three methods require an `AcervoCDNCredentials` value; the
+library never reads credentials from environment variables — callers must pass them
+explicitly.
+
+### AcervoCDNCredentials
+
+Credential bundle for S3-compatible CDN access. Conforms to `Sendable`.
+
+```swift
+public struct AcervoCDNCredentials: Sendable {
+    public let accessKeyId: String        // S3 access key identifier
+    public let secretAccessKey: String    // S3 secret access key (never log this)
+    public let region: String             // Region literal; R2 expects "auto"
+    public let bucket: String             // Bucket name
+    public let endpoint: URL              // S3-compatible API endpoint (signed mutations)
+    public let publicBaseURL: URL         // Public CDN base URL (CHECK 5/6 verification reads)
+
+    public init(
+        accessKeyId: String,
+        secretAccessKey: String,
+        region: String = "auto",                      // default for Cloudflare R2
+        bucket: String = "intrusive-memory-models",   // default bucket
+        endpoint: URL,
+        publicBaseURL: URL
+    )
+}
+```
+
+### Acervo.publishModel
+
+Atomically publishes a locally-staged model directory to the CDN.
+
+```swift
+@discardableResult
+public static func publishModel(
+    modelId: String,
+    directory: URL,
+    credentials: AcervoCDNCredentials,
+    keepOrphans: Bool = false,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+) async throws -> CDNManifest
+```
+
+**Parameters**:
+- `modelId` — `org/repo` identifier. Used to compute the CDN slug (`org_repo`) and embedded in `manifest.json`.
+- `directory` — Local staging directory containing model files. Must already be populated; the library does not fetch from HuggingFace (use `recache(...)` for that).
+- `credentials` — S3 credentials plus public CDN base URL for CHECK 5/6.
+- `keepOrphans` — When `true`, the orphan-prune step is skipped. Default `false` (prune by default).
+- `progress` — Optional callback invoked at each step boundary.
+
+**Returns**: The `CDNManifest` that was just published.
+
+**Throws**: `AcervoError.publishVerificationFailed(stage:)` on CHECK failures; `AcervoError.publishOrphanPruneFailed(...)` if the orphan-prune step fails after a successful publish.
+
+**11-step execution order** (frozen):
+1. Generate manifest (CHECK 2: no zero-byte files; CHECK 3: manifest re-read).
+2. Re-hash staged files against manifest (CHECK 4).
+3. List existing CDN keys at `models/<slug>/`.
+4. PUT every manifest file.
+5. PUT `manifest.json` LAST.
+6. Fetch `manifest.json` from `publicBaseURL` and verify checksum (CHECK 5).
+7. Fetch `config.json` (or first entry) from `publicBaseURL` and verify SHA-256 (CHECK 6).
+8. Compute orphans = existing keys − new manifest keys − `{manifest.json}`.
+9. If `keepOrphans == false`, delete orphans via `deleteObjects` in batches of 1000.
+
+### Acervo.deleteFromCDN
+
+Removes every object under `models/<slug>/` from the CDN. Non-atomic by design.
+Idempotent: if the prefix is already empty, returns without issuing any `DeleteObjects` requests.
+
+```swift
+public static func deleteFromCDN(
+    modelId: String,
+    credentials: AcervoCDNCredentials,
+    progress: (@Sendable (AcervoDeleteProgress) -> Void)? = nil,
+    telemetry: (any AcervoTelemetryReporter)? = nil
+) async throws
+```
+
+**Parameters**:
+- `modelId` — `org/repo` identifier.
+- `credentials` — S3 credentials for the CDN bucket.
+- `progress` — Optional callback: `listingPrefix`, `deletingBatch(count:deletedSoFar:)`, `complete`.
+
+**Throws**: `AcervoError.invalidModelId` if `modelId` is malformed; underlying `S3CDNClient` errors on network failures.
+
+### Acervo.recache
+
+Re-fetches a model from a caller-supplied source and republishes it to the CDN.
+A thin convenience over `publishModel`: the `fetchSource` closure populates the staging
+directory, then the directory is handed to `publishModel` for the atomic publish + orphan prune.
+
+```swift
+@discardableResult
+public static func recache(
+    modelId: String,
+    stagingDirectory: URL,
+    credentials: AcervoCDNCredentials,
+    fetchSource: @Sendable (_ modelId: String, _ into: URL) async throws -> Void,
+    keepOrphans: Bool = false,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil
+) async throws -> CDNManifest
+```
+
+**Parameters**:
+- `modelId` — `org/repo` identifier.
+- `stagingDirectory` — Directory the closure should populate. Existing contents are not cleaned up; the caller is responsible for a clean directory if desired.
+- `credentials` — S3 credentials plus public base URL.
+- `fetchSource` — Async closure that downloads or materializes model files into `stagingDirectory`. The library is agnostic to the source (HuggingFace, S3, tarball, etc.).
+- `keepOrphans` — Forwarded to `publishModel`. Default `false`.
+- `progress` — Forwarded to `publishModel`.
+
+**Returns**: The `CDNManifest` produced by `publishModel`.
+
+**Throws**: `AcervoError.fetchSourceFailed(modelId:underlying:)` if `fetchSource` throws; any error `publishModel` can raise.
+
+---
+
+## AcervoPublishProgress
+
+Progress event emitted during `Acervo.publishModel`. Conforms to `Sendable`.
+
+```swift
+public enum AcervoPublishProgress: Sendable {
+    case generatingManifest                                               // Step 1
+    case verifyingManifest                                                // Steps 2–4
+    case listingExistingKeys(found: Int)                                  // Step 5
+    case uploadingFile(name: String, bytesSent: Int64, bytesTotal: Int64) // Step 6 (×N)
+    case uploadingManifest                                                // Step 7
+    case verifyingPublic(stage: String)                                   // Steps 8–9
+    case pruningOrphans(count: Int)                                       // Steps 10–11
+    case complete                                                         // Terminal
+}
+```
+
+`verifyingPublic(stage:)` values: `"manifest"` (CHECK 5) and `"sample-file"` (CHECK 6).
+
+Consumers should treat unknown cases defensively — additional cases may be appended in future minor versions.
+
+---
+
+## AcervoDeleteProgress
+
+Progress event emitted during `Acervo.deleteFromCDN`. Conforms to `Sendable`.
+
+```swift
+public enum AcervoDeleteProgress: Sendable {
+    case listingPrefix                                 // Emitted at each pass through the delete loop
+    case deletingBatch(count: Int, deletedSoFar: Int)  // One event per DeleteObjects batch (max 1000 keys)
+    case complete                                      // Terminal — prefix listing returned empty
+}
+```
+
+Consumers should treat unknown cases defensively — additional cases may be appended in future minor versions.
+
+---
+
+## S3CDNClient
+
+Native S3-compatible client with SigV4 signing. Supports single-shot and multipart uploads.
+
+**Type**: `public actor S3CDNClient`
+
+```swift
+public actor S3CDNClient {
+    public static let defaultSingleShotThreshold: Int64  // 100 MB
+    public static let defaultMultipartPartSize: Int64    // 16 MB
+
+    public init(
+        credentials: AcervoCDNCredentials,
+        singleShotThreshold: Int64 = defaultSingleShotThreshold,
+        multipartPartSize: Int64 = defaultMultipartPartSize
+    )
+
+    public func listObjects(prefix: String) async throws -> [S3Object]
+    public func headObject(key: String) async throws -> S3ObjectHead?
+    public func deleteObject(key: String) async throws
+    public func deleteObjects(keys: [String]) async throws -> [S3DeleteResult]
+    public func putObject(
+        key: String,
+        data: Data,
+        contentType: String
+    ) async throws -> S3PutResult
+}
+```
+
+**Result types**:
+- `S3Object`: `key: String`, `size: Int64`, `etag: String`
+- `S3ObjectHead`: `size: Int64`, `etag: String`, `contentType: String?`, `lastModified: Date?`
+- `S3PutResult`: `key: String`, `etag: String`, `sha256: String`
+- `S3DeleteResult`: `key: String`, `success: Bool`, `error: String?`
+
+All conform to `Sendable` and `Equatable`. Callers typically do not use `S3CDNClient` directly — `Acervo.publishModel`, `deleteFromCDN`, and `recache` own the client lifecycle internally.
+
+---
+
+## SigV4Signer
+
+AWS Signature Version 4 request signer. Used internally by `S3CDNClient`.
+
+**Type**: `public struct SigV4Signer: Sendable`
+
+```swift
+public struct SigV4Signer: Sendable {
+    public init(credentials: AcervoCDNCredentials, service: String = "s3")
+
+    public func sign(
+        _ request: URLRequest,
+        payloadHash: PayloadHash,
+        date: Date = Date()
+    ) -> URLRequest
+}
+
+public enum PayloadHash: Sendable {
+    case data(Data)           // Hash computed from the payload bytes
+    case unsignedPayload      // "UNSIGNED-PAYLOAD" (streaming/chunked uploads)
+    case empty                // "e3b0c44298fc1c14..." (empty body)
+}
+```
+
+Callers typically do not instantiate `SigV4Signer` directly — it is owned by `S3CDNClient`.
+Its AWS canonical request test vectors are in `Tests/SwiftAcervoTests/SigV4SignerTests.swift`.
+
 ---
 
 ## Design Notes

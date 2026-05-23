@@ -1,6 +1,6 @@
 # REQUIREMENTS — Three-state availability + resumable, dedup'd, chunked downloads
 
-**Status:** Draft for mission-supervisor breakdown.
+**Status:** Archived 2026-05-19. Shipped substantially in v0.14.0 (commit `66d1d56`). §4.1, §4.2, §4.3, §4.5, and §4.6 are complete; §4.4 (chunked streaming) was deferred at execution time and continues in the active root [`REQUIREMENTS.md`](../../REQUIREMENTS.md) §2.
 **Author of source TODO:** user, 2026-05-18.
 **Driving symptom:** In Vinetas, "the model downloads every time, step 0 of 20 sticks for a long time." Live `sample` of the running process showed the dominant CPU cost is byte-at-a-time `Data.append` in `AcervoDownloader.streamDownloadFile`, plus no resume support, plus no in-flight dedup.
 
@@ -179,22 +179,7 @@ actor InFlightDownloads {
 
 ### 4.4 Chunk `streamDownloadFile`
 
-**Replace the byte-at-a-time loop** at `AcervoDownloader.swift:513-534` with a chunked variant.
-
-**Recommended shape:** switch to a `URLSessionDataDelegate` and write chunks straight from `urlSession(_:dataTask:didReceive:)`. The `AsyncBytes` API does not expose a chunk size, so the only way to get true chunked reads without an extra batching layer is to leave `bytes(for:)` behind for streaming. Keep `bytes(for:)` for the manifest (small).
-
-Alternative if delegate plumbing is too disruptive: wrap `URLSession.AsyncBytes` in an `AsyncSequence` extension that batches up to `streamChunkSize` bytes per yield. Acceptable, slightly slower than the delegate path, but a strict improvement over byte-at-a-time. Choose this path if the delegate route requires reworking `SecureDownloadSession`.
-
-**Both shapes must:**
-
-- Feed each `Data` chunk into the SHA-256 hasher and the file handle in one shot (no intermediate per-byte accumulation).
-- Update progress at the chunk boundary, not the byte boundary.
-- Preserve cancellation: `try Task.checkCancellation()` at each chunk boundary, or use the delegate's `cancel()` on task cancellation.
-
-**Acceptance:**
-
-- Microbench in a new test `Tests/SwiftAcervoTests/StreamingThroughputTests.swift` that downloads a 256 MB synthetic file from an in-process `URLProtocol` mock and asserts wall-clock time below a reasonable ceiling on the CI runner (pick the ceiling empirically — the criterion is "no longer CPU-bound").
-- Optional: a `sample`-based smoke test is not feasible in CI; instead, add a unit test that downloads a 16 MB synthetic file with a hash-update counter and asserts the hasher was called O(file_size / chunk_size) times, not O(file_size) times.
+**Deferred at execution time and moved to the active requirements doc.** See [`REQUIREMENTS.md` §2](../../REQUIREMENTS.md) in the repo root. The line reference for the byte-at-a-time loop has shifted to `AcervoDownloader.swift:745` post-§4.5; the substance of the requirement is otherwise unchanged.
 
 ---
 

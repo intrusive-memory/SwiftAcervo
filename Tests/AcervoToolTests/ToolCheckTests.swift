@@ -10,6 +10,9 @@
     /// These tests mutate the process-wide `PATH` environment variable so they
     /// MUST run serially. The `.serialized` trait is provided by the parent
     /// `ProcessEnvironmentSuite`.
+    ///
+    /// After the v0.14.x CLI consolidation `ToolCheck.validate()` only needs
+    /// `hf` on PATH — the `aws` binary is no longer a runtime dependency.
     @Suite("ToolCheck Tests")
     final class ToolCheckTests {
 
@@ -44,26 +47,8 @@
 
       // MARK: - Missing tools
 
-      @Test("validate throws when both aws and huggingface-cli are absent")
-      func bothToolsMissing() {
-        var thrown: Error?
-        do {
-          try ToolCheck.validate()
-        } catch {
-          thrown = error
-        }
-        guard case .some(AcervoToolError.missingTool(let name)) = thrown else {
-          Issue.record("Expected AcervoToolError.missingTool, got \(String(describing: thrown))")
-          return
-        }
-        // aws is checked first, so that's the missing tool we expect.
-        #expect(name == "aws")
-      }
-
-      @Test("validate throws on hf when only aws is present")
-      func huggingFaceCLIMissing() throws {
-        try installStub(named: "aws")
-
+      @Test("validate throws missingTool('hf') when hf is absent")
+      func hfMissing() {
         var thrown: Error?
         do {
           try ToolCheck.validate()
@@ -77,30 +62,26 @@
         #expect(name == "hf")
       }
 
-      @Test("validate succeeds silently when both stubs are present")
-      func bothToolsPresent() throws {
-        try installStub(named: "aws")
+      @Test("validate succeeds silently when hf is present")
+      func hfPresent() throws {
         try installStub(named: "hf")
         // Must not throw.
         try ToolCheck.validate()
       }
 
-      // MARK: - Error message content
-
-      @Test("missingTool description for aws mentions brew install awscli")
-      func errorMessageContainsAWSBrewHint() {
-        let error = AcervoToolError.missingTool("aws")
-        // The thrown error's description is the machine-testable content.
-        let combined = String(describing: error)
-        #expect(combined.contains("aws"))
-        // The brew hint is written to stderr by ToolCheck; separately assert
-        // that the user-facing brew install hint exists somewhere in the
-        // ToolCheck source by invoking validate() and capturing the error.
-        // Here we also spot-check the thrown error carries the tool name so
-        // callers can render their own message.
+      @Test("validate does NOT require aws on PATH (post-v0.14.x cleanup)")
+      func awsNoLongerRequired() throws {
+        // Install ONLY hf. The pre-cleanup behaviour required both `aws`
+        // and `hf`; the post-cleanup behaviour requires only `hf`. This
+        // test pins the new contract so a regression that re-introduces
+        // an aws-on-PATH check shows up here.
+        try installStub(named: "hf")
+        try ToolCheck.validate()
       }
 
-      @Test("ToolCheck source stderr output includes brew install awscli hint")
+      // MARK: - Error message content
+
+      @Test("missingTool description for hf mentions brew install huggingface-hub")
       func brewInstallHintPresentInStderr() throws {
         // Redirect stderr to a pipe so we can capture what ToolCheck writes.
         let originalStderr = dup(fileno(stderr))
@@ -119,7 +100,15 @@
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let text = String(data: data, encoding: .utf8) ?? ""
 
-        #expect(text.contains("brew install awscli"))
+        #expect(text.contains("brew install huggingface-hub"))
+      }
+
+      @Test("isToolOnPath returns true for installed stubs and false otherwise")
+      func isToolOnPathSeam() throws {
+        #expect(ToolCheck.isToolOnPath(name: "hf") == false)
+        try installStub(named: "hf")
+        #expect(ToolCheck.isToolOnPath(name: "hf") == true)
+        #expect(ToolCheck.isToolOnPath(name: "totally-bogus-binary") == false)
       }
     }
   }

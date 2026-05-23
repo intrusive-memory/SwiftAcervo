@@ -6,7 +6,7 @@ updated: 2026-05-18
 
 This file serves as a navigation hub for AI agents working with the SwiftAcervo codebase.
 
-**Current Version**: 0.14.1 (May 2026)
+**Current Version**: 0.15.0 (May 2026)
 
 **For detailed documentation**, see the focused guides below. **For consuming library integration**, start with **[USAGE.md](Docs/USAGE.md)**.
 
@@ -177,6 +177,35 @@ let config = try await AcervoManager.shared.withModelAccess(modelId) { dir in
 ```
 
 **Full reference**: [API_REFERENCE.md](Docs/API_REFERENCE.md)
+
+### CDN Mutation API: `Acervo.publishModel` / `deleteFromCDN` / `recache`
+
+```swift
+// Publish a locally-staged model directory to the CDN (atomic, manifest-LAST)
+let manifest = try await Acervo.publishModel(
+    modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    directory: stagingURL,
+    credentials: credentials,      // AcervoCDNCredentials
+    keepOrphans: false             // true = additive; false = prune orphans (default)
+)
+
+// Delete every key under models/<slug>/ (idempotent)
+try await Acervo.deleteFromCDN(
+    modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    credentials: credentials
+)
+
+// Re-fetch from a caller-supplied source and republish (thin wrapper over publishModel)
+let manifest = try await Acervo.recache(
+    modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    stagingDirectory: stagingURL,
+    credentials: credentials,
+    fetchSource: { modelId, into in /* populate `into` */ },
+    keepOrphans: false
+)
+```
+
+**Full reference**: [API_REFERENCE.md](Docs/API_REFERENCE.md) § CDN Mutation API
 
 ### Multi-Model Downloads: `ModelDownloadManager`
 
