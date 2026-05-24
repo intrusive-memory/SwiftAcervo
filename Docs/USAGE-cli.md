@@ -1,6 +1,6 @@
 # SwiftAcervo CLI — `acervo`
 
-Reference for the `acervo` command-line tool. Textual mirror of `acervo --help` plus every subcommand's `--help`, captured from version `0.16.1`.
+Reference for the `acervo` command-line tool. Textual mirror of `acervo --help` plus every subcommand's `--help`, captured from version `0.16.1-dev`.
 
 Regenerate after CLI changes: `make install-acervo` then re-run this file's source generator.
 
