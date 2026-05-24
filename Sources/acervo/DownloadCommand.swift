@@ -246,6 +246,12 @@ struct DownloadCommand: AsyncParsableCommand {
         environment["HUGGING_FACE_HUB_TOKEN"] = token
       }
 
+      // TODO: Bring HuggingFace downloads in-process. This shells out to the
+      // Python `hf` CLI (huggingface_hub) for the actual file transfer, which
+      // makes Python a runtime dependency of acervo. The metadata layer is
+      // already native (see HuggingFaceClient); the remaining work is native
+      // LFS pointer resolution and Xet protocol support so we can drop the
+      // subprocess entirely.
       let result = try ProcessRunner.run(
         executableURL: URL(fileURLWithPath: "/usr/bin/env"),
         arguments: arguments,
