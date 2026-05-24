@@ -32,7 +32,7 @@ let package = Package(
 )
 ```
 
-The current library version is `Acervo.version` (`"0.16.0"`).
+The current library version is `Acervo.version` (`"0.16.0-dev"`).
 
 ### App Group Configuration (required)
 
