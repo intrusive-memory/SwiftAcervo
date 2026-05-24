@@ -43,7 +43,7 @@ _(none right now)_
 | Item | Lives in | Promotion candidate? |
 |---|---|---|
 | SwiftVinetas D2 cleanup — dead aggregation loop in `../Vinetas/Sources/SwiftVinetas/Engine/Flux2Engine.swift:426-433` | Mission-branch REQUIREMENTS.md §1.3 | Cross-package (in `../Vinetas/` repo); track from Vinetas side |
-| PR #35 follow-up — cache-bypass on `publishModel` post-upload readback | `Docs/PR35_CODE_REVIEW.md` (primary finding) | Yes; small (~1 sortie). Could be a sortie tacked onto VAULT BROOM 03 or its own follow-up mission |
+| PR #35 follow-up — cache-bypass on `publishModel` post-upload readback. **Primary finding** (preserved here since `Docs/PR35_CODE_REVIEW.md` was deleted in the 0.16.0 doc cleanup): the post-upload manifest readback in `publishModel` should bypass CDN edge cache (e.g., via a cache-busting query string OR by reading directly from the bucket origin) to defeat readback-from-stale-edge. | (text-only carry-forward) | Yes; small (~1 sortie). Could be a sortie tacked onto a future mission |
 | SwiftAcervo telemetry/instrumentation | `Docs/REQUIREMENTS-instrumentation.md` (status: draft) | Yes; P3 priority. Becomes its own mission when prioritized |
 | Bit-rot detection (file matches size, SHA differs) | EIGHTH-MASTER 01 §1.4 (out of scope) | Follow-up after EIGHTH-MASTER ships |
 | Auto-remediation of `.partial` model state | EIGHTH-MASTER 01 §1.4 (out of scope) | Consumer-side; tracked from consumer libraries (Vinetas, SwiftBruja) |

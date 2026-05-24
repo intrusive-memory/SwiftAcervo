@@ -354,6 +354,6 @@ for model in allModels {
 
 ## See Also
 
-- **[USAGE.md](USAGE.md)** — Integration patterns
-- **[API_REFERENCE.md](API_REFERENCE.md)** — Method reference
+- **[USAGE-library.md](USAGE-library.md)** — Integration patterns
+- **[USAGE-library.md](USAGE-library.md)** — Method reference
 - **[README.md](README.md)** — User overview

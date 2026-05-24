@@ -2,7 +2,7 @@
 
 Per-version migration guide for SwiftAcervo. Targeted at **agents reading consumer code** — patterns below are concrete enough to drive grep-and-replace decisions without further interpretation.
 
-For design context behind each change, see [`CHANGELOG.md`](CHANGELOG.md) and [`Docs/MODEL_AVAILABILITY_PATH.md`](Docs/MODEL_AVAILABILITY_PATH.md). This file is the operational how-to.
+For design context behind each change, see [`CHANGELOG.md`](CHANGELOG.md) and [`Docs/USAGE-library.md`](Docs/USAGE-library.md). This file is the operational how-to.
 
 ---
 
@@ -333,9 +333,9 @@ You have a concurrent-download wrapper around ensureAvailable / ensureComponentR
 ### Cross-reference
 
 - [`CHANGELOG.md`](CHANGELOG.md) § `[0.14.0]` — release-note view.
-- [`Docs/MODEL_AVAILABILITY_PATH.md`](Docs/MODEL_AVAILABILITY_PATH.md) — design doc behind the three-state surface.
-- [`Docs/API_REFERENCE.md`](Docs/API_REFERENCE.md) — full method signatures.
-- [`Docs/USAGE.md`](Docs/USAGE.md) — high-level usage patterns.
+- [`Docs/USAGE-library.md`](Docs/USAGE-library.md) — design doc behind the three-state surface.
+- [`Docs/USAGE-library.md`](Docs/USAGE-library.md) — full method signatures.
+- [`Docs/USAGE-library.md`](Docs/USAGE-library.md) — high-level usage patterns.
 
 Verified consumer call-site inventory (as of the dev→main PR landing 0.13.2 + 0.14.0): see the table in Step 1. If your consumer is not listed, run Step 1's `rg` patterns to enumerate call sites and apply Step 2's disposition.
 

@@ -327,6 +327,6 @@ for file in model.files {
 
 ## See Also
 
-- **[CDN_UPLOAD.md](CDN_UPLOAD.md)** — How to upload models to the CDN
-- **[API_REFERENCE.md](API_REFERENCE.md)** — Download methods and error types
-- **[USAGE.md](USAGE.md)** — Integration examples
+- **[USAGE-cli.md](USAGE-cli.md)** — How to upload models to the CDN
+- **[USAGE-library.md](USAGE-library.md)** — Download methods and error types
+- **[USAGE-library.md](USAGE-library.md)** — Integration examples

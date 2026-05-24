@@ -74,12 +74,12 @@ SwiftAcervo/
 ├── Makefile
 └── Documentation files (.md)
     ├── README.md
-    ├── USAGE.md
-    ├── API_REFERENCE.md
-    ├── BUILD_AND_TEST.md
+    ├── USAGE-library.md
+    ├── USAGE-library.md
+    ├── USAGE-cli.md
     ├── DESIGN_PATTERNS.md
     ├── CDN_ARCHITECTURE.md
-    ├── CDN_UPLOAD.md
+    ├── USAGE-cli.md
     ├── PROJECT_STRUCTURE.md
     ├── SHARED_MODELS_DIRECTORY.md
     ├── REQUIREMENTS.md
@@ -489,11 +489,11 @@ Standard targets:
 ## Documentation Structure
 
 - **README.md** — User-facing overview and quick start
-- **USAGE.md** — Integration guide for consuming libraries (start here!)
-- **API_REFERENCE.md** — Complete method and type reference
-- **BUILD_AND_TEST.md** — Building, testing, CI/CD
+- **USAGE-library.md** — Integration guide for consuming libraries (start here!)
+- **USAGE-library.md** — Complete method and type reference
+- **USAGE-cli.md** — Building, testing, CI/CD
 - **CDN_ARCHITECTURE.md** — How downloads work
-- **CDN_UPLOAD.md** — How to upload to R2
+- **USAGE-cli.md** — How to upload to R2
 - **DESIGN_PATTERNS.md** — Architectural decisions
 - **PROJECT_STRUCTURE.md** (this file) — File organization
 - **SHARED_MODELS_DIRECTORY.md** — Canonical storage location
@@ -537,6 +537,6 @@ acervo (CLI)
 
 ## See Also
 
-- **[API_REFERENCE.md](API_REFERENCE.md)** — All exported types and methods
-- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** — How to run tests
-- **[USAGE.md](USAGE.md)** — Using the library
+- **[USAGE-library.md](USAGE-library.md)** — All exported types and methods
+- **[USAGE-cli.md](USAGE-cli.md)** — How to run tests
+- **[USAGE-library.md](USAGE-library.md)** — Using the library
