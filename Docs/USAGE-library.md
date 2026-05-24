@@ -32,7 +32,7 @@ let package = Package(
 )
 ```
 
-The current library version is `Acervo.version` (`"0.16.0"`).
+The current library version is `Acervo.version` (`"0.16.1"`).
 
 ### App Group Configuration (required)
 
@@ -884,6 +884,8 @@ Atomically publishes a locally-staged model directory to the CDN in an 11-step p
 
 Throws `AcervoError.publishVerificationFailed(stage:)` on post-upload check failures, `AcervoError.publishOrphanPruneFailed(failedKeys:publishedManifest:)` when orphan prune partially fails (the new manifest is already live; the published manifest is returned in the error payload so the caller can surface success-with-warnings semantics).
 
+> **Note (`consumers` field).** The manifest schema includes a `consumers: [CDNManifestConsumer]` field (see [Supporting Types → `CDNManifestConsumer`](#cdnmanifestconsumer)), but `publishModel` does **not** yet accept a `consumers:` parameter — it currently emits `consumers: []` on every publish. Wiring a producer-side API onto `publishModel` (and `recache`) is tracked separately. Until then, the field is consumer-readable but not producer-settable through the public library surface.
+
 ---
 
 #### `Acervo.deleteFromCDN(modelId:credentials:progress:telemetry:)`
@@ -1387,6 +1389,43 @@ public struct AcervoCDNCredentials: Sendable {
 ```
 
 Credentials for operator-side CDN mutations. The library never reads from `ProcessInfo.environment`; callers must populate and pass an instance explicitly.
+
+---
+
+### `CDNManifestConsumer`
+
+```swift
+public struct CDNManifestConsumer: Codable, Sendable, Hashable {
+    public enum Kind: String, Codable, Sendable, Hashable {
+        case library
+        case app
+    }
+
+    public let name: String   // publicly-visible project name
+    public let kind: Kind
+    public let url: String?   // optional homepage / docs link; omitted when nil
+
+    public init(name: String, kind: Kind, url: String? = nil)
+}
+```
+
+Identifies a library or application that consumes a CDN-hosted model. Surfaces on `CDNManifest` as:
+
+```swift
+public let consumers: [CDNManifestConsumer]
+```
+
+**Naming convention.** Entries are identified by **project name** — the publicly-visible product/library name — not the GitHub `org/repo`. This is deliberate: some consuming repos are private, and the project name is the stable, public identifier. Examples:
+
+| `name` | `kind` |
+| --- | --- |
+| `"SwiftVinetas"` | `.library` |
+| `"Vinetas"` | `.app` |
+| `"mlx-audio-swift"` | `.library` |
+
+**Wire schema.** Optional on the wire, defaults to `[]`. Existing pre-`consumers` manifests on the CDN continue to decode cleanly — there is no migration shim required for readers. Producers are expected to populate at least one entry; that invariant will be enforced at upload time (CLI / spec) rather than at the decode boundary.
+
+> **No public producer API yet.** As of this release, `Acervo.publishModel(...)` and `Acervo.recache(...)` do **not** accept a `consumers:` parameter and emit `consumers: []` on every publish. The internal `ManifestGenerator` accepts a `consumers:` argument (`Sources/SwiftAcervo/ManifestGenerator.swift`), but that type is not part of the public documented surface. Wiring `consumers` onto `publishModel` / `recache` (and the `acervo ship` CLI / spec file) is tracked as the next step. Until then, consumers can **read** the field via `Acervo.fetchManifest(...)` but cannot set it through the public library API.
 
 ---
 

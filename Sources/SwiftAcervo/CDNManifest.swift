@@ -75,13 +75,26 @@ public struct CDNManifest: Codable, Sendable {
   /// Verifies manifest integrity without cryptographic signing.
   public let manifestChecksum: String
 
+  /// Libraries or applications that consume this model.
+  ///
+  /// Entries are identified by **project name** (not GitHub repo), because
+  /// some consuming repos are private. The convention is the
+  /// publicly-visible product/library name — e.g. `SwiftVinetas` (library),
+  /// `Vinetas` (app), `mlx-audio-swift` (library).
+  ///
+  /// Optional on the wire and defaults to `[]` to keep existing manifests
+  /// decodable. Producers are expected to populate at least one entry; that
+  /// invariant is enforced at upload time (via `acervo ship`), not at the
+  /// decode boundary.
+  public let consumers: [CDNManifestConsumer]
+
   /// Memberwise initializer for constructing manifests programmatically.
   ///
   /// `primaryRepo` and `components` are required on the wire. The in-memory
   /// initializer applies the single-component defaults (`primaryRepo ==
   /// modelId`, `components == [modelId]`) when omitted, so library callers
   /// constructing a manifest for a single-repo model don't need to repeat
-  /// themselves.
+  /// themselves. `consumers` defaults to an empty array.
   public init(
     manifestVersion: Int,
     modelId: String,
@@ -90,7 +103,8 @@ public struct CDNManifest: Codable, Sendable {
     files: [CDNManifestFile],
     manifestChecksum: String,
     primaryRepo: String? = nil,
-    components: [String]? = nil
+    components: [String]? = nil,
+    consumers: [CDNManifestConsumer] = []
   ) {
     self.manifestVersion = manifestVersion
     self.modelId = modelId
@@ -100,6 +114,7 @@ public struct CDNManifest: Codable, Sendable {
     self.manifestChecksum = manifestChecksum
     self.primaryRepo = primaryRepo ?? modelId
     self.components = components ?? [modelId]
+    self.consumers = consumers
   }
 
   // MARK: - Codable
@@ -113,11 +128,13 @@ public struct CDNManifest: Codable, Sendable {
     case updatedAt
     case files
     case manifestChecksum
+    case consumers
   }
 
   /// Strict decode. `primaryRepo` and `components` are required on the wire.
   /// A manifest missing either field throws `DecodingError.keyNotFound`.
   /// There is no migration shim — out-of-spec manifests fail to decode.
+  /// `consumers` is optional and defaults to `[]` when absent.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.manifestVersion = try container.decode(Int.self, forKey: .manifestVersion)
@@ -128,6 +145,40 @@ public struct CDNManifest: Codable, Sendable {
     self.updatedAt = try container.decode(String.self, forKey: .updatedAt)
     self.files = try container.decode([CDNManifestFile].self, forKey: .files)
     self.manifestChecksum = try container.decode(String.self, forKey: .manifestChecksum)
+    self.consumers =
+      try container.decodeIfPresent([CDNManifestConsumer].self, forKey: .consumers) ?? []
+  }
+}
+
+/// A library or application that consumes a CDN-hosted model.
+///
+/// Identified by **project name** (the publicly-visible product/library
+/// name) rather than GitHub repo, because some consuming repos are private.
+///
+/// - `name`: e.g. `"SwiftVinetas"`, `"Vinetas"`, `"mlx-audio-swift"`.
+/// - `kind`: whether this consumer is a reusable library or a shipping app.
+/// - `url`: optional homepage / docs link. Omitted on the wire when `nil`.
+public struct CDNManifestConsumer: Codable, Sendable, Hashable {
+
+  /// Whether the consumer is a reusable library or an end-user application.
+  public enum Kind: String, Codable, Sendable, Hashable {
+    case library
+    case app
+  }
+
+  /// The publicly-visible project name (not a GitHub `org/repo`).
+  public let name: String
+
+  /// Whether this is a library or an application.
+  public let kind: Kind
+
+  /// Optional homepage or documentation URL. Omitted from JSON when `nil`.
+  public let url: String?
+
+  public init(name: String, kind: Kind, url: String? = nil) {
+    self.name = name
+    self.kind = kind
+    self.url = url
   }
 }
 
