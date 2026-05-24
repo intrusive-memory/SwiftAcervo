@@ -73,6 +73,11 @@ public actor ManifestGenerator {
   /// CDN prefix derived from the component's own HF repo.
   private let slugOverride: String?
 
+  /// Libraries or applications that consume this model, written into the
+  /// generated manifest's `consumers` field. Defaults to an empty array,
+  /// in which case the manifest's `consumers` field is `[]` on the wire.
+  private let consumers: [CDNManifestConsumer]
+
   /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
   private var telemetry: (any AcervoTelemetryReporter)? = nil
 
@@ -119,6 +124,7 @@ public actor ManifestGenerator {
     self.primaryRepo = nil
     self.components = nil
     self.slugOverride = nil
+    self.consumers = []
     self.manifestVersion = manifestVersion
   }
 
@@ -142,6 +148,9 @@ public actor ManifestGenerator {
   ///     Defaults to `[modelId]` when `nil`.
   ///   - slugOverride: Optional override for the CDN slug-key. Defaults
   ///     to `nil` (use `modelId`).
+  ///   - consumers: Libraries / applications that consume this model.
+  ///     Identified by **project name** (not GitHub repo). Defaults to
+  ///     `[]`; the ship pipeline is responsible for populating this.
   ///   - manifestVersion: Schema version. Defaults to
   ///     `CDNManifest.supportedVersion`.
   public init(
@@ -149,12 +158,14 @@ public actor ManifestGenerator {
     primaryRepo: String? = nil,
     components: [String]? = nil,
     slugOverride: String? = nil,
+    consumers: [CDNManifestConsumer] = [],
     manifestVersion: Int = CDNManifest.supportedVersion
   ) {
     self.modelId = modelId
     self.primaryRepo = primaryRepo
     self.components = components
     self.slugOverride = slugOverride
+    self.consumers = consumers
     self.manifestVersion = manifestVersion
   }
 
@@ -230,7 +241,8 @@ public actor ManifestGenerator {
       files: manifestFiles,
       manifestChecksum: CDNManifest.computeChecksum(from: manifestFiles.map(\.sha256)),
       primaryRepo: primaryRepo ?? resolvedModelId,
-      components: components ?? [resolvedModelId]
+      components: components ?? [resolvedModelId],
+      consumers: consumers
     )
 
     let manifestURL = resolvedDirectory.appendingPathComponent("manifest.json")
