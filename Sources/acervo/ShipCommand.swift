@@ -412,7 +412,9 @@ struct ShipCommand: AsyncParsableCommand {
     }
 
     FileHandle.standardOutput.write(
-      Data("Ship complete for spec \(loadedSpec.modelId) (\(loadedSpec.components.count) component(s)).\n".utf8)
+      Data(
+        "Ship complete for spec \(loadedSpec.modelId) (\(loadedSpec.components.count) component(s)).\n"
+          .utf8)
     )
   }
 

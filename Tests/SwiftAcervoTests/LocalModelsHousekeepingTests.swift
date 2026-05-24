@@ -557,7 +557,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
             path: "config.json",
             sha256: sha256Hex(configBody),
             sizeBytes: Int64(configBody.count)
-          ),
+          )
         ]
         let manifest = CDNManifest(
           manifestVersion: CDNManifest.supportedVersion,
@@ -609,7 +609,9 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
         // manifest.json is still the same bytes.
         let secondBytes = try Data(contentsOf: manifestURL)
-        #expect(secondBytes == manifestWireBytes, "manifest.json must remain byte-equal after second call")
+        #expect(
+          secondBytes == manifestWireBytes, "manifest.json must remain byte-equal after second call"
+        )
       }
     }
   }

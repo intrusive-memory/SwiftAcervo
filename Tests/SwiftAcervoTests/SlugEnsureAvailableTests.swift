@@ -218,7 +218,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       let count = MockURLProtocol.requestCount
       // Slug manifest (1) + transformer manifest (1) + transformer file (1)
       //   + vae manifest (1) + vae file (1) = 5 minimum.
-      #expect(count >= 3, "Expected at least 3 requests (slug manifest + ≥1 per component); got \(count)")
+      #expect(
+        count >= 3, "Expected at least 3 requests (slug manifest + ≥1 per component); got \(count)")
 
       // Both component directories should now exist on disk.
       let transformerDir = tempBase.appendingPathComponent(Acervo.slugify(transformer))
@@ -397,13 +398,16 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         Issue.record("Expected .downloading for pre-seed but got \(preSeed)")
         return
       }
-      #expect(preSeedProgress == 0.0, "Pre-seed single-component should aggregate to .downloading(0.0)")
+      #expect(
+        preSeedProgress == 0.0, "Pre-seed single-component should aggregate to .downloading(0.0)")
 
       // Verify the aggregator's contract for the post-completion state:
       let postComplete = AvailabilityAggregator.aggregate([
         ComponentAvailabilityInput(availability: .available, bytesTotal: oneGB)
       ])
-      #expect(postComplete == .available, "Post-completion single-component should aggregate to .available")
+      #expect(
+        postComplete == .available,
+        "Post-completion single-component should aggregate to .available")
 
       // Verify the aggregator's contract for the canonical S3 fixture:
       // This is the same assertion as PART 1, repeated here to make the
@@ -502,7 +506,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         case .partial: return false  // EM-1: also never expected for a pre-materialized component
         }
       }
-      #expect(allValid, "All callback states should be .available or .downloading; got \(receivedStates)")
+      #expect(
+        allValid, "All callback states should be .available or .downloading; got \(receivedStates)")
     }
 
     // MARK: - HF-repo regression test

@@ -155,7 +155,8 @@ struct EM1ManifestRoundTripTests {
     let slug = "black-forest-labs_FLUX.2-klein-4B"
     try AcervoDownloader.persistManifestBytes(originalBytes, slug: slug, in: baseDir)
 
-    let writtenURL = baseDir
+    let writtenURL =
+      baseDir
       .appendingPathComponent(slug)
       .appendingPathComponent(AcervoDownloader.manifestFilename)
     let writtenBytes = try Data(contentsOf: writtenURL)

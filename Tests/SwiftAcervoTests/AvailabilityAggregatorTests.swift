@@ -31,7 +31,7 @@ struct AvailabilityAggregatorTests {
   @Test("aggregate: single available component collapses to .available")
   func aggregateSingleAvailable() {
     let inputs = [
-      ComponentAvailabilityInput(availability: .available, bytesTotal: 42),
+      ComponentAvailabilityInput(availability: .available, bytesTotal: 42)
     ]
     #expect(AvailabilityAggregator.aggregate(inputs) == .available)
   }
@@ -165,7 +165,7 @@ struct AvailabilityAggregatorTests {
   @Test("aggregate: single downloading component returns its own progress")
   func aggregateSingleDownloading() {
     let inputs = [
-      ComponentAvailabilityInput(availability: .downloading(progress: 0.37), bytesTotal: 1_000),
+      ComponentAvailabilityInput(availability: .downloading(progress: 0.37), bytesTotal: 1_000)
     ]
     let result = AvailabilityAggregator.aggregate(inputs)
     #expect(result == .downloading(progress: 0.37))

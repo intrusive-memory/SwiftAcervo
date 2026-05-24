@@ -72,7 +72,10 @@ struct HydrationCoalescerTests {
 
     // F7 gate: if this fails (counter == 2), HydrationCoalescer does NOT
     // coalesce same-key concurrent calls. Stop and report PARTIAL.
-    #expect(counter.count == 1, "Expected exactly 1 load for 2 concurrent same-key calls; got \(counter.count). HydrationCoalescer may not be coalescing correctly.")
+    #expect(
+      counter.count == 1,
+      "Expected exactly 1 load for 2 concurrent same-key calls; got \(counter.count). HydrationCoalescer may not be coalescing correctly."
+    )
   }
 
   // MARK: - Case B: Different-key non-coalescing
@@ -105,7 +108,9 @@ struct HydrationCoalescerTests {
     }
 
     // Both keys must have executed their fetch exactly once each.
-    #expect(counter.count == 2, "Expected 2 loads for 2 concurrent different-key calls; got \(counter.count).")
+    #expect(
+      counter.count == 2,
+      "Expected 2 loads for 2 concurrent different-key calls; got \(counter.count).")
   }
 
   // MARK: - Supporting verification: sequential same-key re-fetches
@@ -127,7 +132,9 @@ struct HydrationCoalescerTests {
     // Second call — the inflight slot was cleared on completion of the first.
     try await coalescer.hydrate("component-seq", fetch: fetch)
 
-    #expect(counter.count == 2, "Expected 2 loads for 2 sequential same-key calls after completion; got \(counter.count).")
+    #expect(
+      counter.count == 2,
+      "Expected 2 loads for 2 sequential same-key calls after completion; got \(counter.count).")
   }
 
   // MARK: - Supporting verification: many concurrent same-key calls coalesce to one
@@ -151,6 +158,7 @@ struct HydrationCoalescerTests {
       try await group.waitForAll()
     }
 
-    #expect(counter.count == 1, "Expected 1 load for 10 concurrent same-key calls; got \(counter.count).")
+    #expect(
+      counter.count == 1, "Expected 1 load for 10 concurrent same-key calls; got \(counter.count).")
   }
 }

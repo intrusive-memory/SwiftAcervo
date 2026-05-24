@@ -219,7 +219,9 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         type: .backbone,
         displayName: "Downloaded",
         repoId: repoId,
-        files: [ComponentFile(relativePath: "config.json", expectedSizeBytes: Int64(content.count))],
+        files: [
+          ComponentFile(relativePath: "config.json", expectedSizeBytes: Int64(content.count))
+        ],
         estimatedSizeBytes: Int64(content.count),
         minimumMemoryBytes: 0
       )

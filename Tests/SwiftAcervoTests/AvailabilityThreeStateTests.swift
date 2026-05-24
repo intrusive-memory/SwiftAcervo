@@ -162,7 +162,9 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       #expect(result == .partial(missing: ["weights.safetensors"]))
     }
 
-    @Test("availability returns .available via Tier C when manifest is absent but root marker + no shard index (EM-2)")
+    @Test(
+      "availability returns .available via Tier C when manifest is absent but root marker + no shard index (EM-2)"
+    )
     func availability_returnsAvailableViaTierC_whenManifestAbsent() async throws {
       let tempBase = try makeTempBase()
       defer { removeTempBase(tempBase) }

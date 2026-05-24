@@ -304,7 +304,8 @@ extension Acervo {
         return { @Sendable (p: AcervoDownloadProgress) in
           // Translate per-component AcervoDownloadProgress into a ModelAvailability
           // state for this component slot.
-          let componentState: ModelAvailability = p.overallProgress >= 1.0
+          let componentState: ModelAvailability =
+            p.overallProgress >= 1.0
             ? .available : .downloading(progress: p.overallProgress)
           box.update(index: capturedIndex, availability: componentState, bytesTotal: total)
           let aggregate = AvailabilityAggregator.aggregate(box.snapshot())
@@ -336,7 +337,8 @@ extension Acervo {
       )
 
       // Component finished: mark it as available.
-      let finalBytes = await componentTotalBytes(componentId, in: baseDirectory)
+      let finalBytes =
+        await componentTotalBytes(componentId, in: baseDirectory)
         ?? componentBytesTotal
       stateBox.update(index: index, availability: .available, bytesTotal: finalBytes)
       if let progress {

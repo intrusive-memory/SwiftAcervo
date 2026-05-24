@@ -100,7 +100,7 @@ struct ManifestSchemaExtensionTests {
       try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
     } throws: { error in
       // Must be a DecodingError.keyNotFound for "modelId" — no fallback path.
-      guard case let DecodingError.keyNotFound(key, _) = error else {
+      guard case DecodingError.keyNotFound(let key, _) = error else {
         return false
       }
       return key.stringValue == "modelId"
@@ -113,7 +113,7 @@ struct ManifestSchemaExtensionTests {
     #expect {
       try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
     } throws: { error in
-      guard case let DecodingError.keyNotFound(key, _) = error else {
+      guard case DecodingError.keyNotFound(let key, _) = error else {
         return false
       }
       return key.stringValue == "primaryRepo"
@@ -126,7 +126,7 @@ struct ManifestSchemaExtensionTests {
     #expect {
       try JSONDecoder().decode(CDNManifest.self, from: Data(json.utf8))
     } throws: { error in
-      guard case let DecodingError.keyNotFound(key, _) = error else {
+      guard case DecodingError.keyNotFound(let key, _) = error else {
         return false
       }
       return key.stringValue == "components"

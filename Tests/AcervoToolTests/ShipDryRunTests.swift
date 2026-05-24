@@ -268,7 +268,8 @@
           "--dry-run",
         ])
         guard let cmdSlug = parsedSlug as? ShipCommand else {
-          Issue.record("Expected ShipCommand"); return
+          Issue.record("Expected ShipCommand")
+          return
         }
         #expect(cmdSlug.slug == "my-slug")
         #expect(cmdSlug.dryRun == true)
@@ -281,7 +282,8 @@
           "--output-dir", "/tmp/manifests",
         ])
         guard let cmdSpec = parsedSpec as? ShipCommand else {
-          Issue.record("Expected ShipCommand"); return
+          Issue.record("Expected ShipCommand")
+          return
         }
         #expect(cmdSpec.spec == "/tmp/spec.json")
         #expect(cmdSpec.dryRun == true)
@@ -319,7 +321,8 @@
           "--output", stagingRoot.path,
         ])
         guard var cmd = parsed as? ShipCommand else {
-          Issue.record("Expected ShipCommand"); return
+          Issue.record("Expected ShipCommand")
+          return
         }
 
         try await cmd.run()
@@ -354,7 +357,8 @@
         try fm.createDirectory(at: stagingURL, withIntermediateDirectories: true)
 
         // Top-level files.
-        try write("{\"model_index\": true}", to: stagingURL.appendingPathComponent("model_index.json"))
+        try write(
+          "{\"model_index\": true}", to: stagingURL.appendingPathComponent("model_index.json"))
         try write("not a real readme", to: stagingURL.appendingPathComponent("README.md"))
 
         // Nested subdirectories (transformer/, vae/, text_encoder/).
@@ -394,7 +398,8 @@
           "--output", stagingRoot.path,
         ])
         guard var cmd = parsed as? ShipCommand else {
-          Issue.record("Expected ShipCommand"); return
+          Issue.record("Expected ShipCommand")
+          return
         }
         try await cmd.run()
 

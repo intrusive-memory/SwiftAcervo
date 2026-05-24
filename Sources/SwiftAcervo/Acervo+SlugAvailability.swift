@@ -195,7 +195,8 @@ extension Acervo {
   /// cached manifest is absent for this component (in which case the
   /// aggregator falls back to equal-weight averaging across all
   /// components).
-  internal static func componentTotalBytes(_ modelId: String, in baseDirectory: URL) async -> Int64? {
+  internal static func componentTotalBytes(_ modelId: String, in baseDirectory: URL) async -> Int64?
+  {
     guard let cached = AcervoDownloader.loadCachedManifest(for: modelId, in: baseDirectory)
     else {
       return nil

@@ -297,11 +297,13 @@ struct EM2FluxAcceptanceTests {
     // enumerate against.
     try writeFile(
       Data(repeating: 0x01, count: 64),
-      to: modelDir.appendingPathComponent("transformer/diffusion_pytorch_model-00001-of-00003.safetensors")
+      to: modelDir.appendingPathComponent(
+        "transformer/diffusion_pytorch_model-00001-of-00003.safetensors")
     )
     try writeFile(
       Data(repeating: 0x02, count: 64),
-      to: modelDir.appendingPathComponent("transformer/diffusion_pytorch_model-00002-of-00003.safetensors")
+      to: modelDir.appendingPathComponent(
+        "transformer/diffusion_pytorch_model-00002-of-00003.safetensors")
     )
     try writeFile(
       Data(repeating: 0x03, count: 64),
