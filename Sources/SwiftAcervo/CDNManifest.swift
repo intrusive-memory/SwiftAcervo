@@ -16,13 +16,51 @@ import Foundation
 /// The manifest lives at `{cdnBase}/models/{slug}/manifest.json`
 /// alongside the model files. It is the single source of truth
 /// for what files exist and their expected checksums.
+///
+/// ## Multi-component models
+///
+/// SwiftAcervo's slug-keyed API (`flux2-klein-4b`, `pixart-sigma-xl`, …) may
+/// resolve to either a **single-component** or a **multi-component** model.
+///
+/// - **Single-component**: `components == [primaryRepo]` and `primaryRepo`
+///   equals the sole HF repo string for that slug.
+/// - **Multi-component**: `components` lists every HF repo string belonging
+///   to the slug (transformer, VAE, text-encoder, …). **Every component's
+///   manifest carries the SAME `primaryRepo` value** — the slug-level
+///   "canonical main" repo declared in the uploader's spec file. A VAE
+///   component manifest does NOT carry the VAE's own HF repo string in
+///   `primaryRepo`; it carries the shared spec-level value. This invariant
+///   is what lets consumers fan out across components and aggregate state
+///   under one logical slug.
 public struct CDNManifest: Codable, Sendable {
 
   /// Schema version. The client rejects versions it does not understand.
   public let manifestVersion: Int
 
-  /// The canonical `org/repo` model identifier.
+  /// The canonical `org/repo` model identifier this manifest describes.
+  ///
+  /// For single-component models, equals the slug-level identifier. For
+  /// multi-component models, this is the component's own HF repo (so the
+  /// per-file CDN path resolves), while `primaryRepo` carries the
+  /// slug-level shared value.
   public let modelId: String
+
+  /// The slug-level "canonical main" repo for this manifest's slug. Required.
+  ///
+  /// - Single-component slug: equals the sole HF repo string and therefore
+  ///   `modelId`.
+  /// - Multi-component slug: every component manifest carries the **same**
+  ///   `primaryRepo` (the value supplied by the uploader's spec file). The
+  ///   VAE component's `primaryRepo` is not the VAE's own repo — it is the
+  ///   shared slug-level primary.
+  public let primaryRepo: String
+
+  /// Every HF repo string belonging to this manifest's slug. Required.
+  ///
+  /// - Single-component slug: `[primaryRepo]`.
+  /// - Multi-component slug: the full set, in the order declared by the
+  ///   uploader's spec file. Every entry is a manifest-resolvable repo.
+  public let components: [String]
 
   /// The `org_repo` filesystem slug (mirrors local directory naming).
   public let slug: String
@@ -38,13 +76,21 @@ public struct CDNManifest: Codable, Sendable {
   public let manifestChecksum: String
 
   /// Memberwise initializer for constructing manifests programmatically.
+  ///
+  /// `primaryRepo` and `components` are required on the wire. The in-memory
+  /// initializer applies the single-component defaults (`primaryRepo ==
+  /// modelId`, `components == [modelId]`) when omitted, so library callers
+  /// constructing a manifest for a single-repo model don't need to repeat
+  /// themselves.
   public init(
     manifestVersion: Int,
     modelId: String,
     slug: String,
     updatedAt: String,
     files: [CDNManifestFile],
-    manifestChecksum: String
+    manifestChecksum: String,
+    primaryRepo: String? = nil,
+    components: [String]? = nil
   ) {
     self.manifestVersion = manifestVersion
     self.modelId = modelId
@@ -52,6 +98,36 @@ public struct CDNManifest: Codable, Sendable {
     self.updatedAt = updatedAt
     self.files = files
     self.manifestChecksum = manifestChecksum
+    self.primaryRepo = primaryRepo ?? modelId
+    self.components = components ?? [modelId]
+  }
+
+  // MARK: - Codable
+
+  private enum CodingKeys: String, CodingKey {
+    case manifestVersion
+    case modelId
+    case primaryRepo
+    case components
+    case slug
+    case updatedAt
+    case files
+    case manifestChecksum
+  }
+
+  /// Strict decode. `primaryRepo` and `components` are required on the wire.
+  /// A manifest missing either field throws `DecodingError.keyNotFound`.
+  /// There is no migration shim — out-of-spec manifests fail to decode.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.manifestVersion = try container.decode(Int.self, forKey: .manifestVersion)
+    self.modelId = try container.decode(String.self, forKey: .modelId)
+    self.primaryRepo = try container.decode(String.self, forKey: .primaryRepo)
+    self.components = try container.decode([String].self, forKey: .components)
+    self.slug = try container.decode(String.self, forKey: .slug)
+    self.updatedAt = try container.decode(String.self, forKey: .updatedAt)
+    self.files = try container.decode([CDNManifestFile].self, forKey: .files)
+    self.manifestChecksum = try container.decode(String.self, forKey: .manifestChecksum)
   }
 }
 

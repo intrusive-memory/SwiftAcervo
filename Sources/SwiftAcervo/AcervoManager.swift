@@ -698,16 +698,24 @@ extension AcervoManager {
 
   /// Returns the three-state availability of the specified model.
   ///
-  /// Forwards to `Acervo.availability(_:)` without acquiring the per-model
-  /// lock. Status queries must not serialize behind an in-flight download —
-  /// a locked probe would always appear `.notAvailable` for a model that is
-  /// actively being written to disk.
+  /// Forwards to `Acervo.availability(_:verifyHashes:)` without acquiring
+  /// the per-model lock. Status queries must not serialize behind an
+  /// in-flight download — a locked probe would always appear
+  /// `.notAvailable` for a model that is actively being written to disk.
   ///
-  /// - Parameter modelId: A model identifier in "org/repo" format.
-  /// - Returns: `.available`, `.downloading(progress:)`, or `.notAvailable`.
-  public func availability(_ modelId: String) async -> ModelAvailability {
+  /// - Parameters:
+  ///   - modelId: A model identifier in "org/repo" format.
+  ///   - verifyHashes: When `true`, opt into stream-SHA-256 verification
+  ///     of every manifest file (see `Acervo.availability(_:verifyHashes:)`
+  ///     for the cost notes). Default `false`.
+  /// - Returns: `.available`, `.downloading(progress:)`,
+  ///   `.partial(missing: [...])`, or `.notAvailable`.
+  public func availability(
+    _ modelId: String,
+    verifyHashes: Bool = false
+  ) async -> ModelAvailability {
     // Intentionally does NOT acquire the per-model lock: status queries
     // must not serialize behind an in-flight download.
-    await Acervo.availability(modelId)
+    await Acervo.availability(modelId, verifyHashes: verifyHashes)
   }
 }

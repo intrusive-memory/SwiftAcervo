@@ -55,6 +55,24 @@ public actor ManifestGenerator {
   /// for `/` so the file stays valid even for ad-hoc directories.
   private let modelId: String?
 
+  /// The slug-level "canonical main" repo written into every produced
+  /// manifest's `primaryRepo` field. When `nil`, the resolved `modelId`
+  /// is used (the single-component default).
+  private let primaryRepo: String?
+
+  /// Every HF repo string that belongs to the slug. When `nil`, the
+  /// resolved `modelId` is wrapped in a one-element array (the
+  /// single-component default).
+  private let components: [String]?
+
+  /// Optional CDN slug-key override. When non-nil, the manifest's `slug`
+  /// (which the CDN uses as the per-component path key) is derived from
+  /// this value instead of the resolved `modelId`. Used by the multi-
+  /// component `--spec` flow where every component's manifest shares the
+  /// same `modelId` (the spec-level slug) but lives under a per-component
+  /// CDN prefix derived from the component's own HF repo.
+  private let slugOverride: String?
+
   /// Optional telemetry reporter. Set via `setTelemetry(_:)`.
   private var telemetry: (any AcervoTelemetryReporter)? = nil
 
@@ -63,17 +81,80 @@ public actor ManifestGenerator {
   private static let excludedFileNames: Set<String> = [
     "manifest.json",
     ".DS_Store",
+    ".gitattributes",
+    ".gitignore",
+  ]
+
+  /// File-name suffix patterns that cause a file to be skipped. Mirrors
+  /// the HuggingFace staging cruft list called out in
+  /// `Docs/incomplete/eighth-master-01/EXECUTION_PLAN.md` Sortie DC-1:
+  /// `*.lock` and `*.metadata`.
+  private static let excludedFileSuffixes: [String] = [
+    ".lock",
+    ".metadata",
   ]
 
   /// Path component prefixes that cause a file to be skipped entirely
   /// (mirrors the `--exclude` patterns historically used for HuggingFace
-  /// staging trees).
+  /// staging trees). Note that `FileManager.enumerator` is invoked with
+  /// `.skipsHiddenFiles`, so dotted paths like `.huggingface/` and
+  /// `.cache/` are already filtered before this check runs; the entries
+  /// here are belt-and-suspenders in case a future change removes the
+  /// hidden-file option.
   private static let excludedPathPrefixes: [String] = [
-    ".huggingface/"
+    ".huggingface/",
+    ".cache/",
+  ]
+
+  /// Path component substring that excludes any file whose relative path
+  /// passes through a `.cache/` directory at any depth. Matches the
+  /// DC-1 task list's "Skip any path that contains `.cache/` as a path
+  /// component" requirement.
+  private static let excludedPathComponents: Set<String> = [
+    ".cache"
   ]
 
   public init(modelId: String? = nil, manifestVersion: Int = CDNManifest.supportedVersion) {
     self.modelId = modelId
+    self.primaryRepo = nil
+    self.components = nil
+    self.slugOverride = nil
+    self.manifestVersion = manifestVersion
+  }
+
+  /// Initializer for callers that want to attach slug-registry fields
+  /// (`primaryRepo`, `components`) to the produced manifest.
+  ///
+  /// - Single-component callers can use the defaults
+  ///   (`primaryRepo == modelId`, `components == [modelId]`).
+  /// - Multi-component callers (e.g. `acervo ship --spec`) pass the
+  ///   spec-level values so every produced manifest carries the same
+  ///   shared triple. When the per-component CDN slug must differ from
+  ///   `modelId`, supply `slugOverride` with the component's HF repo
+  ///   string; the manifest's `slug` field will be derived from
+  ///   `slugOverride` while `modelId` remains the spec-level value.
+  ///
+  /// - Parameters:
+  ///   - modelId: The `org/repo` identifier written into `manifest.modelId`.
+  ///   - primaryRepo: The slug-level canonical main repo. Defaults to
+  ///     `modelId` when `nil`.
+  ///   - components: The full set of HF repos belonging to the slug.
+  ///     Defaults to `[modelId]` when `nil`.
+  ///   - slugOverride: Optional override for the CDN slug-key. Defaults
+  ///     to `nil` (use `modelId`).
+  ///   - manifestVersion: Schema version. Defaults to
+  ///     `CDNManifest.supportedVersion`.
+  public init(
+    modelId: String,
+    primaryRepo: String? = nil,
+    components: [String]? = nil,
+    slugOverride: String? = nil,
+    manifestVersion: Int = CDNManifest.supportedVersion
+  ) {
+    self.modelId = modelId
+    self.primaryRepo = primaryRepo
+    self.components = components
+    self.slugOverride = slugOverride
     self.manifestVersion = manifestVersion
   }
 
@@ -140,14 +221,16 @@ public actor ManifestGenerator {
     manifestFiles.sort { $0.path < $1.path }
 
     let resolvedModelId = modelId ?? Self.derivedModelId(from: resolvedDirectory)
-    let slug = Self.slug(from: resolvedModelId)
+    let slug = Self.slug(from: slugOverride ?? resolvedModelId)
     let manifest = CDNManifest(
       manifestVersion: manifestVersion,
       modelId: resolvedModelId,
       slug: slug,
       updatedAt: Self.iso8601Now(),
       files: manifestFiles,
-      manifestChecksum: CDNManifest.computeChecksum(from: manifestFiles.map(\.sha256))
+      manifestChecksum: CDNManifest.computeChecksum(from: manifestFiles.map(\.sha256)),
+      primaryRepo: primaryRepo ?? resolvedModelId,
+      components: components ?? [resolvedModelId]
     )
 
     let manifestURL = resolvedDirectory.appendingPathComponent("manifest.json")
@@ -218,7 +301,16 @@ public actor ManifestGenerator {
       // Apply exclusion rules.
       let lastComponent = fileURL.lastPathComponent
       if Self.excludedFileNames.contains(lastComponent) { continue }
+      if Self.excludedFileSuffixes.contains(where: { lastComponent.hasSuffix($0) }) {
+        continue
+      }
       if Self.excludedPathPrefixes.contains(where: { relative.hasPrefix($0) }) { continue }
+      // Skip any file whose relative path contains an excluded path
+      // component anywhere in its depth (catches `subdir/.cache/foo`).
+      let relativeComponents = relative.split(separator: "/").map(String.init)
+      if relativeComponents.contains(where: { Self.excludedPathComponents.contains($0) }) {
+        continue
+      }
 
       let values = try fileURL.resourceValues(forKeys: Set(resourceKeys))
       guard values.isRegularFile == true else { continue }

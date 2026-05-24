@@ -1,0 +1,50 @@
+Sources/SwiftAcervo/Acervo.swift:1182:  public static func ensureAvailable(
+Sources/SwiftAcervo/Acervo.swift:1276:  public static func deleteModel(
+Sources/SwiftAcervo/Acervo.swift:1367:  public static func deleteModel(slug: String, url: URL? = nil) async throws {
+Sources/SwiftAcervo/Acervo.swift:1452:  public static func register(_ descriptor: ComponentDescriptor) {
+Sources/SwiftAcervo/Acervo.swift:1462:  public static func register(_ descriptors: [ComponentDescriptor]) {
+Sources/SwiftAcervo/Acervo.swift:1473:  public static func unregister(_ componentId: String) {
+Sources/SwiftAcervo/Acervo.swift:1488:  public static func registeredComponents() -> [ComponentDescriptor] {
+Sources/SwiftAcervo/Acervo.swift:1496:  public static func registeredComponents(ofType type: ComponentType) -> [ComponentDescriptor] {
+Sources/SwiftAcervo/Acervo.swift:1504:  public static func component(_ id: String) -> ComponentDescriptor? {
+Sources/SwiftAcervo/Acervo.swift:1518:  public static func isComponentReady(_ id: String) -> Bool {
+Sources/SwiftAcervo/Acervo.swift:1567:  public static func isComponentReadyAsync(_ id: String) async throws -> Bool {
+Sources/SwiftAcervo/Acervo.swift:1589:  public static func pendingComponents() -> [ComponentDescriptor] {
+Sources/SwiftAcervo/Acervo.swift:1613:  public static func totalCatalogSize() -> (downloaded: Int64, pending: Int64) {
+Sources/SwiftAcervo/Acervo.swift:1642:  public static func unhydratedComponents() -> [String] {
+Sources/SwiftAcervo/Acervo.swift:165:  public static var sharedModelsDirectory: URL {
+Sources/SwiftAcervo/Acervo.swift:1661:  public static func verifyComponent(_ componentId: String) throws -> Bool {
+Sources/SwiftAcervo/Acervo.swift:1718:  public static func verifyAllComponents() throws -> [String] {
+Sources/SwiftAcervo/Acervo.swift:1768:  public static func fetchManifest(for modelId: String) async throws -> CDNManifest {
+Sources/SwiftAcervo/Acervo.swift:1774:  public static func fetchManifest(
+Sources/SwiftAcervo/Acervo.swift:1791:  public static func fetchManifest(forComponent componentId: String) async throws -> CDNManifest {
+Sources/SwiftAcervo/Acervo.swift:1797:  public static func fetchManifest(
+Sources/SwiftAcervo/Acervo.swift:1846:  public static func hydrateComponent(
+Sources/SwiftAcervo/Acervo.swift:1939:  public static func downloadComponent(
+Sources/SwiftAcervo/Acervo.swift:2030:  public static func ensureComponentReady(
+Sources/SwiftAcervo/Acervo.swift:2134:  public static func ensureComponentsReady(
+Sources/SwiftAcervo/Acervo.swift:217:  public static func slugify(_ modelId: String) -> String {
+Sources/SwiftAcervo/Acervo.swift:2180:  public static func deleteComponent(_ componentId: String) throws {
+Sources/SwiftAcervo/Acervo.swift:2280:  public static func availability(
+Sources/SwiftAcervo/Acervo.swift:235:  public static func modelDirectory(for modelId: String) throws -> URL {
+Sources/SwiftAcervo/Acervo.swift:2385:  public static func availability(
+Sources/SwiftAcervo/Acervo.swift:2624:  public static func ensureAvailable(
+Sources/SwiftAcervo/Acervo.swift:271:  public static func ensureModelDirectory(for modelId: String) throws -> URL {
+Sources/SwiftAcervo/Acervo.swift:31:  public static let version = "0.15.1-dev"
+Sources/SwiftAcervo/Acervo.swift:316:  public static func isModelAvailable(_ modelId: String) -> Bool {
+Sources/SwiftAcervo/Acervo.swift:336:  public static func isModelConfigPresent(_ modelId: String) -> Bool {
+Sources/SwiftAcervo/Acervo.swift:378:  public static func modelFileExists(_ modelId: String, fileName: String) -> Bool {
+Sources/SwiftAcervo/Acervo.swift:421:  public static func listModels() throws -> [AcervoModel] {
+Sources/SwiftAcervo/Acervo.swift:546:  public static func gcEmptyModelDirectories() throws -> [URL] {
+Sources/SwiftAcervo/Acervo.swift:618:  public static func modelInfo(_ modelId: String) throws -> AcervoModel {
+Sources/SwiftAcervo/Acervo.swift:660:  public static func findModels(matching pattern: String) throws -> [AcervoModel] {
+Sources/SwiftAcervo/Acervo.swift:736:  public static func findModels(
+Sources/SwiftAcervo/Acervo.swift:78:  public static let appGroupEnvironmentVariable = "ACERVO_APP_GROUP_ID"
+Sources/SwiftAcervo/Acervo.swift:804:  public static func closestModel(
+Sources/SwiftAcervo/Acervo.swift:855:  public static func modelFamilies() throws -> [String: [AcervoModel]] {
+Sources/SwiftAcervo/Acervo.swift:968:  public static func download(
+Sources/SwiftAcervo/Acervo+CDNMutation.swift:397:  public static func deleteFromCDN(
+Sources/SwiftAcervo/Acervo+CDNMutation.swift:486:  public static func recache(
+Sources/SwiftAcervo/Acervo+CDNMutation.swift:77:  public static func publishModel(
+Sources/SwiftAcervo/AcervoDownloader.swift:228:  public static func downloadManifest(
+Sources/SwiftAcervo/AcervoManager.swift:43:  public static let shared = AcervoManager()

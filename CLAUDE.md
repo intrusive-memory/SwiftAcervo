@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.15.0
+**Version**: 0.16.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -37,51 +37,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 ---
 
-## For Different Users
+## Where to find things
 
-### 🎯 **Consuming Libraries** (Most Users)
+The repo ships two surfaces, each with its own reference document:
 
-**Start here** if you're adding SwiftAcervo to your app or library:
+- **[Docs/USAGE-library.md](Docs/USAGE-library.md)** — Library reference. Compiled from `Sources/SwiftAcervo/*.swift`. Every public symbol with signature + usage example. Read this before suggesting changes to the public API or before answering "how do I use SwiftAcervo from my app/library".
+- **[Docs/USAGE-cli.md](Docs/USAGE-cli.md)** — CLI reference. Captured from `acervo --help` plus every subcommand. Read this before suggesting changes to CLI behavior or before answering "how do I run acervo".
 
-- **[USAGE.md](Docs/USAGE.md)** — Integration guide, examples, common patterns, FAQ
-  - Quick start (add to Package.swift)
-  - Integration checklist
-  - Real-world examples (SwiftBruja, mlx-audio-swift, SwiftVoxAlta)
-  - Error handling and best practices
-  - **Read this first!**
+Topic-specific docs (architectural background, not consumer entry points):
 
-### 📚 **API Documentation**
-
-Complete reference for all methods and types:
-
-- **[API_REFERENCE.md](Docs/API_REFERENCE.md)** — All Acervo and AcervoManager methods, types, error handling
-- **[SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md)** — Where models are stored, directory structure, migration
-
-### 🛠️ **Building and Testing**
-
-For developers building SwiftAcervo itself or using the CLI:
-
-- **[BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md)** — Make targets, acervo CLI tool, unit/integration tests, CI/CD
-
-### 🌐 **CDN Operations**
-
-For uploading models to the CDN:
-
-- **[CDN_UPLOAD.md](Docs/CDN_UPLOAD.md)** — Full pipeline (`acervo ship`), step-by-step commands, environment variables
-- **[CDN_ARCHITECTURE.md](Docs/CDN_ARCHITECTURE.md)** — How downloads work, verification, security properties
-
-### 🏗️ **Architecture & Design**
-
-For understanding the system:
-
-- **[DESIGN_PATTERNS.md](Docs/DESIGN_PATTERNS.md)** — Core patterns (Static+Actor, streaming SHA-256, per-model locking, atomic downloads)
-- **[PROJECT_STRUCTURE.md](Docs/PROJECT_STRUCTURE.md)** — File organization, module layout, test structure
-- **[ARCHITECTURE.md](Docs/ARCHITECTURE.md)** — Ecosystem dependency map, interface contracts
-
-### 📖 **User Documentation**
-
-- **[README.md](README.md)** — High-level overview, quick start, installation
-- **[CONTRIBUTING.md](Docs/CONTRIBUTING.md)** — Development guidelines and contribution process
+- **[Docs/DESIGN_PATTERNS.md](Docs/DESIGN_PATTERNS.md)** — Static+Actor, streaming SHA-256, per-model locking, atomic downloads.
+- **[Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md)** — Ecosystem dependency map, interface contracts.
+- **[Docs/CDN_ARCHITECTURE.md](Docs/CDN_ARCHITECTURE.md)** — How downloads work, verification, security properties.
+- **[Docs/PROJECT_STRUCTURE.md](Docs/PROJECT_STRUCTURE.md)** — File organization, module layout, test structure.
+- **[Docs/SHARED_MODELS_DIRECTORY.md](Docs/SHARED_MODELS_DIRECTORY.md)** — Where models live on disk, directory structure.
+- **[Docs/CONTRIBUTING.md](Docs/CONTRIBUTING.md)** — Contribution process.
 
 ---
 
@@ -95,17 +65,17 @@ make test               # Run all tests
 make install-acervo     # Build and install CLI to bin/
 ```
 
-**acervo CLI** (for CDN operations):
+**acervo CLI** (see [Docs/USAGE-cli.md](Docs/USAGE-cli.md) for full reference):
 
 ```bash
-acervo ship --model-id "org/repo"     # Full pipeline: download, manifest, verify, upload
-acervo download --model-id "org/repo" # Download from HuggingFace only
-acervo manifest --model-id "org/repo" # Generate manifest.json
-acervo verify --model-id "org/repo"   # Verify all integrity checks
-acervo upload --model-id "org/repo"   # Upload to R2 CDN
+acervo ship org/repo                          # Download from HF and mirror to CDN
+acervo ship org/repo --slug my-slug           # As above, but rename in CDN
+acervo ship --spec spec.json                  # Multi-component upload
+acervo ship --spec spec.json --dry-run        # Generate manifest only, no network
+acervo download org/repo                      # HF → local staging
+acervo verify org/repo                        # Re-hash and check against manifest
+acervo delete org/repo --local                # Clean local cache
 ```
-
-See [BUILD_AND_TEST.md](Docs/BUILD_AND_TEST.md) for full details.
 
 ---
 
@@ -117,15 +87,3 @@ SwiftAcervo finds and downloads models. Loading (inference) is the consumer's jo
 - Your library loads with your framework
 
 This separation keeps SwiftAcervo lightweight and framework-agnostic.
-
----
-
-## See AGENTS.md for:
-
-- Complete API overview (all methods in one place)
-- ModelDownloadManager for batch downloads
-- Design patterns and architectural decisions
-- Platform requirements
-- Dependencies and build notes
-
-[AGENTS.md](AGENTS.md) is a comprehensive reference. For specific questions, use the docs above.

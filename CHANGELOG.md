@@ -54,7 +54,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **`ModelAvailability` enum** — Three-state availability marker with cases `.notAvailable`, `.downloading(progress: Double)`, and `.available`. Conforms to `Sendable` and `Equatable`.
-- **`Acervo.availability(_:)` and `AcervoManager.availability(_:)`** — The canonical three-state read API for model status. Non-throwing, performs no network I/O. For models with downloads in flight (tracked by `InFlightDownloads`), returns `.downloading(progress:)`. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md) for the design contract.
+- **`Acervo.availability(_:)` and `AcervoManager.availability(_:)`** — The canonical three-state read API for model status. Non-throwing, performs no network I/O. For models with downloads in flight (tracked by `InFlightDownloads`), returns `.downloading(progress:)`. See [USAGE-library.md](Docs/USAGE-library.md) for the design contract.
 - **`Acervo.isModelConfigPresent(_:)`** — Explicit escape hatch for callers that genuinely only want to probe for `config.json` at the model root. Does NOT imply usability or completeness. Callers migrating from the old `isModelAvailable` loose semantics may use this to retain the original behavior if required.
 - **`InFlightDownloads` actor** (internal) — Process-wide registry of in-flight downloads. Two concurrent `ensureAvailable(modelId, ...)` calls for the same `modelId` now share a single underlying download task. The dedup key is `modelId` alone; a joiner that requests a different `files` subset rides on the originator's set. Production callers pass `files: []` (everything in the manifest), so this trade-off is rarely observable.
 - **Manifest persistence on disk** — After each successful `downloadFiles`, the CDN manifest is cached at `{baseDirectory}/{slug}/.acervo-manifest.json`. Used by the new strict `isModelAvailable` (see Changed) and by `availability(_:)` to report file completeness.
@@ -62,7 +62,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed (BREAKING SEMANTIC)
 
-- **`Acervo.isModelAvailable(_:)` now enforces strict verification.** Returns `true` only when every file declared in the cached manifest is present on disk at the manifest's recorded `sizeBytes`. The previous loose semantics — "returns `true` if `config.json` exists at the model root" — are now available exclusively via the new `isModelConfigPresent(_:)` escape hatch. Callers that intentionally want the loose probe (original behavior) must migrate to `isModelConfigPresent`. Callers that want "model is fully usable" should switch to `availability(_:)` for a three-state answer with observable in-flight downloads. See [MODEL_AVAILABILITY_PATH.md](Docs/MODEL_AVAILABILITY_PATH.md) § "2a. Status surfaces today" for migration guidance.
+- **`Acervo.isModelAvailable(_:)` now enforces strict verification.** Returns `true` only when every file declared in the cached manifest is present on disk at the manifest's recorded `sizeBytes`. The previous loose semantics — "returns `true` if `config.json` exists at the model root" — are now available exclusively via the new `isModelConfigPresent(_:)` escape hatch. Callers that intentionally want the loose probe (original behavior) must migrate to `isModelConfigPresent`. Callers that want "model is fully usable" should switch to `availability(_:)` for a three-state answer with observable in-flight downloads. See [USAGE-library.md](Docs/USAGE-library.md) § "2a. Status surfaces today" for migration guidance.
 - **`ensureAvailable(_:files:...)` deduplication semantics.** Two concurrent callers requesting the same `modelId` now share the underlying download, even if they pass different `files` subsets. The joiner's `files` parameter is ignored; it rides on the originator's set. Production code passes `files: []` (everything in the manifest), so this is rarely observable. Tests that exercise narrow file subsets concurrently against the same model should be aware of the dedup behavior.
 
 ---
@@ -140,7 +140,7 @@ Non-breaking. All existing consumers continue to work without changes. To start 
 
 ### Added
 
-- **Bundle component pattern** — multiple `ComponentDescriptor`s can now share a `repoId` (a single CDN manifest covering many logical components) as a documented, first-class supported shape. Registering N distinct component IDs against the same `repoId` never fires the re-register canary; the canary continues to fire only for genuine `id`-collisions. See [API_REFERENCE.md — Bundle Components](API_REFERENCE.md#bundle-components) for declaration examples and the full R1–R6 contract guarantees.
+- **Bundle component pattern** — multiple `ComponentDescriptor`s can now share a `repoId` (a single CDN manifest covering many logical components) as a documented, first-class supported shape. Registering N distinct component IDs against the same `repoId` never fires the re-register canary; the canary continues to fire only for genuine `id`-collisions. See [USAGE-library.md — Bundle Components](USAGE-library.md#bundle-components) for declaration examples and the full R1–R6 contract guarantees.
 
 ### Fixed
 
@@ -148,7 +148,7 @@ Non-breaking. All existing consumers continue to work without changes. To start 
 
 ### Migration
 
-Non-breaking. All existing consumers continue to work without changes. Plugin authors targeting bundled repos (such as `black-forest-labs/FLUX.2-klein-4B`) can now declare one `ComponentDescriptor` per logical component using the explicit-files initializer — see [API_REFERENCE.md](API_REFERENCE.md#bundle-components) for a worked example.
+Non-breaking. All existing consumers continue to work without changes. Plugin authors targeting bundled repos (such as `black-forest-labs/FLUX.2-klein-4B`) can now declare one `ComponentDescriptor` per logical component using the explicit-files initializer — see [USAGE-library.md](USAGE-library.md#bundle-components) for a worked example.
 
 ---
 
@@ -263,20 +263,20 @@ Non-breaking. Consumers that do not set `ACERVO_OFFLINE` see no behavioral chang
 - Bare `ComponentDescriptor` (no `files:`) is now a first-class citizen. `ensureComponentReady` auto-hydrates on first call; no explicit `hydrateComponent` call is needed by consumers.
 - `Acervo.isComponentReady(_:)` (sync) returns `false` for un-hydrated descriptors. This is the safe default — a sync method cannot perform a network fetch. Existing descriptors declared with `files:` are unaffected (they are hydrated from the start and continue to return an accurate value).
 - `Acervo.pendingComponents()` and `Acervo.totalCatalogSize()` exclude un-hydrated descriptors from their results. Use `unhydratedComponents()` to enumerate them.
-- Consumer documentation (USAGE.md, README.md, AGENTS.md, CLAUDE.md, GEMINI.md) restructured around the manifest-first contract: *consumers do not know what files exist in a model until the CDN manifest returns*. Hardcoded `files: [...]` arrays are now framed as an escape hatch, not the default pattern.
+- Consumer documentation (USAGE-library.md, README.md, AGENTS.md, CLAUDE.md, GEMINI.md) restructured around the manifest-first contract: *consumers do not know what files exist in a model until the CDN manifest returns*. Hardcoded `files: [...]` arrays are now framed as an escape hatch, not the default pattern.
 
 ### Release Engineering
 
 - `acervo` CLI version bumped from `0.7.0` to `0.8.0` to match the library.
 - `Tests/AcervoToolIntegrationTests/` removed. The `acervo ship` roundtrip (HuggingFace → manifest → R2 upload → verify) is now exercised in each downstream repository's model-publish workflow against that repo's scoped credentials; SwiftAcervo itself never uploads.
 - New `Tests/AcervoToolTests/CDNManifestFetchTests.swift` — no-credential read-only smoke against the public R2 URL. Fetches a known-published manifest, verifies the checksum-of-checksums, spot-checks one file's SHA-256. Wired into PR CI.
-- `USAGE.md` now surfaces the `group.intrusive-memory.models` App Group entitlement setup as a first-class integration step. Apps without the entitlement silently fall back to a non-shared path — now called out up front.
+- `USAGE-library.md` now surfaces the `group.intrusive-memory.models` App Group entitlement setup as a first-class integration step. Apps without the entitlement silently fall back to a non-shared path — now called out up front.
 
 ### Migration
 
 Non-breaking. All existing consumers continue to work without changes.
 
-To adopt the new bare-descriptor pattern, drop `files:` and (optionally) `estimatedSizeBytes` from each `ComponentDescriptor`. `ensureComponentReady` hydrates transparently on first call. See [USAGE.md](USAGE.md) for a before/after example.
+To adopt the new bare-descriptor pattern, drop `files:` and (optionally) `estimatedSizeBytes` from each `ComponentDescriptor`. `ensureComponentReady` hydrates transparently on first call. See [USAGE-library.md](USAGE-library.md) for a before/after example.
 
 ---
 

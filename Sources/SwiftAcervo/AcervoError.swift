@@ -144,6 +144,27 @@ public enum AcervoError: LocalizedError, Sendable {
   /// paths in the manifest.
   case manifestRelativePathOutsideBase(file: String, base: String)
 
+  /// The caller invoked a slug-keyed API (`availability(slug:url:)`,
+  /// `ensureAvailable(slug:url:files:progress:)`, `deleteModel(slug:url:)`)
+  /// without an explicit `url:`, and the supplied `slug` does not parse as
+  /// `"org/repo"` (single forward slash, non-empty halves). The library
+  /// refuses to guess a manifest URL for a free-form slug — callers must
+  /// supply `url:` for such slugs.
+  ///
+  /// `slug` is the offending identifier so the UI can echo it back when
+  /// prompting the user for a full URL.
+  case urlRequiredForSlug(String)
+
+  /// A slug-keyed manifest fetch returned a non-2xx HTTP status. Carries the
+  /// slug and the response status so the UI can prompt the user for a full
+  /// URL (the typical recovery path: the slug's canonical CDN URL hasn't
+  /// been populated yet, or the user wants to test a pre-staged manifest).
+  ///
+  /// Distinct from ``manifestDownloadFailed(statusCode:)`` (which is the
+  /// repo-keyed download path's HTTP failure). The slug-keyed APIs use this
+  /// case so callers can branch on "slug failed to resolve" specifically.
+  case manifestFetchFailed(slug: String, status: Int)
+
   /// `publishModel` attempted to delete orphan keys after a successful
   /// publish, but the bulk-delete returned per-key failures. The new
   /// manifest is already live and serving traffic; the orphans are
@@ -268,6 +289,14 @@ public enum AcervoError: LocalizedError, Sendable {
     case .manifestRelativePathOutsideBase(let file, let base):
       return
         "Cannot compute relative path: '\(file)' is not contained in '\(base)'. Refusing to fall back to basename, which would produce ambiguous manifest entries for nested layouts."
+
+    case .urlRequiredForSlug(let slug):
+      return
+        "Slug '\(slug)' does not look like 'org/repo', so SwiftAcervo cannot derive a CDN manifest URL automatically. Pass an explicit 'url:' argument to the slug-keyed API."
+
+    case .manifestFetchFailed(let slug, let status):
+      return
+        "Manifest fetch for slug '\(slug)' failed with HTTP status \(status). If the slug's canonical CDN URL has not yet been populated, pass an explicit 'url:' to the slug-keyed API."
 
     case .publishOrphanPruneFailed(let failedKeys, _):
       let preview = failedKeys.prefix(5).joined(separator: ", ")

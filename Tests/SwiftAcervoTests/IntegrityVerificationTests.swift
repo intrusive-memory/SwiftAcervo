@@ -1,3 +1,4 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentIntegrity.swift
 import Foundation
 import Testing
 

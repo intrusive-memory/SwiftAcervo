@@ -3,6 +3,8 @@ import Testing
 
 @testable import SwiftAcervo
 
+// Companion tests for Sources/SwiftAcervo/Acervo+Search.swift (glob/pattern variant).
+
 /// Tests for Acervo pattern matching: findModels(matching:).
 ///
 /// All tests use temporary directories for isolation, ensuring no interaction

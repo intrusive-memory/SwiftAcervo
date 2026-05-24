@@ -74,15 +74,25 @@ Specifically:
 
 ## 3. Carry-overs from parked iteration-02 plan
 
-Five sorties from `Docs/parked/quartermaster-torrent-02/EXECUTION_PLAN.md` carry forward verbatim into this mission. Their detailed task lists and exit criteria are already refined in the parked plan; the execution-plan author for this mission should use them as starting templates and re-validate before dispatch.
+Five sorties from `Docs/parked/quartermaster-torrent-02/EXECUTION_PLAN.md` carry forward into this mission. Their task lists and exit criteria are pre-refined in the parked plan; the execution-plan author should use them as starting templates and re-validate before dispatch.
 
-### DC-1 — Extend `acervo ship --spec` live mode to iterate components
+**Sequencing (2026-05-23 decision)**: CIH-1 and CIH-2 (CI hygiene) run before DC-1/DC-2/DC-3. The DC-* cluster is the **last** work of the mission because DC-1 now subsumes the S5 CLI port that did not carry through the QM01 salvage. Rationale: keep the library-side validity-oracle work (§1, §2) isolated from CLI churn; let CIH-* harden the test gates before the operator-tended re-upload sorties run.
 
-Today `--spec` works only with `--dry-run`. Live mode (`--spec` without `--dry-run`) goes through `runHuggingFaceDownload` which only handles a single `modelId` — there is no per-component loop. So `acervo ship --spec spec.json` (live) does not actually upload multi-component manifests.
+### DC-1 — Port S5 CLI flags to PublishRunner architecture and extend `--spec` live mode to iterate components
 
-**Scope**: Extend `runHuggingFaceDownload` to iterate `spec.components`. Reuse the existing dry-run test pattern at `Tests/AcervoToolTests/ShipDryRunTests.swift:148+`. Parked-plan task list: `Docs/parked/quartermaster-torrent-02/EXECUTION_PLAN.md` Sortie DC-1.
+**Background (validated 2026-05-23):** The salvage PR carried S1–S4 (library-side slug-registry: `Acervo.availability(slug:url:)`, `ensureAvailable(slug:url:files:progress:)`, `deleteModel(slug:url:)`, `ManifestCache`, `AvailabilityAggregator`, schema extension). S5's CLI deliverables (`--slug`, `--spec`, `--dry-run`, `--output-dir` flags on `acervo ship`; `runDryRun` / `runDryRunSpec` / `runDryRunSingleComponent` methods; `ManifestGenerator(modelId:primaryRepo:components:)` extended initializer; `Tests/AcervoToolTests/ShipDryRunTests.swift`) did **not** cherry-pick. The QM01 implementation called `CDNUploader.sync` / `uploader.uploadManifest` / `uploader.verifyManifestOnCDN` / `uploader.spotCheckFileOnCDN`; v0.15.0 deleted `Sources/acervo/CDNUploader.swift` and routed all upload work through `PublishRunner.run(...)` → `Acervo.publishModel(...)`. This is a port, not a cherry-pick.
 
-**Why in this mission**: Blocking for DC-2.
+**Scope:**
+
+1. Extend `ManifestGenerator` with a `(modelId:primaryRepo:components:)` initializer. Default `primaryRepo = modelId` and `components = [modelId]` so the existing single-repo callers in `ShipCommand` / `UploadCommand` / `RecacheCommand` compile unchanged.
+2. Add `--slug`, `--spec`, `--dry-run`, `--output-dir` flags to `ShipCommand`. Modify `modelId` to be `String?` and add a `validate()` that requires either `modelId` or `--spec`.
+3. Implement `runDryRun()`: skip `ToolCheck.validate()`, skip HF download, skip `PublishRunner.run(...)`, generate manifest(s) into `--output-dir` (or a temp dir), print absolute paths to stdout. Handles both single-component and `--spec` multi-component paths.
+4. Extend live (`--spec` without `--dry-run`) mode to iterate `spec.components`: per-component HF download into per-component staging subdirs, then a single `PublishRunner.run(...)` for each component using the **shared** `(modelId, primaryRepo, components)` triple so every generated manifest carries the same slug-registry fields.
+5. Add `Tests/AcervoToolTests/ShipDryRunTests.swift` (was an S5 deliverable; reuse the test pattern from `Docs/parked/quartermaster-torrent-02/EXECUTION_PLAN.md` Sortie DC-1 task list, but written against `PublishRunner` mocks instead of the now-deleted `CDNUploader`).
+
+**Why in this mission:** DC-1 produces the CLI surface that DC-2 invokes against live R2. Without `--spec` live mode landing here, DC-2 has no way to re-upload the three Vinetas manifests with the new schema.
+
+**Why last:** Touches the most-volatile area of the codebase (the CLI was rewritten in v0.15.0 and may be rewritten again before this mission ships). Sequencing it last minimizes rebase pain on §1 / §2 library work.
 
 ### DC-2 — Live CDN re-upload of three Vinetas manifests
 

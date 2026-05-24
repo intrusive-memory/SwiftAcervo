@@ -10,7 +10,22 @@
 SwiftAcervo/
 ├── Sources/
 │   ├── SwiftAcervo/              # Main library
-│   │   ├── Acervo.swift
+│   │   ├── Acervo.swift                        # Enum shell: version, offline-mode env helpers (~51 lines)
+│   │   ├── Acervo+PathResolution.swift         # App group, slugify, modelDirectory, ensureModelDirectory, excludeFromBackup
+│   │   ├── Acervo+Availability.swift           # Legacy isModelAvailable/isModelConfigPresent/modelFileExists + 3-state availability(_:)
+│   │   ├── Acervo+Discovery.swift              # listModels, gcEmptyModelDirectories, modelInfo, modelFamilies, directorySize
+│   │   ├── Acervo+Search.swift                 # Glob findModels(matching:) + fuzzy findModels/closestModel + private helpers
+│   │   ├── Acervo+Download.swift               # Legacy download(_:files:progress:telemetry:) orchestration facade
+│   │   ├── Acervo+EnsureAvailable.swift        # Repo-keyed + slug-keyed ensureAvailable + ComponentStateBox aggregator
+│   │   ├── Acervo+SlugAvailability.swift       # Slug-keyed availability(slug:url:) + internal isOrgRepoSlug/componentTotalBytes/fetchSlugManifest helpers
+│   │   ├── Acervo+DeleteModel.swift            # Legacy deleteModel(_:) + slug-keyed deleteModel(slug:url:)
+│   │   ├── Acervo+ComponentRegistration.swift  # register(_:) × 2 + unregister(_:) — thin facade over ComponentRegistry
+│   │   ├── Acervo+ComponentCatalog.swift       # registeredComponents, component, isComponentReady, pendingComponents, totalCatalogSize, unhydratedComponents
+│   │   ├── Acervo+ComponentIntegrity.swift     # verifyComponent(_:) + verifyAllComponents() — delegates to IntegrityVerification
+│   │   ├── Acervo+ManifestAccess.swift         # Four fetchManifest(...) overloads — thin facade over AcervoDownloader
+│   │   ├── Acervo+Hydration.swift              # hydrateComponent + internal HydrationCoalescer actor (single-flight coalescing)
+│   │   ├── Acervo+ComponentDownloads.swift     # downloadComponent, ensureComponentReady, ensureComponentsReady, deleteComponent
+│   │   ├── Acervo+CDNMutation.swift            # publishModel, deleteFromCDN, recache — CDN write operations (pre-mission)
 │   │   ├── AcervoManager.swift
 │   │   ├── AcervoModel.swift
 │   │   ├── AcervoError.swift
@@ -59,12 +74,12 @@ SwiftAcervo/
 ├── Makefile
 └── Documentation files (.md)
     ├── README.md
-    ├── USAGE.md
-    ├── API_REFERENCE.md
-    ├── BUILD_AND_TEST.md
+    ├── USAGE-library.md
+    ├── USAGE-library.md
+    ├── USAGE-cli.md
     ├── DESIGN_PATTERNS.md
     ├── CDN_ARCHITECTURE.md
-    ├── CDN_UPLOAD.md
+    ├── USAGE-cli.md
     ├── PROJECT_STRUCTURE.md
     ├── SHARED_MODELS_DIRECTORY.md
     ├── REQUIREMENTS.md
@@ -80,16 +95,54 @@ SwiftAcervo/
 ### Core API
 
 #### Acervo.swift
-**Namespace**: Static enum `Acervo`
+**Namespace**: Caseless enum `Acervo` — pure namespace shell (~51 lines).
 
-Methods:
-- **Path resolution**: `sharedModelsDirectory`, `modelDirectory(for:)`, `slugify(_:)`
-- **Availability**: `isModelAvailable(_:)`, `modelFileExists(_:fileName:)`
-- **Discovery**: `listModels()`, `modelInfo(_:)`, `findModels(matching:)`, `findModels(fuzzyMatching:)`, `closestModel(to:)`, `modelFamilies()`
-- **Download**: `download(_:files:force:progress:)`, `ensureAvailable(_:files:progress:)`
-- **Components**: `register(_:)`, `registeredComponents()`, `downloadComponent(_:)`, `ensureComponentReady(_:)`, `verifyComponent(_:)`
+Contains only: `version`, `offlineModeEnvironmentVariable`, `isOfflineModeActive`. All methods live in sibling `Acervo+*.swift` extension files (see directory tree above).
 
-**Type**: ~500–600 lines, mostly method signatures and delegates to `AcervoManager`
+#### Acervo+PathResolution.swift
+Path resolution: `appGroupEnvironmentVariable`, `sharedModelsDirectory`, `slugify(_:)`, `modelDirectory(for:)`, `ensureModelDirectory(for:)`, `excludeFromBackup(_:)`.
+
+#### Acervo+Availability.swift
+Availability checks: `isModelAvailable(_:)`, `isModelConfigPresent(_:)`, `modelFileExists(_:fileName:)` (legacy synchronous), plus async `availability(_:verifyHashes:)` (3-state: `.notAvailable`, `.downloading`, `.available`).
+
+#### Acervo+Discovery.swift
+Filesystem enumeration: `listModels()`, `gcEmptyModelDirectories()`, `modelInfo(_:)`, `modelFamilies()`, and the private `directorySize(of:)` helper.
+
+#### Acervo+Search.swift
+Model search: `findModels(matching:)` (glob), `findModels(fuzzyMatching:editDistance:)`, `closestModel(to:editDistance:)`, and private helpers `commonPrefixes`/`stripCommonPrefixes`.
+
+#### Acervo+Download.swift
+Legacy download orchestration: `download(_:files:progress:telemetry:)` — thin facade delegating to `AcervoDownloader`.
+
+#### Acervo+EnsureAvailable.swift
+Ensure-available orchestration: repo-keyed `ensureAvailable(_:files:progress:telemetry:)` + slug-keyed `ensureAvailable(slug:url:files:progress:telemetry:)`, plus the `ComponentStateBox` progress-aggregator helper.
+
+#### Acervo+SlugAvailability.swift
+Slug-keyed availability: `availability(slug:url:telemetry:)` + internal helpers `isOrgRepoSlug`, `componentTotalBytes`, `fetchSlugManifest` (kept `internal static` for cross-file access by `Acervo+EnsureAvailable.swift`).
+
+#### Acervo+DeleteModel.swift
+Local model deletion: `deleteModel(_:)` (legacy repo-keyed) + `deleteModel(slug:url:)` (slug-keyed). Symmetric with `Acervo+CDNMutation.swift` (remote vs local delete).
+
+#### Acervo+ComponentRegistration.swift
+Component registration facade: `register(_:)` (two overloads) + `unregister(_:)`. Thin pass-through to `ComponentRegistry`.
+
+#### Acervo+ComponentCatalog.swift
+Component catalog queries: `registeredComponents()` (two overloads), `component(_:)`, `isComponentReady(_:)`, `isComponentReadyAsync(_:)`, `pendingComponents()`, `totalCatalogSize()`, `unhydratedComponents()`.
+
+#### Acervo+ComponentIntegrity.swift
+Component integrity: `verifyComponent(_:)` + `verifyAllComponents()`. Delegates to `IntegrityVerification`.
+
+#### Acervo+ManifestAccess.swift
+Manifest access: four `fetchManifest(...)` overloads (by modelId / componentId, with optional URLSession seam). Pure facade over `AcervoDownloader.downloadManifest`.
+
+#### Acervo+Hydration.swift
+Component hydration: `hydrateComponent(_:telemetry:)` + the internal `HydrationCoalescer` actor (ensures concurrent hydration calls for the same component coalesce into one underlying network fetch).
+
+#### Acervo+ComponentDownloads.swift
+Component download + deletion: `downloadComponent(_:progress:telemetry:)`, `ensureComponentReady(_:progress:telemetry:)`, `ensureComponentsReady(_:progress:telemetry:)`, `deleteComponent(_:)`.
+
+#### Acervo+CDNMutation.swift
+CDN write operations (pre-mission, unchanged): `publishModel(modelId:directory:credentials:keepOrphans:progress:)`, `deleteFromCDN(modelId:credentials:progress:)`, `recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:)`.
 
 #### AcervoManager.swift
 **Namespace**: Singleton actor `AcervoManager.shared`
@@ -436,11 +489,11 @@ Standard targets:
 ## Documentation Structure
 
 - **README.md** — User-facing overview and quick start
-- **USAGE.md** — Integration guide for consuming libraries (start here!)
-- **API_REFERENCE.md** — Complete method and type reference
-- **BUILD_AND_TEST.md** — Building, testing, CI/CD
+- **USAGE-library.md** — Integration guide for consuming libraries (start here!)
+- **USAGE-library.md** — Complete method and type reference
+- **USAGE-cli.md** — Building, testing, CI/CD
 - **CDN_ARCHITECTURE.md** — How downloads work
-- **CDN_UPLOAD.md** — How to upload to R2
+- **USAGE-cli.md** — How to upload to R2
 - **DESIGN_PATTERNS.md** — Architectural decisions
 - **PROJECT_STRUCTURE.md** (this file) — File organization
 - **SHARED_MODELS_DIRECTORY.md** — Canonical storage location
@@ -484,6 +537,6 @@ acervo (CLI)
 
 ## See Also
 
-- **[API_REFERENCE.md](API_REFERENCE.md)** — All exported types and methods
-- **[BUILD_AND_TEST.md](BUILD_AND_TEST.md)** — How to run tests
-- **[USAGE.md](USAGE.md)** — Using the library
+- **[USAGE-library.md](USAGE-library.md)** — All exported types and methods
+- **[USAGE-cli.md](USAGE-cli.md)** — How to run tests
+- **[USAGE-library.md](USAGE-library.md)** — Using the library

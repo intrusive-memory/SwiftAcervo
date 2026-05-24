@@ -1,3 +1,5 @@
+// Companion tests for Sources/SwiftAcervo/Acervo+Discovery.swift (listing/families/size).
+
 import Foundation
 import Testing
 

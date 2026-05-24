@@ -1,6 +1,8 @@
 // ComponentIntegrationTests.swift
 // SwiftAcervoTests
 //
+// Companion tests for Sources/SwiftAcervo/Acervo+ComponentDownloads.swift (full integration paths).
+//
 // Full lifecycle integration tests for the Component Registry v2 API.
 // Covers register -> download-simulate -> access -> verify -> delete -> unregister.
 // Also includes backward compatibility tests verifying v1 API unchanged.
@@ -357,7 +359,9 @@ struct ComponentIntegrationTests {
 
     // Loose check (config.json only, no manifest) returns true.
     #expect(Acervo.isModelConfigPresent("test-org/exists", in: tempDir) == true)
-    // Strict check returns false: no manifest is cached.
+    // Strict `isModelAvailable` is cached-manifest-only by design (no
+    // manifest persisted → false). The consumer-facing `availability(_:)`
+    // is more lenient via Tier C; see EM2ValidityOracleTests.
     #expect(Acervo.isModelAvailable("test-org/exists", in: tempDir) == false)
   }
 

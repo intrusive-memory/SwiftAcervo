@@ -106,6 +106,8 @@ Once all verifications pass:
 {
   "manifestVersion": 1,
   "modelId": "org/repo",
+  "primaryRepo": "org/repo",
+  "components": ["org/repo"],
   "slug": "org_repo",
   "updatedAt": "2026-03-22T00:00:00Z",
   "files": [
@@ -129,6 +131,12 @@ Once all verifications pass:
 }
 ```
 
+**Required fields**: `manifestVersion`, `modelId`, `primaryRepo`, `components`,
+`slug`, `updatedAt`, `files`, `manifestChecksum`. A manifest missing any of
+these fails strict decoding with `DecodingError.keyNotFound`. There is no
+migration shim — out-of-spec manifests are rejected by every client and must
+be re-uploaded with the full schema.
+
 **Manifest Checksum Computation**:
 
 ```
@@ -136,6 +144,48 @@ Once all verifications pass:
 2. Concatenate checksums: "abcd1234...efgh5678...ijkl9012..."
 3. SHA-256 hash: "mnop3456..."
 ```
+
+### Slug Registry: `modelId`, `primaryRepo`, `components`
+
+The three slug-registry fields make a single manifest addressable both by its
+own HF repo string and by a slug-level identifier that may aggregate several
+HF repos under one logical model:
+
+- **`modelId`**: the canonical `org/repo` identifier this manifest describes.
+  For a multi-component slug the VAE component's `modelId` is the VAE's own
+  HF repo string — the per-file CDN paths still resolve against this value.
+
+- **`primaryRepo`**: the slug-level canonical "main" repo. For a
+  single-component slug it equals `modelId` (and the sole repo). For a
+  multi-component slug it equals the spec-level primary the uploader
+  declared — and **every component manifest in that slug carries the same
+  `primaryRepo` value**.
+
+- **`components`**: every HF repo string that participates in the slug, in
+  the order declared by the uploader's spec file. For a single-component
+  slug this is `[primaryRepo]`. For a multi-component slug it is the full
+  set of repos.
+
+#### Multi-component `primaryRepo` invariant
+
+> All component manifests in a multi-component slug share the same
+> `primaryRepo`. The VAE component's `primaryRepo` is **not** the VAE's own
+> HF repo — it is the slug-level value declared in the uploader's
+> `--spec` file. Consumers depend on this invariant to fan out across
+> components and aggregate state under one logical slug.
+
+Concrete example: the slug `flux2-klein-4b` is composed of three HF repos
+— `black-forest-labs/FLUX.2-klein-4B` (the transformer, designated primary),
+`black-forest-labs/FLUX.2-vae`, and `google/t5-v1_1-xxl`. All three CDN
+manifests carry:
+
+- `primaryRepo == "black-forest-labs/FLUX.2-klein-4B"` (identical across the
+  three manifests)
+- `components == ["black-forest-labs/FLUX.2-klein-4B",
+  "black-forest-labs/FLUX.2-vae", "google/t5-v1_1-xxl"]` (identical across
+  the three manifests)
+- `modelId` set to the **component's own** HF repo string, so file paths
+  under each component's CDN directory still resolve.
 
 ---
 
@@ -277,6 +327,6 @@ for file in model.files {
 
 ## See Also
 
-- **[CDN_UPLOAD.md](CDN_UPLOAD.md)** — How to upload models to the CDN
-- **[API_REFERENCE.md](API_REFERENCE.md)** — Download methods and error types
-- **[USAGE.md](USAGE.md)** — Integration examples
+- **[USAGE-cli.md](USAGE-cli.md)** — How to upload models to the CDN
+- **[USAGE-library.md](USAGE-library.md)** — Download methods and error types
+- **[USAGE-library.md](USAGE-library.md)** — Integration examples

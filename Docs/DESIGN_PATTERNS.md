@@ -405,7 +405,7 @@ Acervo.register([
 ])
 ```
 
-Bundle descriptors MUST use the explicit-files initializer. The bare un-hydrated initializer is not compatible with the bundle pattern — hydration replaces `files` with the full manifest, which loses the per-component file scope. See [API_REFERENCE.md — Bundle Components](API_REFERENCE.md#bundle-components) for the full contract guarantees and a worked example.
+Bundle descriptors MUST use the explicit-files initializer. The bare un-hydrated initializer is not compatible with the bundle pattern — hydration replaces `files` with the full manifest, which loses the per-component file scope. See [USAGE-library.md — Bundle Components](USAGE-library.md#bundle-components) for the full contract guarantees and a worked example.
 
 ---
 
@@ -433,5 +433,5 @@ Bundle descriptors MUST use the explicit-files initializer. The bare un-hydrated
 ## See Also
 
 - **[CDN_ARCHITECTURE.md](CDN_ARCHITECTURE.md)** — Technical details of downloads
-- **[API_REFERENCE.md](API_REFERENCE.md)** — Method signatures
-- **[USAGE.md](USAGE.md)** — Integration examples
+- **[USAGE-library.md](USAGE-library.md)** — Method signatures
+- **[USAGE-library.md](USAGE-library.md)** — Integration examples
