@@ -39,6 +39,21 @@ public enum AcervoTelemetryEvent: Sendable {
   case componentFileAccessOpened(
     componentID: String, repoID: String, baseDirectory: String, fileCount: Int)
 
+  // --- In-flight download registry (dedup + UI `.downloading` source) ---
+  /// Emitted when a component download interacts with the `InFlightDownloads`
+  /// registry. `role` distinguishes the caller that actually starts the
+  /// underlying Task (`.originator`) from a concurrent caller that joins it
+  /// (`.joiner`). Useful for diagnosing dedup behavior and verifying that the
+  /// UI's `availability(_:)` reads see a registered in-flight entry while a
+  /// download is running.
+  case inFlightDownloadRegistered(
+    modelID: String, componentID: String?, role: InFlightRole)
+  /// Emitted when the in-flight registry entry for `modelID` is cleared,
+  /// regardless of outcome. The `outcome` reports whether the underlying
+  /// download Task completed successfully or threw.
+  case inFlightDownloadCleared(
+    modelID: String, componentID: String?, outcome: InFlightOutcome)
+
   // --- CDN HTTP ---
   case cdnRequest(
     method: String, url: String, statusCode: Int, latencyMS: Double, byteCount: Int64?)
@@ -70,6 +85,19 @@ public enum AcervoTelemetryEvent: Sendable {
     case sizeChangedRemote  // CDN reports different byte count
     case corrupted  // on-disk SHA does not match recorded SHA
     case forcedRefresh  // caller passed forceRefresh=true
+  }
+
+  public enum InFlightRole: String, Sendable {
+    /// First caller for this `modelID`; runs the underlying download Task.
+    case originator
+    /// Concurrent caller that joined an already-registered Task and is
+    /// awaiting its outcome without running its own download.
+    case joiner
+  }
+
+  public enum InFlightOutcome: String, Sendable {
+    case success
+    case failure
   }
 
   public enum ErrorPhase: String, Sendable {

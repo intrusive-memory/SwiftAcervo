@@ -7,6 +7,30 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.17.0] - Unreleased
+
+### Fixed
+
+- **`Acervo.ensureComponentReady(_:)` now registers with `InFlightDownloads.shared` for the duration of the underlying download.** Through 0.16.x the component-keyed download path bypassed the in-flight registry entirely, so `Acervo.availability(repoId)` returned `.partial` or `.notAvailable` while a download was in flight instead of the documented `.downloading(progress:)`. UI consumers polling `availability(_:)` saw no progress and no state transitions for multi-component models (PixArt-Sigma XL, FLUX.2, etc.); progress bars stayed at zero and "Download failed" error rows persisted through subsequent successful downloads. The registry is cleared on both the success and failure paths via `defer`.
+
+  Progress ticks now publish through the existing `InFlightDownloads.shared.publishProgress(_:for:)` actor. Dedup semantics match `Acervo.ensureAvailable`: concurrent `ensureComponentReady` calls for the same `repoId` converge on a single underlying Task; the joiner's caller-supplied `progress` callback does not receive ticks, but UI consumers polling `availability(_:)` see `.downloading` regardless.
+
+  No API change at the call site — purely a behavior fix.
+
+### Added
+
+- **`AcervoTelemetryEvent.inFlightDownloadRegistered(modelID:componentID:role:)`.** Emitted once per `ensureComponentReady` call that performs a download (not on cache hit). The `role` field (`InFlightRole.originator | .joiner`) distinguishes the caller that started the underlying Task from concurrent callers that joined it.
+
+- **`AcervoTelemetryEvent.inFlightDownloadCleared(modelID:componentID:outcome:)`.** Emitted from the originator's `defer` block when the registry entry is cleared, regardless of outcome. The `outcome` field (`InFlightOutcome.success | .failure`) reports whether the underlying Task threw.
+
+- **Internal test seam: `session: URLSession? = nil`** on internal overloads of `downloadComponent`, `ensureComponentReady`, and `ensureComponentsReady` so tests can drive the component-keyed download path through `MockURLProtocol`. Public API surface is unchanged.
+
+### Breaking changes
+
+- **`AcervoTelemetryEvent` adds two cases.** `switch` statements over `AcervoTelemetryEvent` without `@unknown default` will fail to compile until `case .inFlightDownloadRegistered` and `case .inFlightDownloadCleared` arms are added. See [`Docs/UPGRADING-library.md`](Docs/UPGRADING-library.md) § "Upgrading to 0.17.0 (from 0.16.x)" for the migration recipe.
+
+---
+
 ## [0.15.0] - 2026-05-23
 
 ### Changed
