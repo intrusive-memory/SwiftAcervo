@@ -95,10 +95,13 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         minimumMemoryBytes: 0
       )
 
-      return (descriptor, manifestJSON, [
-        "config.json": configBody,
-        "model.safetensors": weightsBody,
-      ])
+      return (
+        descriptor, manifestJSON,
+        [
+          "config.json": configBody,
+          "model.safetensors": weightsBody,
+        ]
+      )
     }
 
     /// Installs a responder that serves the manifest immediately and sleeps
@@ -197,7 +200,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
 
         #expect(
           sawDownloading,
-          "expected Acervo.availability(\(modelId)) to return .downloading while ensureComponentReady is running")
+          "expected Acervo.availability(\(modelId)) to return .downloading while ensureComponentReady is running"
+        )
         #expect(
           observedFraction >= 0.0 && observedFraction <= 1.0,
           "observed progress \(observedFraction) must lie in [0.0, 1.0]")
@@ -259,7 +263,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         }
         #expect(
           sawRegistered,
-          "expected inFlightDownloadRegistered(.originator) for modelID=\(modelId), componentID=\(componentId)")
+          "expected inFlightDownloadRegistered(.originator) for modelID=\(modelId), componentID=\(componentId)"
+        )
         #expect(
           sawCleared,
           "expected inFlightDownloadCleared(.success) for modelID=\(modelId)")
