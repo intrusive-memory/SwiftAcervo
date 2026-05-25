@@ -56,19 +56,26 @@ extension Acervo {
   /// Downloads a registered component using a custom base directory.
   ///
   /// This internal overload enables testing with temporary directories.
+  /// `session` is an internal test-injection seam (default `nil` uses
+  /// `SecureDownloadSession.shared`). The public API does not surface it.
   static func downloadComponent(
     _ componentId: String,
     force: Bool = false,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
     guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
       throw AcervoError.componentNotRegistered(componentId)
     }
 
     if initialDescriptor.needsHydration {
-      try await hydrateComponent(componentId, telemetry: telemetry)
+      if let session {
+        try await hydrateComponent(componentId, session: session, telemetry: telemetry)
+      } else {
+        try await hydrateComponent(componentId, telemetry: telemetry)
+      }
     }
 
     guard let descriptor = ComponentRegistry.shared.component(componentId),
@@ -86,7 +93,8 @@ extension Acervo {
       force: force,
       progress: progress,
       in: baseDirectory,
-      telemetry: telemetry
+      telemetry: telemetry,
+      session: session
     )
 
     // Additional registry-level checksum verification
@@ -145,11 +153,27 @@ extension Acervo {
   /// Ensures a registered component is downloaded and ready, using a custom base directory.
   ///
   /// This internal overload enables testing with temporary directories.
+  ///
+  /// ## In-flight registration
+  ///
+  /// When a download is actually performed (cache miss), this method registers
+  /// the component's `repoId` with ``InFlightDownloads/shared`` for the
+  /// duration of the underlying Task. This is what makes
+  /// ``Acervo/availability(_:)`` return `.downloading(progress:)` for the same
+  /// `repoId` while the download is running, and is the contract UI consumers
+  /// rely on for progress display.
+  ///
+  /// Dedup is keyed by `repoId` (matching ``ensureAvailable(_:files:progress:telemetry:)``).
+  /// Concurrent callers requesting the same component converge on a single
+  /// underlying Task; the joiner's caller-supplied `progress` callback does
+  /// not receive ticks (the originator's does), but UI consumers polling
+  /// `availability(_:)` see the registered `.downloading` state regardless.
   static func ensureComponentReady(
     _ componentId: String,
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
     // Check registration first
     guard let initialDescriptor = ComponentRegistry.shared.component(componentId) else {
@@ -177,7 +201,11 @@ extension Acervo {
     }
 
     if initialDescriptor.needsHydration {
-      try await hydrateComponent(componentId, telemetry: telemetry)
+      if let session {
+        try await hydrateComponent(componentId, session: session, telemetry: telemetry)
+      } else {
+        try await hydrateComponent(componentId, telemetry: telemetry)
+      }
     }
 
     // If already ready, emit cacheHit-style completion and no-op
@@ -199,14 +227,86 @@ extension Acervo {
       return
     }
 
-    // Download the component (descriptor is now hydrated; downloadComponent will not re-hydrate)
-    try await downloadComponent(
-      componentId,
-      force: false,
-      progress: progress,
-      in: baseDirectory,
-      telemetry: telemetry
-    )
+    // Resolve the hydrated descriptor — repoId is the dedup/in-flight key.
+    guard let hydratedDescriptor = ComponentRegistry.shared.component(componentId),
+      hydratedDescriptor.isHydrated
+    else {
+      throw AcervoError.componentNotHydrated(id: componentId)
+    }
+    let repoId = hydratedDescriptor.repoId
+
+    // Build a progress wrapper that publishes each tick into the in-flight
+    // registry so `Acervo.availability(repoId)` can surface the current
+    // fraction as `.downloading(progress:)`. The caller's `progress` callback
+    // still fires; the wrapper is a strict superset.
+    let wrappedProgress: (@Sendable (AcervoDownloadProgress) -> Void) = { p in
+      Task { await InFlightDownloads.shared.publishProgress(p.overallProgress, for: repoId) }
+      progress?(p)
+    }
+
+    // Capture by-value so the @Sendable `start` closure can reference them.
+    let capturedComponentId = componentId
+    let capturedRepoId = repoId
+    let capturedBase = baseDirectory
+    let capturedTelemetry = telemetry
+    let capturedSession = session
+
+    // Track who originated the underlying Task (so we can label telemetry
+    // and only fire the matched `inFlightDownloadCleared` from the originator).
+    // The `start` closure runs while `InFlightDownloads` is actor-isolated, so
+    // the write completes before `task(for:)` returns — no read/write race.
+    let originatorFlag = OriginatorFlag()
+
+    let sharedTask = await InFlightDownloads.shared.task(for: repoId) {
+      originatorFlag.didOriginate = true
+      return Task {
+        var didFail = false
+        defer {
+          let outcome: AcervoTelemetryEvent.InFlightOutcome = didFail ? .failure : .success
+          // `defer` is synchronous; `finish` and telemetry capture are async,
+          // so we re-launch them in a Task. The Task captures `outcome` by
+          // value (a `let` inside the defer scope).
+          Task {
+            await InFlightDownloads.shared.finish(capturedRepoId)
+            await capturedTelemetry?.capture(
+              .inFlightDownloadCleared(
+                modelID: capturedRepoId,
+                componentID: capturedComponentId,
+                outcome: outcome
+              )
+            )
+          }
+        }
+        do {
+          try await downloadComponent(
+            capturedComponentId,
+            force: false,
+            progress: wrappedProgress,
+            in: capturedBase,
+            telemetry: capturedTelemetry,
+            session: capturedSession
+          )
+        } catch {
+          didFail = true
+          throw error
+        }
+      }
+    }
+
+    // Emit the registration event once `task(for:)` has resolved the role.
+    if let telemetry {
+      await telemetry.capture(
+        .inFlightDownloadRegistered(
+          modelID: repoId,
+          componentID: componentId,
+          role: originatorFlag.didOriginate ? .originator : .joiner
+        )
+      )
+    }
+
+    // Both originator and joiners await the same Task; both observe the
+    // same success/throw outcome.
+    try await sharedTask.value
 
     if let telemetry {
       let descriptor = ComponentRegistry.shared.component(componentId) ?? initialDescriptor
@@ -254,14 +354,16 @@ extension Acervo {
     _ componentIds: [String],
     progress: (@Sendable (AcervoDownloadProgress) -> Void)? = nil,
     in baseDirectory: URL,
-    telemetry: (any AcervoTelemetryReporter)? = nil
+    telemetry: (any AcervoTelemetryReporter)? = nil,
+    session: URLSession? = nil
   ) async throws {
     for componentId in componentIds {
       try await ensureComponentReady(
         componentId,
         progress: progress,
         in: baseDirectory,
-        telemetry: telemetry
+        telemetry: telemetry,
+        session: session
       )
     }
   }
@@ -328,4 +430,16 @@ extension Acervo {
       try? fm.removeItem(at: componentDir)
     }
   }
+}
+
+// MARK: - OriginatorFlag (file-private)
+
+/// One-shot Bool flag used by `ensureComponentReady` to learn whether the
+/// caller actually originated the in-flight Task (vs. joined an existing one).
+/// The `start` closure passed to ``InFlightDownloads/task(for:start:)`` runs
+/// while the actor is isolated, so the write here completes before
+/// `task(for:)` returns — readers in the calling task see a coherent value
+/// without further synchronization.
+private final class OriginatorFlag: @unchecked Sendable {
+  var didOriginate = false
 }
