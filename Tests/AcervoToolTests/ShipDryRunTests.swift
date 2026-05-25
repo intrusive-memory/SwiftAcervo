@@ -87,7 +87,7 @@
 
         _ = try makeComponentStagingDir(in: stagingRoot, modelId: hfRepo)
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship", hfRepo,
           "--slug", explicitSlug,
           "--dry-run",
@@ -161,7 +161,7 @@
           _ = try makeComponentStagingDir(in: stagingRoot, modelId: componentRepo)
         }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship",
           "--spec", specURL.path,
           "--dry-run",
@@ -230,7 +230,7 @@
           if let v = savedPublicURL { setenv("R2_PUBLIC_URL", v, 1) }
         }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship", hfRepo,
           "--dry-run",
           "--output-dir", outputDir.path,
@@ -261,8 +261,8 @@
       // MARK: - Test (d): flag parsing
 
       @Test("--slug and --spec flags parse to the expected properties")
-      func flagParsing() throws {
-        let parsedSlug = try AcervoCLI.parseAsRoot([
+      func flagParsing() async throws {
+        let parsedSlug = try await AcervoCLI.parseAsRoot([
           "ship", "org/repo",
           "--slug", "my-slug",
           "--dry-run",
@@ -275,7 +275,7 @@
         #expect(cmdSlug.dryRun == true)
         #expect(cmdSlug.modelId == "org/repo")
 
-        let parsedSpec = try AcervoCLI.parseAsRoot([
+        let parsedSpec = try await AcervoCLI.parseAsRoot([
           "ship",
           "--spec", "/tmp/spec.json",
           "--dry-run",
@@ -314,7 +314,7 @@
         }
         defer { PublishRunner.reset() }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship", hfRepo,
           "--dry-run",
           "--output-dir", outputDir.path,
@@ -391,7 +391,7 @@
         try write("ds", to: stagingURL.appendingPathComponent(".DS_Store"))
         try write("nested lock", to: vaeDir.appendingPathComponent("upload.lock"))
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship", hfRepo,
           "--dry-run",
           "--output-dir", outputDir.path,

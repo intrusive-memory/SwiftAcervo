@@ -91,9 +91,9 @@
       // MARK: - Test 1: Happy-path argument parsing
 
       @Test("Happy-path: positional modelId and flags are captured correctly")
-      func happyPathArgumentParsing() throws {
+      func happyPathArgumentParsing() async throws {
         // Parse via the root CLI so subcommand routing works exactly as in production.
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "download",
           "org/repo",
           "--no-verify",
@@ -114,8 +114,8 @@
       }
 
       @Test("Happy-path: optional file subset is captured in the files array")
-      func happyPathWithFileSubset() throws {
-        let parsed = try AcervoCLI.parseAsRoot([
+      func happyPathWithFileSubset() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot([
           "download",
           "mlx-community/Qwen2.5-7B-4bit",
           "config.json",
@@ -151,7 +151,7 @@
         HuggingFaceClient.defaultSessionOverride = URLSession(configuration: stubConfig)
 
         var cmd =
-          try AcervoCLI.parseAsRoot([
+          try await AcervoCLI.parseAsRoot([
             "download",
             "org/smoke-test",
             "--no-verify",
@@ -164,11 +164,11 @@
       // MARK: - Test 3: Missing required argument
 
       @Test("Missing modelId exits non-zero with a parse error")
-      func missingModelIdFails() {
+      func missingModelIdFails() async throws {
         // The modelId positional argument is required. Parsing without it must throw.
         var threw = false
         do {
-          _ = try AcervoCLI.parseAsRoot(["download"])
+          _ = try await AcervoCLI.parseAsRoot(["download"])
           Issue.record("Expected parseAsRoot to throw for missing modelId")
         } catch {
           threw = true
@@ -185,7 +185,7 @@
       @Test("Unsupported --source value surfaces ValidationError before any download")
       func unsupportedSourceSurfacesError() async throws {
         var cmd =
-          try AcervoCLI.parseAsRoot([
+          try await AcervoCLI.parseAsRoot([
             "download",
             "org/repo",
             "--source", "s3",

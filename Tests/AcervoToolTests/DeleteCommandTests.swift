@@ -20,11 +20,11 @@
       // MARK: - Argument parsing
 
       @Test("Missing scope flags fails validation at parse")
-      func missingScopeFlags() throws {
+      func missingScopeFlags() async throws {
         // No --local / --staging / --cache / --cdn — parseAsRoot runs the
         // command's validate() and surfaces the failure as CommandError.
         do {
-          _ = try AcervoCLI.parseAsRoot(["delete", "org/repo"])
+          _ = try await AcervoCLI.parseAsRoot(["delete", "org/repo"])
           Issue.record("parseAsRoot should have thrown")
         } catch {
           // expected — any error here counts; ArgumentParser wraps the
@@ -33,8 +33,8 @@
       }
 
       @Test("--local + --dry-run + modelId parse and validate")
-      func localScopeParses() throws {
-        let parsed = try AcervoCLI.parseAsRoot([
+      func localScopeParses() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot([
           "delete", "org/repo", "--local", "--dry-run",
         ])
         guard let cmd = parsed as? DeleteCommand else {
@@ -52,8 +52,8 @@
       }
 
       @Test("--staging --cache --cdn --yes coexist")
-      func multiScopeParses() throws {
-        let parsed = try AcervoCLI.parseAsRoot([
+      func multiScopeParses() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot([
           "delete", "org/repo",
           "--staging", "--cache", "--cdn", "--yes",
         ])
@@ -95,7 +95,7 @@
           }
         }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "delete", "org/repo", "--staging", "--dry-run",
         ])
         guard let cmd = parsed as? DeleteCommand else {
@@ -132,7 +132,7 @@
           }
         }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "delete", "org/repo", "--staging",
         ])
         guard let cmd = parsed as? DeleteCommand else {
@@ -164,7 +164,7 @@
           }
         }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "delete", "org/repo", "--cdn", "--yes",
         ])
         guard let cmd = parsed as? DeleteCommand else {

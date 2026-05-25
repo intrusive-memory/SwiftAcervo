@@ -98,8 +98,8 @@
       // MARK: - Argument parsing
 
       @Test("Happy-path: positional modelId and --force flag are captured correctly")
-      func happyPathArgumentParsing() throws {
-        let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo", "--force"])
+      func happyPathArgumentParsing() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(["ship", "org/repo", "--force"])
         guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand, got \(type(of: parsed))")
           return
@@ -113,8 +113,8 @@
       }
 
       @Test("Happy-path: --no-verify and --dry-run flags parse to true when provided")
-      func noVerifyAndDryRunFlags() throws {
-        let parsed = try AcervoCLI.parseAsRoot(
+      func noVerifyAndDryRunFlags() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(
           ["ship", "mlx-community/Qwen2.5-7B-4bit", "--no-verify", "--dry-run"]
         )
         guard let cmd = parsed as? ShipCommand else {
@@ -128,8 +128,8 @@
       }
 
       @Test("Happy-path: explicit --bucket and --endpoint options override env lookup")
-      func explicitBucketAndEndpoint() throws {
-        let parsed = try AcervoCLI.parseAsRoot(
+      func explicitBucketAndEndpoint() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(
           ["ship", "org/repo", "--bucket", "my-bucket", "--endpoint", "https://r2.example.com"]
         )
         guard let cmd = parsed as? ShipCommand else {
@@ -141,8 +141,8 @@
       }
 
       @Test("Happy-path: optional file subset arguments are captured in files array")
-      func fileSubsetArguments() throws {
-        let parsed = try AcervoCLI.parseAsRoot(
+      func fileSubsetArguments() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(
           ["ship", "org/repo", "config.json", "tokenizer.json"]
         )
         guard let cmd = parsed as? ShipCommand else {
@@ -154,10 +154,10 @@
       }
 
       @Test("Missing modelId exits non-zero with a parse error")
-      func missingModelIdFails() {
+      func missingModelIdFails() async throws {
         var threw = false
         do {
-          _ = try AcervoCLI.parseAsRoot(["ship"])
+          _ = try await AcervoCLI.parseAsRoot(["ship"])
           Issue.record("Expected parseAsRoot to throw for missing modelId")
         } catch {
           threw = true
@@ -173,7 +173,7 @@
       func missingAccessKeySurfacesError() async throws {
         // No env set at all from baseline. The first thing CredentialResolver
         // checks is R2_ACCESS_KEY_ID — that's the var the error must name.
-        let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo"])
+        let parsed = try await AcervoCLI.parseAsRoot(["ship", "org/repo"])
         guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
@@ -206,7 +206,7 @@
           unsetenv("R2_PUBLIC_URL")
         }
 
-        let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo", "--source", "s3"])
+        let parsed = try await AcervoCLI.parseAsRoot(["ship", "org/repo", "--source", "s3"])
         guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
@@ -249,8 +249,8 @@
       /// lives in `PublishModelTests` in the library test target.
 
       @Test("--keep-orphans parses to true")
-      func keepOrphansFlagParses() throws {
-        let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo", "--keep-orphans"])
+      func keepOrphansFlagParses() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(["ship", "org/repo", "--keep-orphans"])
         guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
@@ -259,8 +259,8 @@
       }
 
       @Test("Default (no --keep-orphans) parses to false")
-      func keepOrphansDefaultsFalse() throws {
-        let parsed = try AcervoCLI.parseAsRoot(["ship", "org/repo"])
+      func keepOrphansDefaultsFalse() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot(["ship", "org/repo"])
         guard let cmd = parsed as? ShipCommand else {
           Issue.record("Expected ShipCommand")
           return
@@ -329,7 +329,7 @@
         }
         defer { PublishRunner.reset() }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "ship", "org/repo",
           "--no-verify",
           "--dry-run",
