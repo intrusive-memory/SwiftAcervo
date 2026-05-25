@@ -160,7 +160,7 @@
         let generator = ManifestGenerator(modelId: "org/repo")
         _ = try await generator.generate(directory: dir)
 
-        var cmd = try VerifyCommand.parse(["org/repo", dir.path])
+        var cmd = try await VerifyCommand.parse(["org/repo", dir.path])
         // Must not throw for a fully valid staging directory.
         try await cmd.run()
       }
@@ -181,7 +181,7 @@
             "acervo-verify-no-such-dir-\(UUID().uuidString)", isDirectory: true)
         // Deliberately do NOT create this directory.
 
-        var cmd = try VerifyCommand.parse(["org/repo", missingPath.path])
+        var cmd = try await VerifyCommand.parse(["org/repo", missingPath.path])
 
         var thrownError: Error?
         _ = await captureStderrCapturingError(thrownError: &thrownError) {
@@ -205,10 +205,10 @@
       // from ExitCode.failure (which is a run-time throw from the command body).
 
       @Test("Missing required argument causes ArgumentParser parse error, not ExitCode")
-      func missingModelIdYieldsParserError() {
+      func missingModelIdYieldsParserError() async throws {
         var thrownError: Error?
         do {
-          _ = try VerifyCommand.parse([])
+          _ = try await VerifyCommand.parse([])
         } catch {
           thrownError = error
         }
@@ -262,7 +262,7 @@
         }
 
         // No directory argument → CDN mode.
-        var cmd = try VerifyCommand.parse(["test-org/test-repo"])
+        var cmd = try await VerifyCommand.parse(["test-org/test-repo"])
 
         var thrownError: Error?
         let stderrOutput = await captureStderrCapturingError(thrownError: &thrownError) {
@@ -302,7 +302,7 @@
           attributes: nil
         )
 
-        var cmd = try VerifyCommand.parse(["org/repo", dir.path])
+        var cmd = try await VerifyCommand.parse(["org/repo", dir.path])
 
         var thrownError: Error?
         _ = await captureStderrCapturingError(thrownError: &thrownError) {

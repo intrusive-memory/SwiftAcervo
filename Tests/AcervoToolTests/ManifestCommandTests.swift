@@ -93,7 +93,7 @@
       let sha256Weights = try IntegrityVerification.sha256(of: weightsURL)
 
       // --- ArgumentParser parse check ---
-      let cmd = try ManifestCommand.parse([
+      let cmd = try await ManifestCommand.parse([
         "test-org/fixture-repo",
         dir.path,
       ])
@@ -138,10 +138,10 @@
     /// surface a parsing error. `ManifestCommand.parse([])` must throw — the
     /// command cannot proceed without `modelId` and `directory`.
     @Test("Missing required argument causes argument-parse error")
-    func missingRequiredArgument() {
+    func missingRequiredArgument() async throws {
       var thrown: Error?
       do {
-        _ = try ManifestCommand.parse([])
+        _ = try await ManifestCommand.parse([])
       } catch {
         thrown = error
       }
@@ -150,7 +150,7 @@
       // A single missing argument (only modelId present, no directory) also fails.
       var thrownPartial: Error?
       do {
-        _ = try ManifestCommand.parse(["test-org/fixture-repo"])
+        _ = try await ManifestCommand.parse(["test-org/fixture-repo"])
       } catch {
         thrownPartial = error
       }

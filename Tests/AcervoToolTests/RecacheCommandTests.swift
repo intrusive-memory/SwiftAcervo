@@ -18,8 +18,8 @@
     final class RecacheCommandTests {
 
       @Test("Required positional modelId; optional files list")
-      func parsesPositionals() throws {
-        let parsed = try AcervoCLI.parseAsRoot([
+      func parsesPositionals() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot([
           "recache", "org/repo", "config.json", "tokenizer.json",
         ])
         guard let cmd = parsed as? RecacheCommand else {
@@ -33,8 +33,8 @@
       }
 
       @Test("--keep-orphans and --yes parse")
-      func parsesFlags() throws {
-        let parsed = try AcervoCLI.parseAsRoot([
+      func parsesFlags() async throws {
+        let parsed = try await AcervoCLI.parseAsRoot([
           "recache", "org/repo", "--keep-orphans", "--yes",
         ])
         guard let cmd = parsed as? RecacheCommand else {
@@ -46,9 +46,9 @@
       }
 
       @Test("Missing modelId fails to parse")
-      func missingModelIdFails() {
+      func missingModelIdFails() async throws {
         do {
-          _ = try AcervoCLI.parseAsRoot(["recache"])
+          _ = try await AcervoCLI.parseAsRoot(["recache"])
           Issue.record("parse should have thrown")
         } catch {
           // ArgumentParser surfaces missing positional as a parse error.

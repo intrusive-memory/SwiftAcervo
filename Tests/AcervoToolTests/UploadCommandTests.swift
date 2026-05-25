@@ -99,8 +99,8 @@
       // MARK: - Argument parsing
 
       @Test("Happy-path argv parsing captures all flags correctly")
-      func happyPathArgvParsing() throws {
-        let cmd = try UploadCommand.parse([
+      func happyPathArgvParsing() async throws {
+        let cmd = try await UploadCommand.parse([
           "org/mymodel",
           "/tmp/staging/org_mymodel",
           "--bucket", "my-test-bucket",
@@ -121,10 +121,10 @@
       }
 
       @Test("Missing required modelId argument causes argument-parse error")
-      func missingRequiredModelIdArgument() {
+      func missingRequiredModelIdArgument() async throws {
         var thrown: Error?
         do {
-          _ = try UploadCommand.parse([])
+          _ = try await UploadCommand.parse([])
         } catch {
           thrown = error
         }
@@ -132,10 +132,10 @@
       }
 
       @Test("Missing required directory argument causes argument-parse error")
-      func missingRequiredDirectoryArgument() {
+      func missingRequiredDirectoryArgument() async throws {
         var thrown: Error?
         do {
-          _ = try UploadCommand.parse(["org/mymodel"])
+          _ = try await UploadCommand.parse(["org/mymodel"])
         } catch {
           thrown = error
         }
@@ -148,7 +148,7 @@
         "Error surfacing: missing R2_ACCESS_KEY_ID throws missingEnvironmentVariable before pipeline starts"
       )
       func missingAccessKeySurfacesError() async throws {
-        let parsed = try AcervoCLI.parseAsRoot(["upload", "org/repo", "/tmp/anywhere"])
+        let parsed = try await AcervoCLI.parseAsRoot(["upload", "org/repo", "/tmp/anywhere"])
         guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
@@ -173,16 +173,16 @@
       // MARK: - --keep-orphans propagation
 
       @Test("--keep-orphans parses to true")
-      func keepOrphansFlagParses() throws {
-        let cmd = try UploadCommand.parse([
+      func keepOrphansFlagParses() async throws {
+        let cmd = try await UploadCommand.parse([
           "org/repo", "/tmp/staging", "--keep-orphans",
         ])
         #expect(cmd.keepOrphans == true)
       }
 
       @Test("Default (no --keep-orphans) parses to false")
-      func keepOrphansDefaultsFalse() throws {
-        let cmd = try UploadCommand.parse(["org/repo", "/tmp/staging"])
+      func keepOrphansDefaultsFalse() async throws {
+        let cmd = try await UploadCommand.parse(["org/repo", "/tmp/staging"])
         #expect(cmd.keepOrphans == false)
       }
 
@@ -231,7 +231,7 @@
         var args = ["upload", "org/repo", modelDir.path]
         if passingFlag { args.append("--keep-orphans") }
 
-        let parsed = try AcervoCLI.parseAsRoot(args)
+        let parsed = try await AcervoCLI.parseAsRoot(args)
         guard let cmd = parsed as? UploadCommand else {
           Issue.record("Expected UploadCommand")
           return
@@ -277,7 +277,7 @@
         }
         defer { PublishRunner.reset() }
 
-        let parsed = try AcervoCLI.parseAsRoot([
+        let parsed = try await AcervoCLI.parseAsRoot([
           "upload", "org/repo", modelDir.path, "--dry-run",
         ])
         guard let cmd = parsed as? UploadCommand else {

@@ -103,10 +103,14 @@ extension Acervo {
   ///   The entitlement must be granted; the group ID itself must be supplied
   ///   via ``appGroupEnvironmentVariable`` because iOS does not expose
   ///   `SecTaskCopyValueForEntitlement` publicly.
-  /// - **macOS**: computed deterministically as
-  ///   `~/Library/Group Containers/<group-id>/SharedModels/`. Signed UI apps
-  ///   land at the same path the entitlement API would return; unsigned CLI
-  ///   tools can read/write the directory by virtue of file-system permissions.
+  /// - **macOS (sandboxed UI app)**: resolves via
+  ///   `containerURL(forSecurityApplicationGroupIdentifier:)`. The App Sandbox
+  ///   grants write access only to the team-prefixed directory
+  ///   (`<TeamID>.<group-id>`), and that's exactly the URL this API returns.
+  /// - **macOS (unsandboxed CLI / test runner)**: `containerURL(...)` returns
+  ///   `nil` for unsandboxed processes, so we fall back to
+  ///   `~/Library/Group Containers/<group-id>/SharedModels/`. CLI tools can
+  ///   read/write this directory by virtue of file-system permissions.
   ///
   /// All model directories are stored as direct children of this path, named
   /// using the slugified model ID.
@@ -148,6 +152,11 @@ extension Acervo {
       }
       return groupURL.appendingPathComponent(modelsSubdirectory)
     #else
+      if let groupURL = FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: groupID
+      ) {
+        return groupURL.appendingPathComponent(modelsSubdirectory)
+      }
       return
         FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Group Containers")
