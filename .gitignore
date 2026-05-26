@@ -3,6 +3,11 @@
 Package.resolved
 *.xcodeproj
 *.xcworkspace
+# Exception: the Acervo demo harness app project is tracked so the
+# package-dep / entitlement plumbing lives in git (see Sources/Acervo/).
+!Sources/Acervo/Acervo.xcodeproj
+Sources/Acervo/Acervo.xcodeproj/project.xcworkspace
+Sources/Acervo/Acervo.xcodeproj/xcuserdata
 xcuserdata/
 DerivedData/
 .DS_Store
