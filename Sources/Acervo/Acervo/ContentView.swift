@@ -2,65 +2,48 @@
 //  ContentView.swift
 //  Acervo
 //
-//  Created by TOM STOVALL on 5/26/26.
+//  Hosts a single AcervoModelsSection backed by the real static Acervo
+//  API. No mocks — every closure delegates to the production library.
 //
 
 import SwiftUI
-import SwiftData
+import SwiftAcervo
+import SwiftAcervoUI
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
 
-    var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
+  var body: some View {
+    Form {
+      AcervoModelsSection(
+        items: FixtureModels.demoFixtures,
+        header: "Models",
+        availability: { item in
+          await Acervo.availability(item.id)
+        },
+        download: { item, progress in
+          try await Acervo.ensureAvailable(
+            item.id,
+            files: [],
+            progress: { tick in
+              // AcervoDownloadProgress.overallProgress is the byte-accurate
+              // cumulative fraction across every manifest file, exactly the
+              // 0.0…1.0 sink the row expects.
+              progress(tick.overallProgress)
             }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        } detail: {
-            Text("Select an item")
+          )
+        },
+        deleteModel: { item in
+          try Acervo.deleteModel(item.id)
         }
+      )
     }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
-    }
+    #if os(macOS)
+    .formStyle(.grouped)
+    .frame(minWidth: 520, minHeight: 360)
+    #endif
+  }
 }
 
 #Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+  ContentView()
 }
