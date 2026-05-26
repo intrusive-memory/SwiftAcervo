@@ -6,30 +6,63 @@
 //
 
 import XCTest
+import SwiftAcervoUI
+@testable import Acervo
 
 final class AcervoTests: XCTestCase {
 
-    override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-    }
+    // MARK: - Fixture ID invariant
 
-    override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
-    }
-
-    func testExample() throws {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // Any test you write for XCTest can be annotated as throws and async.
-        // Mark your test throws to produce an unexpected failure when your test encounters an uncaught error.
-        // Mark your test async to allow awaiting for asynchronous code to complete. Check the results with assertions afterwards.
-    }
-
-    func testPerformanceExample() throws {
-        // This is an example of a performance test case.
-        measure {
-            // Put the code you want to measure the time of here.
+    /// Every fixture row must carry a non-empty stable identifier.
+    /// An empty `id` would cause closure dispatch (availability / download /
+    /// delete) to silently operate on the wrong model.
+    func testEveryFixtureHasNonEmptyID() {
+        for item in FixtureModels.demoFixtures {
+            XCTAssertFalse(
+                item.id.isEmpty,
+                "AcervoModelRowItem.id must not be empty (found empty id in item with displayName '\(item.displayName)')"
+            )
         }
+    }
+
+    // MARK: - Grouping invariant
+
+    /// A row must be fully grouped (both `groupID` and `groupDisplayName` set)
+    /// or fully ungrouped (both `nil`). A half-grouped row — `groupID` set but
+    /// `groupDisplayName` nil, or vice versa — leaves `AcervoModelsSection`
+    /// unable to render the engine caption header correctly.
+    func testGroupingInvariant() {
+        for item in FixtureModels.demoFixtures {
+            let bothSet = item.groupID != nil && item.groupDisplayName != nil
+            let bothNil = item.groupID == nil && item.groupDisplayName == nil
+            XCTAssertTrue(
+                bothSet || bothNil,
+                "Row '\(item.id)' is half-grouped: groupID=\(item.groupID ?? "nil"), groupDisplayName=\(item.groupDisplayName ?? "nil"). Both must be set or both must be nil."
+            )
+        }
+    }
+
+    // MARK: - Path coverage: ungrouped and grouped rows both present
+
+    /// The fixture array must exercise the ungrouped rendering path
+    /// (at least one row with `groupID == nil`) AND the grouped-header path
+    /// (at least two rows sharing the same non-nil `groupID`).
+    func testGroupedAndUngroupedPathsExercised() {
+        let fixtures = FixtureModels.demoFixtures
+
+        // At least one row must be ungrouped.
+        XCTAssertTrue(
+            fixtures.contains { $0.groupID == nil },
+            "demoFixtures must contain at least one row with groupID == nil to exercise the ungrouped rendering path."
+        )
+
+        // At least two rows must share a groupID to exercise the grouped-header path.
+        let grouped = Dictionary(grouping: fixtures.filter { $0.groupID != nil }, by: { $0.groupID! })
+        let hasSharedGroup = grouped.values.contains { $0.count >= 2 }
+        XCTAssertTrue(
+            hasSharedGroup,
+            "demoFixtures must contain at least two rows with the same non-nil groupID to exercise the grouped-header rendering path. Current groupID counts: \(grouped.mapValues(\.count))."
+        )
     }
 
 }
