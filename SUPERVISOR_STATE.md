@@ -35,11 +35,16 @@
 - Sorties 1/2/3/4 → COMPLETED / COMPLETED / COMPLETED / PARTIAL (4a build gate PASS; test gate + 4b interactive parts all blocked on user dev-portal fix)
 
 #### Sortie 4 — PARTIAL (single user-side blocker covers all remaining work)
-- Sortie 4a build gate: **PASS** — zero warnings, `** BUILD SUCCEEDED **`, build runtime ~1 min
-- Sortie 4a test gate: **FAIL — environmental, not a defect.** AcervoTests is bundle_loader-hosted inside `Acervo.app`. With `CODE_SIGNING_ALLOWED=NO` the host launches unsigned and crashes before XCTest can bootstrap. Failure mode: "Early unexpected exit, operation never finished bootstrapping". None of the 3 Sortie-3 tests executed.
-- Sortie 4b interactive parts (tasks 3–6): still pending
-- **Path forward (2026-05-26 amendment)**: hardcoded `group.intrusive-memory.models` in entitlements (env-var substitution proved unreliable through provisioning). Remaining work: (a) re-run signed test gate now that entitlement is a literal string + App-Group registration is in the user's hands, (b) user drives interactive tasks 3–6 in a signed run.
-- Sortie 4a logs: `/tmp/sortie4a-build.log`, `/tmp/sortie4a-test.log` (kept for inspection)
+- Sortie 4a build gate (unsigned, `CODE_SIGNING_ALLOWED=NO`): **PASS** — zero warnings, `** BUILD SUCCEEDED **`, build runtime ~1 min
+- Sortie 4a test gate (unsigned): **FAIL — environmental, not a defect.** AcervoTests is bundle_loader-hosted inside `Acervo.app`. With `CODE_SIGNING_ALLOWED=NO` the host launches unsigned and crashes before XCTest can bootstrap. Failure mode: "Early unexpected exit, operation never finished bootstrapping". None of the 3 Sortie-3 tests executed.
+- Sortie 4a retry (signed, post-7a80fb6) on 2026-05-26: **BUILD FAIL — Apple Developer portal still missing App Groups capability on the App ID.** Exact errors from `/tmp/sortie4a-retry-build.log`:
+  - "Provisioning profile 'Mac Team Provisioning Profile: io.intrusive-memory.\*' doesn't include the App Groups capability."
+  - "...doesn't support the group.intrusive-memory.models App Group."
+  - "...doesn't include the com.apple.security.application-groups entitlement."
+- Sortie 4b interactive parts (tasks 3–6): still pending; gated on signed run
+- **Conclusion**: hardcoding the string did NOT bypass the dev-portal gap — it surfaced it as a clean, named signing error instead of the previous bootstrap crash. The required user action is unchanged from Sortie 1's original flag and is the sole remaining blocker for the entire mission.
+- **NEXT_ACTION_FOR_USER**: at developer.apple.com → Certificates, IDs & Profiles → Identifiers → edit App ID `io.intrusive-memory.Acervo` (or the wildcard `io.intrusive-memory.*`) → enable **App Groups** capability → register/add group `group.intrusive-memory.models` → save → regenerate the **Mac Team Provisioning Profile** → in Xcode let automatic signing fetch the refreshed profile → re-run `/mission-supervisor resume`.
+- Logs: `/tmp/sortie4a-build.log`, `/tmp/sortie4a-test.log` (unsigned attempt), `/tmp/sortie4a-retry-build.log` (signed attempt, 3792 B). Retry test log was not created (build never reached test phase).
 
 #### Sortie 1 — COMPLETED (amended 2026-05-26 by user override)
 - Commit: `cb47d6d` on `model-widget`
@@ -83,3 +88,4 @@
 | 2026-05-26 | — | — | Plan "SUPERVISING AGENT ONLY" annotations reinterpreted | Read as "must dispatch a sub-agent with build-tool access"; mission-supervisor skill forbids supervisor writing production code, so all sorties dispatch to general-purpose sub-agents (which have Bash → xcodebuild) |
 | 2026-05-26 | acervo-demo-app | 1 | Model: opus | Forced by override: foundation_score=1 + dependency_depth=3 (blocks Sorties 2, 3, 4). Complexity score 17. |
 | 2026-05-26 | acervo-demo-app | 1 | Hardcode `group.intrusive-memory.models` in entitlements; abandon env-var indirection | User: "Provision using the environment variable wasn't working. Just go ahead and set the value with a string." Sortie 1's env-var substitution didn't carry through provisioning/codesign. `Shared.xcconfig` retained as dead-weight (harmless). Other user-applied pbxproj edits (deployment 26.2→26.3, drop visionOS, sandbox tightening, display name + category) accepted as part of the same amendment. |
+| 2026-05-26 | acervo-demo-app | 4a-retry | Signed build attempted post-7a80fb6 → confirmed dev-portal gap is the only remaining blocker | Hardcoding the App Group did not bypass provisioning; it produced a clean, named error: provisioning profile lacks App Groups capability + `group.intrusive-memory.models` entry. User must register the capability + group on the App ID and regenerate the Mac Team Provisioning Profile. No further automated sortie can advance this until that's done. |
