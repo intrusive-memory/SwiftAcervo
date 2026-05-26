@@ -259,7 +259,7 @@ Like `ComponentHandle`, but for caller-supplied local paths:
 
 ---
 
-## acervo CLI Tool (`Sources/acervo/`)
+## acervo CLI Tool (`Sources/CLI/`)
 
 Integrated using ArgumentParser (Swift Package Manager dependency).
 

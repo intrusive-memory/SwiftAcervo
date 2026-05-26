@@ -229,7 +229,7 @@
       // MARK: - --keep-orphans propagation (REQUIREMENTS §3.1 acceptance #9)
 
       /// Tests for the keep-orphans propagation rely on the `PublishRunner`
-      /// seam in `Sources/acervo/PublishRunner.swift`. The override captures
+      /// seam in `Sources/CLI/PublishRunner.swift`. The override captures
       /// the `keepOrphans:` argument the command would have passed to
       /// `Acervo.publishModel`, then returns a synthetic empty manifest so
       /// the command body proceeds to its "Ship complete" stdout banner
