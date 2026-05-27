@@ -1,20 +1,17 @@
 .build/
-.swiftpm/
-# Track the shared SPM scheme + per-platform test plans so the
-# checked-in macOS / iOS test plans (which carry the
-# ACERVO_APP_GROUP_ID environment variable required by
-# Acervo.sharedModelsDirectory) survive xcodebuild's
-# auto-generation. Everything else under .swiftpm/ stays local.
-!.swiftpm/
-!.swiftpm/xcode/
-!.swiftpm/xcode/xcshareddata/
-!.swiftpm/xcode/xcshareddata/xcschemes/
-!.swiftpm/xcode/xcshareddata/xcschemes/*.xcscheme
-!.swiftpm/xcode/xcshareddata/xctestplans/
-!.swiftpm/xcode/xcshareddata/xctestplans/*.xctestplan
+.swiftpm/*
+!.swiftpm/xcode
+.swiftpm/xcode/*
+!.swiftpm/xcode/xcshareddata
+.swiftpm/xcode/xcshareddata/xcdebugger
 Package.resolved
 *.xcodeproj
 *.xcworkspace
+# Exception: the Acervo demo harness app project is tracked so the
+# package-dep / entitlement plumbing lives in git (see Sources/Acervo/).
+!Sources/Acervo/Acervo.xcodeproj
+Sources/Acervo/Acervo.xcodeproj/project.xcworkspace
+Sources/Acervo/Acervo.xcodeproj/xcuserdata
 xcuserdata/
 DerivedData/
 .DS_Store

@@ -62,6 +62,20 @@
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "SwiftAcervoUI"
+               BuildableName = "SwiftAcervoUI"
+               BlueprintName = "SwiftAcervoUI"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -69,20 +83,6 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "NO">
-      <!--
-        Per-platform test plans live under
-        .swiftpm/xcode/xcshareddata/xctestplans/. Each plan owns the
-        ACERVO_APP_GROUP_ID environment variable that
-        Acervo.sharedModelsDirectory requires, so SwiftAcervoTests and
-        AcervoToolTests never write into a developer's real shared-models
-        directory. Individual tests that need stricter isolation override
-        the value per-test via the withIsolatedAcervoState helper.
-
-        SwiftAcervo-macOS  → SwiftAcervoTests + AcervoToolTests
-        SwiftAcervo-iOS    → SwiftAcervoTests only (acervo CLI uses
-                             Foundation.Process, which is unavailable
-                             on iOS)
-      -->
       <TestPlans>
          <TestPlanReference
             reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-macOS.xctestplan"
@@ -92,6 +92,18 @@
             reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-iOS.xctestplan">
          </TestPlanReference>
       </TestPlans>
+      <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "SwiftAcervoUITests"
+               BuildableName = "SwiftAcervoUITests"
+               BlueprintName = "SwiftAcervoUITests"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -110,6 +122,15 @@
       savedToolIdentifier = ""
       useCustomWorkingDirectory = "NO"
       debugDocumentVersioning = "YES">
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "SwiftAcervo"
+            BuildableName = "SwiftAcervo"
+            BlueprintName = "SwiftAcervo"
+            ReferencedContainer = "container:">
+         </BuildableReference>
+      </MacroExpansion>
    </ProfileAction>
    <AnalyzeAction
       buildConfiguration = "Debug">
