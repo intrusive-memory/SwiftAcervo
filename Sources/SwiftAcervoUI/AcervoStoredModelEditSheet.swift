@@ -5,8 +5,8 @@
 // `AcervoModelsList` and also available as a standalone sheet body for
 // hosts that want to drive their own add/edit flows.
 
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 /// A `Form`-based add/edit sheet for one `StoredModelReference`.
 ///
@@ -139,14 +139,15 @@ public struct AcervoStoredModelEditSheet: View {
     case .add:
       _draft = State(initialValue: Draft())
     case .edit(let model):
-      _draft = State(initialValue: Draft(
-        id: model.id,
-        displayName: model.displayName,
-        subtitleText: model.subtitleLines.joined(separator: "\n"),
-        groupID: model.groupID ?? "",
-        groupDisplayName: model.groupDisplayName ?? "",
-        origin: model.origin ?? ""
-      ))
+      _draft = State(
+        initialValue: Draft(
+          id: model.id,
+          displayName: model.displayName,
+          subtitleText: model.subtitleLines.joined(separator: "\n"),
+          groupID: model.groupID ?? "",
+          groupDisplayName: model.groupDisplayName ?? "",
+          origin: model.origin ?? ""
+        ))
     }
   }
 
@@ -238,7 +239,7 @@ public struct AcervoStoredModelEditSheet: View {
   /// Pure validity check used by the Save button. Exposed for unit testing
   /// so the rule can be exercised without standing up a SwiftUI host.
   static func isDraftValid(_ draft: Draft) -> Bool {
-    !draft.id.trimmingCharacters(in: .whitespaces).isEmpty &&
-      !draft.displayName.trimmingCharacters(in: .whitespaces).isEmpty
+    !draft.id.trimmingCharacters(in: .whitespaces).isEmpty
+      && !draft.displayName.trimmingCharacters(in: .whitespaces).isEmpty
   }
 }

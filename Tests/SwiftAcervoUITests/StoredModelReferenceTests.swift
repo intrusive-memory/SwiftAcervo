@@ -6,10 +6,11 @@
 // nothing touches the host's real catalog.
 
 import Foundation
-import Testing
-import SwiftData
-@testable import SwiftAcervoUI
 import SwiftAcervo
+import SwiftData
+import Testing
+
+@testable import SwiftAcervoUI
 
 @MainActor
 struct StoredModelReferenceTests {
@@ -156,18 +157,21 @@ struct StoredModelReferenceTests {
     let t1 = Date(timeIntervalSinceReferenceDate: 2_000)
     let t2 = Date(timeIntervalSinceReferenceDate: 3_000)
 
-    context.insert(StoredModelReference(
-      id: "b/1", displayName: "B1",
-      groupID: "b", groupDisplayName: "B Group", createdAt: t1
-    ))
-    context.insert(StoredModelReference(
-      id: "a/2", displayName: "A2",
-      groupID: "a", groupDisplayName: "A Group", createdAt: t2
-    ))
-    context.insert(StoredModelReference(
-      id: "a/1", displayName: "A1",
-      groupID: "a", groupDisplayName: "A Group", createdAt: t0
-    ))
+    context.insert(
+      StoredModelReference(
+        id: "b/1", displayName: "B1",
+        groupID: "b", groupDisplayName: "B Group", createdAt: t1
+      ))
+    context.insert(
+      StoredModelReference(
+        id: "a/2", displayName: "A2",
+        groupID: "a", groupDisplayName: "A Group", createdAt: t2
+      ))
+    context.insert(
+      StoredModelReference(
+        id: "a/1", displayName: "A1",
+        groupID: "a", groupDisplayName: "A Group", createdAt: t0
+      ))
     try context.save()
 
     let descriptor = FetchDescriptor<StoredModelReference>(

@@ -7,9 +7,10 @@
 // file covers only the bit unique to the interstitial.
 
 import Foundation
-import Testing
-@testable import SwiftAcervoUI
 import SwiftAcervo
+import Testing
+
+@testable import SwiftAcervoUI
 
 @MainActor
 struct AcervoModelDownloadInterstitialTests {

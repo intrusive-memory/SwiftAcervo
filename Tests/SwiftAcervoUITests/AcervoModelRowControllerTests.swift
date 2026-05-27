@@ -6,9 +6,10 @@
 // AcervoModelDownloadRow renders against.
 
 import Foundation
-import Testing
-@testable import SwiftAcervoUI
 import SwiftAcervo
+import Testing
+
+@testable import SwiftAcervoUI
 
 @MainActor
 struct AcervoModelRowControllerTests {

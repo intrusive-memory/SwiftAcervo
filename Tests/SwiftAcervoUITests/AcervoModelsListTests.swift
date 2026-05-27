@@ -7,14 +7,15 @@
 // wire up an in-memory container so nothing touches the host's catalog.
 
 import Foundation
-import SwiftUI
-import SwiftData
-import Testing
-@testable import SwiftAcervoUI
 import SwiftAcervo
+import SwiftData
+import SwiftUI
+import Testing
+
+@testable import SwiftAcervoUI
 
 #if canImport(AppKit)
-import AppKit
+  import AppKit
 #endif
 
 @MainActor
@@ -22,28 +23,45 @@ struct AcervoModelsListTests {
 
   // MARK: - Fixtures
 
-  private static let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability = { _ in .notAvailable }
-  private static let download: @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void = { _, _ in }
+  private static let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability = {
+    _ in .notAvailable
+  }
+  private static let download:
+    @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void = {
+      _, _ in
+    }
   private static let deleteModel: @Sendable (AcervoModelRowItem) async throws -> Void = { _ in }
 
   // MARK: - resolveEditable
 
   @Test("resolveEditable: .editable always returns true")
   func resolveEditableEditable() {
-    #expect(AcervoModelsList.resolveEditable(editability: .editable, allConfigurationsAllowSave: true) == true)
-    #expect(AcervoModelsList.resolveEditable(editability: .editable, allConfigurationsAllowSave: false) == true)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .editable, allConfigurationsAllowSave: true)
+        == true)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .editable, allConfigurationsAllowSave: false)
+        == true)
   }
 
   @Test("resolveEditable: .readOnly always returns false")
   func resolveEditableReadOnly() {
-    #expect(AcervoModelsList.resolveEditable(editability: .readOnly, allConfigurationsAllowSave: true) == false)
-    #expect(AcervoModelsList.resolveEditable(editability: .readOnly, allConfigurationsAllowSave: false) == false)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .readOnly, allConfigurationsAllowSave: true)
+        == false)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .readOnly, allConfigurationsAllowSave: false)
+        == false)
   }
 
   @Test("resolveEditable: .automatic mirrors the container's writability flag")
   func resolveEditableAutomatic() {
-    #expect(AcervoModelsList.resolveEditable(editability: .automatic, allConfigurationsAllowSave: true) == true)
-    #expect(AcervoModelsList.resolveEditable(editability: .automatic, allConfigurationsAllowSave: false) == false)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .automatic, allConfigurationsAllowSave: true)
+        == true)
+    #expect(
+      AcervoModelsList.resolveEditable(editability: .automatic, allConfigurationsAllowSave: false)
+        == false)
   }
 
   // MARK: - groupModels
@@ -144,63 +162,64 @@ struct AcervoModelsListTests {
   // MARK: - Body rendering (macOS host)
 
   #if canImport(AppKit)
-  @Test("list body renders without crashing against an empty in-memory store")
-  func renderEmptyStore() throws {
-    let container = try makeInMemoryContainer()
-    let view = AcervoModelsList(
-      availability: Self.availability,
-      download: Self.download,
-      deleteModel: Self.deleteModel
-    )
-    .modelContainer(container)
+    @Test("list body renders without crashing against an empty in-memory store")
+    func renderEmptyStore() throws {
+      let container = try makeInMemoryContainer()
+      let view = AcervoModelsList(
+        availability: Self.availability,
+        download: Self.download,
+        deleteModel: Self.deleteModel
+      )
+      .modelContainer(container)
 
-    let host = NSHostingController(rootView: view)
-    host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
-    host.view.layoutSubtreeIfNeeded()
-    #expect(host.view.bounds.width > 0)
-  }
+      let host = NSHostingController(rootView: view)
+      host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
+      host.view.layoutSubtreeIfNeeded()
+      #expect(host.view.bounds.width > 0)
+    }
 
-  @Test("list body renders against a populated in-memory store")
-  func renderPopulatedStore() throws {
-    let container = try makeInMemoryContainer()
-    let context = container.mainContext
-    context.insert(StoredModelReference(
-      id: "a", displayName: "A",
-      groupID: "g", groupDisplayName: "G"
-    ))
-    context.insert(StoredModelReference(id: "b", displayName: "B"))
-    try context.save()
+    @Test("list body renders against a populated in-memory store")
+    func renderPopulatedStore() throws {
+      let container = try makeInMemoryContainer()
+      let context = container.mainContext
+      context.insert(
+        StoredModelReference(
+          id: "a", displayName: "A",
+          groupID: "g", groupDisplayName: "G"
+        ))
+      context.insert(StoredModelReference(id: "b", displayName: "B"))
+      try context.save()
 
-    let view = AcervoModelsList(
-      editability: .editable,
-      availability: Self.availability,
-      download: Self.download,
-      deleteModel: Self.deleteModel
-    )
-    .modelContainer(container)
+      let view = AcervoModelsList(
+        editability: .editable,
+        availability: Self.availability,
+        download: Self.download,
+        deleteModel: Self.deleteModel
+      )
+      .modelContainer(container)
 
-    let host = NSHostingController(rootView: view)
-    host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
-    host.view.layoutSubtreeIfNeeded()
-    #expect(host.view.bounds.width > 0)
-  }
+      let host = NSHostingController(rootView: view)
+      host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
+      host.view.layoutSubtreeIfNeeded()
+      #expect(host.view.bounds.width > 0)
+    }
 
-  @Test("list body renders in read-only mode")
-  func renderReadOnlyMode() throws {
-    let container = try makeInMemoryContainer()
-    let view = AcervoModelsList(
-      editability: .readOnly,
-      availability: Self.availability,
-      download: Self.download,
-      deleteModel: Self.deleteModel
-    )
-    .modelContainer(container)
+    @Test("list body renders in read-only mode")
+    func renderReadOnlyMode() throws {
+      let container = try makeInMemoryContainer()
+      let view = AcervoModelsList(
+        editability: .readOnly,
+        availability: Self.availability,
+        download: Self.download,
+        deleteModel: Self.deleteModel
+      )
+      .modelContainer(container)
 
-    let host = NSHostingController(rootView: view)
-    host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
-    host.view.layoutSubtreeIfNeeded()
-    #expect(host.view.bounds.width > 0)
-  }
+      let host = NSHostingController(rootView: view)
+      host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
+      host.view.layoutSubtreeIfNeeded()
+      #expect(host.view.bounds.width > 0)
+    }
   #endif
 
   // MARK: - Helpers

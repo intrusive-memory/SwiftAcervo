@@ -48,7 +48,8 @@ public final class AcervoModelRowController {
   // MARK: - Injected Behavior
 
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
-  private let download: @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
+  private let download:
+    @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
   private let deleteFn: @Sendable (AcervoModelRowItem) async throws -> Void
 
   // MARK: - Init
@@ -65,7 +66,9 @@ public final class AcervoModelRowController {
   public init(
     item: AcervoModelRowItem,
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
-    download: @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void,
+    download:
+      @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
+      Void,
     deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void
   ) {
     self.item = item

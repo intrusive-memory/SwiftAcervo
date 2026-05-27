@@ -6,8 +6,8 @@
 // .notAvailable state — driving the user through downloading the single
 // model the host has nominated as the default.
 
-import SwiftUI
 import SwiftAcervo
+import SwiftUI
 
 /// A single-model download prompt for first-launch / no-model-present
 /// states. Reuses `AcervoModelRowController` under the hood so its state
@@ -39,7 +39,8 @@ public struct AcervoModelDownloadInterstitial: View {
 
   private let item: AcervoModelRowItem
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
-  private let download: @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
+  private let download:
+    @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
 
   private let title: LocalizedStringKey
   private let welcomeMessage: LocalizedStringKey
@@ -99,13 +100,17 @@ public struct AcervoModelDownloadInterstitial: View {
   public init(
     item: AcervoModelRowItem,
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
-    download: @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void,
+    download:
+      @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
+      Void,
     title: LocalizedStringKey = "Welcome",
-    welcomeMessage: LocalizedStringKey = "Get started by downloading a model. Everything runs locally on this device after setup — no internet required.",
+    welcomeMessage: LocalizedStringKey =
+      "Get started by downloading a model. Everything runs locally on this device after setup — no internet required.",
     promptSubtitle: LocalizedStringKey = "Tap below to download the default model.",
     downloadButtonLabel: LocalizedStringKey = "Download Model",
     downloadingTitle: LocalizedStringKey = "Downloading…",
-    downloadingFootnote: LocalizedStringKey = "This may take several minutes depending on your connection speed.",
+    downloadingFootnote: LocalizedStringKey =
+      "This may take several minutes depending on your connection speed.",
     completionTitle: LocalizedStringKey = "Model Ready",
     completionMessage: LocalizedStringKey = "Setup complete. You're ready to go.",
     retryButtonLabel: LocalizedStringKey = "Try Again",

@@ -8,10 +8,11 @@
 //   .downloading(progress)    → linear ProgressView
 //   .available                → green checkmark + Delete button
 
-import SwiftUI
 import SwiftAcervo
+import SwiftUI
+
 #if os(macOS)
-import AppKit
+  import AppKit
 #endif
 
 /// A list row showing a single model's name, optional subtitle metadata,
@@ -36,7 +37,9 @@ public struct AcervoModelDownloadRow: View {
   public init(
     item: AcervoModelRowItem,
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
-    download: @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void,
+    download:
+      @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
+      Void,
     deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void
   ) {
     _controller = State(
@@ -102,9 +105,11 @@ public struct AcervoModelDownloadRow: View {
       }
       .buttonStyle(.borderless)
       #if !os(macOS)
-      .disabled(true)
+        .disabled(true)
       #endif
-      .accessibilityIdentifier("\(AcervoUIAccessibility.modelRowPrefix).\(controller.item.id).revealButton")
+      .accessibilityIdentifier(
+        "\(AcervoUIAccessibility.modelRowPrefix).\(controller.item.id).revealButton"
+      )
       .accessibilityLabel("Reveal \(controller.item.displayName) in Finder")
 
       Text(path.path)
@@ -118,7 +123,7 @@ public struct AcervoModelDownloadRow: View {
 
   private func revealInFinder(_ path: URL) {
     #if os(macOS)
-    NSWorkspace.shared.activateFileViewerSelecting([path])
+      NSWorkspace.shared.activateFileViewerSelecting([path])
     #endif
   }
 
@@ -135,7 +140,8 @@ public struct AcervoModelDownloadRow: View {
             .foregroundStyle(.red)
             .multilineTextAlignment(.trailing)
             .frame(maxWidth: 200)
-            .accessibilityIdentifier("\(AcervoUIAccessibility.modelErrorPrefix).\(controller.item.id)")
+            .accessibilityIdentifier(
+              "\(AcervoUIAccessibility.modelErrorPrefix).\(controller.item.id)")
         }
         Button {
           Task { await controller.startDownload() }
@@ -143,7 +149,9 @@ public struct AcervoModelDownloadRow: View {
           Label("Download", systemImage: "arrow.down.circle")
         }
         .buttonStyle(.bordered)
-        .accessibilityIdentifier("\(AcervoUIAccessibility.modelDownloadButtonPrefix).\(controller.item.id)")
+        .accessibilityIdentifier(
+          "\(AcervoUIAccessibility.modelDownloadButtonPrefix).\(controller.item.id)"
+        )
         .accessibilityLabel("Download \(controller.item.displayName)")
       }
 
@@ -151,7 +159,9 @@ public struct AcervoModelDownloadRow: View {
       ProgressView(value: progress)
         .frame(width: 120)
         .progressViewStyle(.linear)
-        .accessibilityIdentifier("\(AcervoUIAccessibility.modelDownloadingPrefix).\(controller.item.id)")
+        .accessibilityIdentifier(
+          "\(AcervoUIAccessibility.modelDownloadingPrefix).\(controller.item.id)"
+        )
         .accessibilityLabel("Download progress for \(controller.item.displayName)")
         .accessibilityValue("\(Int(progress * 100)) percent complete")
 
@@ -168,10 +178,13 @@ public struct AcervoModelDownloadRow: View {
             .labelStyle(.iconOnly)
         }
         .buttonStyle(.borderless)
-        .accessibilityIdentifier("\(AcervoUIAccessibility.modelDeleteButtonPrefix).\(controller.item.id)")
+        .accessibilityIdentifier(
+          "\(AcervoUIAccessibility.modelDeleteButtonPrefix).\(controller.item.id)"
+        )
         .accessibilityLabel("Delete \(controller.item.displayName)")
       }
-      .accessibilityIdentifier("\(AcervoUIAccessibility.modelDownloadedPrefix).\(controller.item.id)")
+      .accessibilityIdentifier(
+        "\(AcervoUIAccessibility.modelDownloadedPrefix).\(controller.item.id)")
     }
   }
 }

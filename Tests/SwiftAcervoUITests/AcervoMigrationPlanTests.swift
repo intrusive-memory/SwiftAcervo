@@ -5,8 +5,9 @@
 // stage reordering is caught here before it ships into a real catalog.
 
 import Foundation
-import Testing
 import SwiftData
+import Testing
+
 @testable import SwiftAcervoUI
 
 @MainActor
@@ -43,7 +44,8 @@ struct AcervoMigrationPlanTests {
   @Test("StoredModelReference typealias points at the V1 nested type")
   func typealiasResolvesToV1() {
     let viaTypealias: StoredModelReference.Type = StoredModelReference.self
-    let viaNested: AcervoSchemaV1.StoredModelReference.Type = AcervoSchemaV1.StoredModelReference.self
+    let viaNested: AcervoSchemaV1.StoredModelReference.Type = AcervoSchemaV1.StoredModelReference
+      .self
     #expect(viaTypealias == viaNested)
   }
 

@@ -9,10 +9,11 @@
 import Foundation
 import SwiftUI
 import Testing
+
 @testable import SwiftAcervoUI
 
 #if canImport(AppKit)
-import AppKit
+  import AppKit
 #endif
 
 @MainActor
@@ -40,28 +41,34 @@ struct AcervoStoredModelEditSheetTests {
   @Test("isDraftValid rejects empty/whitespace id and displayName")
   func isDraftValidRejectsBlank() {
     #expect(!AcervoStoredModelEditSheet.isDraftValid(.init()))
-    #expect(!AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "", displayName: "Display")
-    ))
-    #expect(!AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "  ", displayName: "Display")
-    ))
-    #expect(!AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "org/repo", displayName: "")
-    ))
-    #expect(!AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "org/repo", displayName: "   ")
-    ))
+    #expect(
+      !AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "", displayName: "Display")
+      ))
+    #expect(
+      !AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "  ", displayName: "Display")
+      ))
+    #expect(
+      !AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "org/repo", displayName: "")
+      ))
+    #expect(
+      !AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "org/repo", displayName: "   ")
+      ))
   }
 
   @Test("isDraftValid accepts non-empty trimmed id + displayName")
   func isDraftValidAcceptsBoth() {
-    #expect(AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "org/repo", displayName: "Display")
-    ))
-    #expect(AcervoStoredModelEditSheet.isDraftValid(
-      .init(id: "  org/repo  ", displayName: "  Display  ")
-    ))
+    #expect(
+      AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "org/repo", displayName: "Display")
+      ))
+    #expect(
+      AcervoStoredModelEditSheet.isDraftValid(
+        .init(id: "  org/repo  ", displayName: "  Display  ")
+      ))
   }
 
   @Test("isValid instance accessor mirrors the static rule")
@@ -74,28 +81,28 @@ struct AcervoStoredModelEditSheetTests {
   // MARK: - Body rendering (macOS host)
 
   #if canImport(AppKit)
-  @Test("sheet body renders without crashing in add mode")
-  func renderAddMode() {
-    let sheet = AcervoStoredModelEditSheet(mode: .add) { _ in }
-    let host = NSHostingController(rootView: sheet)
-    host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
-    host.view.layoutSubtreeIfNeeded()
-    #expect(host.view.subviews.isEmpty == false || host.view.bounds.width > 0)
-  }
+    @Test("sheet body renders without crashing in add mode")
+    func renderAddMode() {
+      let sheet = AcervoStoredModelEditSheet(mode: .add) { _ in }
+      let host = NSHostingController(rootView: sheet)
+      host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
+      host.view.layoutSubtreeIfNeeded()
+      #expect(host.view.subviews.isEmpty == false || host.view.bounds.width > 0)
+    }
 
-  @Test("sheet body renders without crashing in edit mode")
-  func renderEditMode() {
-    let record = StoredModelReference(
-      id: "org/repo",
-      displayName: "Display",
-      subtitleLines: ["line"]
-    )
-    let sheet = AcervoStoredModelEditSheet(mode: .edit(record)) { _ in }
-    let host = NSHostingController(rootView: sheet)
-    host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
-    host.view.layoutSubtreeIfNeeded()
-    #expect(host.view.bounds.width > 0)
-  }
+    @Test("sheet body renders without crashing in edit mode")
+    func renderEditMode() {
+      let record = StoredModelReference(
+        id: "org/repo",
+        displayName: "Display",
+        subtitleLines: ["line"]
+      )
+      let sheet = AcervoStoredModelEditSheet(mode: .edit(record)) { _ in }
+      let host = NSHostingController(rootView: sheet)
+      host.view.frame = CGRect(x: 0, y: 0, width: 600, height: 600)
+      host.view.layoutSubtreeIfNeeded()
+      #expect(host.view.bounds.width > 0)
+    }
   #endif
 
   // MARK: - onSave callback wiring

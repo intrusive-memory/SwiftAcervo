@@ -6,9 +6,9 @@
 // store is writable) provides add/remove/edit affordances via toolbar
 // + sheets + context menu.
 
-import SwiftUI
-import SwiftData
 import SwiftAcervo
+import SwiftData
+import SwiftUI
 
 /// A drop-in catalog manager for `StoredModelReference` records.
 ///
@@ -66,7 +66,8 @@ public struct AcervoModelsList: View {
 
   private let editability: Editability
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
-  private let download: @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
+  private let download:
+    @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
   private let deleteModel: @Sendable (AcervoModelRowItem) async throws -> Void
 
   /// Creates the list.
@@ -88,7 +89,9 @@ public struct AcervoModelsList: View {
     ],
     editability: Editability = .automatic,
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
-    download: @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void,
+    download:
+      @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
+      Void,
     deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void
   ) {
     _models = Query(sort: sortBy)
@@ -201,8 +204,9 @@ public struct AcervoModelsList: View {
 
         Button {
           if let only = selection.first,
-             selection.count == 1,
-             models.contains(where: { $0.id == only }) {
+            selection.count == 1,
+            models.contains(where: { $0.id == only })
+          {
             sheet = .edit(only)
           }
         } label: {

@@ -5,8 +5,8 @@
 // caller's items grouped by `groupID`, with one AcervoModelDownloadRow
 // per item.
 
-import SwiftUI
 import SwiftAcervo
+import SwiftUI
 
 /// A reusable `Section` listing every model the host wants to expose for
 /// download/delete, optionally grouped by engine.
@@ -39,7 +39,8 @@ public struct AcervoModelsSection: View {
   private let header: LocalizedStringKey
   private let headerAccessibilityIdentifier: String?
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
-  private let download: @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
+  private let download:
+    @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
   private let deleteModel: @Sendable (AcervoModelRowItem) async throws -> Void
 
   // MARK: - Init
@@ -64,7 +65,9 @@ public struct AcervoModelsSection: View {
     header: LocalizedStringKey = "Models",
     headerAccessibilityIdentifier: String? = nil,
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
-    download: @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void,
+    download:
+      @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
+      Void,
     deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void
   ) {
     self.items = items
