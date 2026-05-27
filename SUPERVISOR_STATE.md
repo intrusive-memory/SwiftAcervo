@@ -31,10 +31,10 @@
 ## Per-Work-Unit State
 
 ### acervo-demo-app
-- Work unit state: RUNNING
-- Sorties 1/2/3/4 → COMPLETED / COMPLETED / COMPLETED / PARTIAL (4a build gate PASS; test gate + 4b interactive parts all blocked on user dev-portal fix)
+- Work unit state: COMPLETED
+- Sorties 1/2/3/4 → COMPLETED / COMPLETED / COMPLETED / COMPLETED (4a signed build + signed unit tests PASS; 4b interactive UI smoke explicitly deferred-to-human per user decision 2026-05-26)
 
-#### Sortie 4 — PARTIAL (single user-side blocker covers all remaining work)
+#### Sortie 4 — COMPLETED (4a signed, 4b explicitly deferred-to-human 2026-05-26)
 - Sortie 4a build gate (unsigned, `CODE_SIGNING_ALLOWED=NO`): **PASS** — zero warnings, `** BUILD SUCCEEDED **`, build runtime ~1 min
 - Sortie 4a test gate (unsigned): **FAIL — environmental, not a defect.** AcervoTests is bundle_loader-hosted inside `Acervo.app`. With `CODE_SIGNING_ALLOWED=NO` the host launches unsigned and crashes before XCTest can bootstrap. Failure mode: "Early unexpected exit, operation never finished bootstrapping". None of the 3 Sortie-3 tests executed.
 - Sortie 4a retry #1 (signed, post-7a80fb6) on 2026-05-26: **BUILD FAIL** — provisioning profile lacked App Groups capability. User then registered the capability + group in the dev portal and regenerated the Mac Team Provisioning Profile.
