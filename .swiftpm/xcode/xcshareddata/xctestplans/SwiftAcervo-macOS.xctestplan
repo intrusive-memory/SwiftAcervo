@@ -29,6 +29,13 @@
         "identifier" : "AcervoToolTests",
         "name" : "AcervoToolTests"
       }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SwiftAcervoUITests",
+        "name" : "SwiftAcervoUITests"
+      }
     }
   ],
   "version" : 1

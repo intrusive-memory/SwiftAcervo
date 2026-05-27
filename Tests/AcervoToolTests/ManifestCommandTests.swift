@@ -220,7 +220,7 @@
     /// inequality on the `updatedAt` field.
     ///
     /// If this test fails, the root cause is the live timestamp embedded by
-    /// `ManifestGenerator.generate()` at Sources/acervo/ManifestGenerator.swift
+    /// `ManifestGenerator.generate()` at Sources/SwiftAcervo/ManifestGenerator.swift
     /// line 103 (`updatedAt: Self.iso8601Now()`). The proposed fix is to add an
     /// `updatedAt: String? = nil` parameter to `generate()` so tests can supply
     /// a fixed sentinel string.
@@ -253,7 +253,7 @@
         """
         Manifest output is NOT byte-identical across two generations.
         Non-determinism source: `updatedAt` timestamp embedded by \
-        ManifestGenerator.generate() at Sources/acervo/ManifestGenerator.swift:103.
+        ManifestGenerator.generate() at Sources/SwiftAcervo/ManifestGenerator.swift:103.
         First  updatedAt appears at offset ~\(offsetOfUpdatedAt(in: data1) ?? -1) in data1.
         Second updatedAt appears at offset ~\(offsetOfUpdatedAt(in: data2) ?? -1) in data2.
         Proposed fix: add `updatedAt: String? = nil` parameter to generate() \

@@ -5,13 +5,17 @@ import PackageDescription
 let package = Package(
   name: "SwiftAcervo",
   platforms: [
-    .macOS(.v26),
-    .iOS(.v26),
+    .macOS("26.3"),
+    .iOS("26.3"),
   ],
   products: [
     .library(
       name: "SwiftAcervo",
       targets: ["SwiftAcervo"]
+    ),
+    .library(
+      name: "SwiftAcervoUI",
+      targets: ["SwiftAcervoUI"]
     ),
     .executable(name: "acervo", targets: ["acervo"]),
   ],
@@ -23,6 +27,10 @@ let package = Package(
     .target(
       name: "SwiftAcervo"
     ),
+    .target(
+      name: "SwiftAcervoUI",
+      dependencies: ["SwiftAcervo"]
+    ),
     .executableTarget(
       name: "acervo",
       dependencies: [
@@ -30,7 +38,7 @@ let package = Package(
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "Progress", package: "Progress.swift"),
       ],
-      path: "Sources/acervo",
+      path: "Sources/CLI",
       swiftSettings: [
         .enableUpcomingFeature("StrictConcurrency")
       ]
@@ -38,6 +46,10 @@ let package = Package(
     .testTarget(
       name: "SwiftAcervoTests",
       dependencies: ["SwiftAcervo"]
+    ),
+    .testTarget(
+      name: "SwiftAcervoUITests",
+      dependencies: ["SwiftAcervoUI", "SwiftAcervo"]
     ),
     .testTarget(
       name: "AcervoToolTests",
