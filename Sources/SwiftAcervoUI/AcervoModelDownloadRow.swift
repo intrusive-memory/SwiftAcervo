@@ -10,6 +10,9 @@
 
 import SwiftUI
 import SwiftAcervo
+#if os(macOS)
+import AppKit
+#endif
 
 /// A list row showing a single model's name, optional subtitle metadata,
 /// and a state-appropriate control: Download, in-progress bar, or
@@ -76,7 +79,47 @@ public struct AcervoModelDownloadRow: View {
           }
         }
       }
+
+      if let path = modelDirectoryPath {
+        modelPathRow(path)
+      }
     }
+  }
+
+  /// Resolved on-disk location for this row's model, or `nil` if the
+  /// item's `id` isn't a valid `org/repo` model id (host may use synthetic ids).
+  private var modelDirectoryPath: URL? {
+    try? Acervo.modelDirectory(for: controller.item.id)
+  }
+
+  private func modelPathRow(_ path: URL) -> some View {
+    HStack(spacing: 4) {
+      Button {
+        revealInFinder(path)
+      } label: {
+        Image(systemName: "folder")
+          .font(.caption2)
+      }
+      .buttonStyle(.borderless)
+      #if !os(macOS)
+      .disabled(true)
+      #endif
+      .accessibilityIdentifier("\(AcervoUIAccessibility.modelRowPrefix).\(controller.item.id).revealButton")
+      .accessibilityLabel("Reveal \(controller.item.displayName) in Finder")
+
+      Text(path.path)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .textSelection(.enabled)
+    }
+  }
+
+  private func revealInFinder(_ path: URL) {
+    #if os(macOS)
+    NSWorkspace.shared.activateFileViewerSelecting([path])
+    #endif
   }
 
   // MARK: - State-Specific Trailing Controls
