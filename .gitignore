@@ -1,5 +1,9 @@
 .build/
-.swiftpm/
+.swiftpm/*
+!.swiftpm/xcode
+.swiftpm/xcode/*
+!.swiftpm/xcode/xcshareddata
+.swiftpm/xcode/xcshareddata/xcdebugger
 Package.resolved
 *.xcodeproj
 *.xcworkspace

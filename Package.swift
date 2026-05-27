@@ -5,8 +5,8 @@ import PackageDescription
 let package = Package(
   name: "SwiftAcervo",
   platforms: [
-    .macOS(.v26),
-    .iOS(.v26),
+    .macOS("26.3"),
+    .iOS("26.3"),
   ],
   products: [
     .library(
