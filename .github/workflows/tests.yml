@@ -108,7 +108,7 @@ jobs:
           xcodebuild build-for-testing \
             -scheme SwiftAcervo-Package \
             -testPlan SwiftAcervo-iOS \
-            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
             -skipPackagePluginValidation \
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
@@ -122,7 +122,7 @@ jobs:
           xcodebuild test-without-building \
             -scheme SwiftAcervo-Package \
             -testPlan SwiftAcervo-iOS \
-            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.3' \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
             -skipPackagePluginValidation \
             ONLY_ACTIVE_ARCH=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
