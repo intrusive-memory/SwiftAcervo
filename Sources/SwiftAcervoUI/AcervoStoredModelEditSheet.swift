@@ -42,12 +42,83 @@ import SwiftUI
 /// The identifier field is editable in `.add` mode and locked in
 /// `.edit` mode (the slug is the primary key and cannot be renamed
 /// without re-inserting).
+///
+/// All user-visible copy is parameterized via `Labels` so hosts can
+/// supply `LocalizedStringKey` values resolved against their own
+/// `Localizable.xcstrings`. Defaults are English-only on purpose.
 public struct AcervoStoredModelEditSheet: View {
 
   /// Whether the sheet is creating a new record or editing an existing one.
   public enum Mode {
     case add
     case edit(StoredModelReference)
+  }
+
+  /// User-visible copy for the sheet. Every field defaults to an English
+  /// literal; hosts that need localized copy pass `LocalizedStringKey`
+  /// values that resolve against their own catalog.
+  public struct Labels {
+    public var addTitle: LocalizedStringKey
+    public var editTitle: LocalizedStringKey
+    public var identifierSectionHeader: LocalizedStringKey
+    public var displaySectionHeader: LocalizedStringKey
+    public var subtitleLinesSectionHeader: LocalizedStringKey
+    public var subtitleLinesFooter: LocalizedStringKey
+    public var groupingSectionHeader: LocalizedStringKey
+    public var groupingFooter: LocalizedStringKey
+    public var originSectionHeader: LocalizedStringKey
+    public var originFooter: LocalizedStringKey
+    public var idPlaceholder: LocalizedStringKey
+    public var displayNamePlaceholder: LocalizedStringKey
+    public var groupIDPlaceholder: LocalizedStringKey
+    public var groupDisplayNamePlaceholder: LocalizedStringKey
+    public var originPlaceholder: LocalizedStringKey
+    public var slugImmutableHelp: LocalizedStringKey
+    public var cancelButtonLabel: LocalizedStringKey
+    public var saveButtonLabel: LocalizedStringKey
+
+    public init(
+      addTitle: LocalizedStringKey = "New Model",
+      editTitle: LocalizedStringKey = "Edit Model",
+      identifierSectionHeader: LocalizedStringKey = "Identifier",
+      displaySectionHeader: LocalizedStringKey = "Display",
+      subtitleLinesSectionHeader: LocalizedStringKey = "Subtitle lines",
+      subtitleLinesFooter: LocalizedStringKey =
+        "One line per row. Shown beneath the display name.",
+      groupingSectionHeader: LocalizedStringKey = "Grouping",
+      groupingFooter: LocalizedStringKey =
+        "Rows sharing a Group ID render under one header.",
+      originSectionHeader: LocalizedStringKey = "Origin",
+      originFooter: LocalizedStringKey =
+        "Free-form note recording where the model came from.",
+      idPlaceholder: LocalizedStringKey = "org/model-slug",
+      displayNamePlaceholder: LocalizedStringKey = "Display name",
+      groupIDPlaceholder: LocalizedStringKey = "Group ID (optional)",
+      groupDisplayNamePlaceholder: LocalizedStringKey = "Group display name",
+      originPlaceholder: LocalizedStringKey = "Source URL or host (optional)",
+      slugImmutableHelp: LocalizedStringKey = "Slug is immutable once created.",
+      cancelButtonLabel: LocalizedStringKey = "Cancel",
+      saveButtonLabel: LocalizedStringKey = "Save"
+    ) {
+      self.addTitle = addTitle
+      self.editTitle = editTitle
+      self.identifierSectionHeader = identifierSectionHeader
+      self.displaySectionHeader = displaySectionHeader
+      self.subtitleLinesSectionHeader = subtitleLinesSectionHeader
+      self.subtitleLinesFooter = subtitleLinesFooter
+      self.groupingSectionHeader = groupingSectionHeader
+      self.groupingFooter = groupingFooter
+      self.originSectionHeader = originSectionHeader
+      self.originFooter = originFooter
+      self.idPlaceholder = idPlaceholder
+      self.displayNamePlaceholder = displayNamePlaceholder
+      self.groupIDPlaceholder = groupIDPlaceholder
+      self.groupDisplayNamePlaceholder = groupDisplayNamePlaceholder
+      self.originPlaceholder = originPlaceholder
+      self.slugImmutableHelp = slugImmutableHelp
+      self.cancelButtonLabel = cancelButtonLabel
+      self.saveButtonLabel = saveButtonLabel
+    }
   }
 
   /// The trimmed/normalized values produced by the form on save.
@@ -120,6 +191,7 @@ public struct AcervoStoredModelEditSheet: View {
   }
 
   let mode: Mode
+  let labels: Labels
   let onSave: (Draft) -> Void
 
   @Environment(\.dismiss) private var dismiss
@@ -130,10 +202,18 @@ public struct AcervoStoredModelEditSheet: View {
   /// - Parameters:
   ///   - mode: `.add` for a brand-new record, `.edit(_:)` to populate the
   ///     form from an existing `StoredModelReference`.
+  ///   - labels: User-visible copy. Defaults to English literals; pass a
+  ///     custom `Labels` with `LocalizedStringKey` values for full
+  ///     host-side localization.
   ///   - onSave: Called with the trimmed/normalized `Draft` when the
   ///     user taps Save. The sheet dismisses automatically.
-  public init(mode: Mode, onSave: @escaping (Draft) -> Void) {
+  public init(
+    mode: Mode,
+    labels: Labels = Labels(),
+    onSave: @escaping (Draft) -> Void
+  ) {
     self.mode = mode
+    self.labels = labels
     self.onSave = onSave
     switch mode {
     case .add:
@@ -154,15 +234,15 @@ public struct AcervoStoredModelEditSheet: View {
   public var body: some View {
     NavigationStack {
       Form {
-        Section("Identifier") {
-          TextField("org/model-slug", text: $draft.id)
+        Section(labels.identifierSectionHeader) {
+          TextField(labels.idPlaceholder, text: $draft.id)
             .textFieldStyle(.roundedBorder)
             .disabled(isEditing)
-            .help(isEditing ? "Slug is immutable once created." : "")
+            .help(isEditing ? labels.slugImmutableHelp : "")
         }
 
-        Section("Display") {
-          TextField("Display name", text: $draft.displayName)
+        Section(labels.displaySectionHeader) {
+          TextField(labels.displayNamePlaceholder, text: $draft.displayName)
             .textFieldStyle(.roundedBorder)
         }
 
@@ -171,45 +251,45 @@ public struct AcervoStoredModelEditSheet: View {
             .font(.body.monospaced())
             .frame(minHeight: 100)
         } header: {
-          Text("Subtitle lines")
+          Text(labels.subtitleLinesSectionHeader)
         } footer: {
-          Text("One line per row. Shown beneath the display name.")
+          Text(labels.subtitleLinesFooter)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
 
         Section {
-          TextField("Group ID (optional)", text: $draft.groupID)
+          TextField(labels.groupIDPlaceholder, text: $draft.groupID)
             .textFieldStyle(.roundedBorder)
-          TextField("Group display name", text: $draft.groupDisplayName)
+          TextField(labels.groupDisplayNamePlaceholder, text: $draft.groupDisplayName)
             .textFieldStyle(.roundedBorder)
         } header: {
-          Text("Grouping")
+          Text(labels.groupingSectionHeader)
         } footer: {
-          Text("Rows sharing a Group ID render under one header.")
+          Text(labels.groupingFooter)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
 
         Section {
-          TextField("Source URL or host (optional)", text: $draft.origin)
+          TextField(labels.originPlaceholder, text: $draft.origin)
             .textFieldStyle(.roundedBorder)
         } header: {
-          Text("Origin")
+          Text(labels.originSectionHeader)
         } footer: {
-          Text("Free-form note recording where the model came from.")
+          Text(labels.originFooter)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
       }
       .formStyle(.grouped)
-      .navigationTitle(title)
+      .navigationTitle(Text(title))
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
+          Button(labels.cancelButtonLabel) { dismiss() }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Save") {
+          Button(labels.saveButtonLabel) {
             onSave(draft)
             dismiss()
           }
@@ -225,10 +305,10 @@ public struct AcervoStoredModelEditSheet: View {
     return false
   }
 
-  var title: String {
+  var title: LocalizedStringKey {
     switch mode {
-    case .add: "New Model"
-    case .edit: "Edit Model"
+    case .add: labels.addTitle
+    case .edit: labels.editTitle
     }
   }
 

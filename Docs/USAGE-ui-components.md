@@ -75,6 +75,8 @@ Three closures connect the rows to your download stack:
 | `download`     | User taps the download / try-again button  | `Void`; throws on failure; reports `Double` progress |
 | `deleteModel`  | User taps the delete (trash) button        | `Void`; throws on failure                       |
 
+> `ModelAvailability` is defined in `SwiftAcervo`. Every other type in these signatures (`AcervoModelRowItem`, the closures themselves) comes from `SwiftAcervoUI`. Hosts that wire the closures against the SDK directly need both imports; hosts that drive a different download backend can drop `import SwiftAcervo`.
+
 `headerAccessibilityIdentifier` lets you keep your existing UI-test selectors stable (e.g. `"settings.modelsSection"`).
 
 ### `AcervoModelDownloadRow`
@@ -110,13 +112,20 @@ NavigationStack {
 
 Customization knobs:
 
-| Parameter      | Default                                                  | Purpose                                                 |
-| -------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| `sortBy`       | `[\.groupDisplayName, \.createdAt]`                      | Sort descriptors handed to the underlying `@Query`.     |
-| `editability`  | `.automatic`                                             | Gates the mutating UI. See below.                       |
-| `availability` | —                                                        | Same contract as `AcervoModelsSection`.                 |
-| `download`     | —                                                        | Same contract as `AcervoModelsSection`.                 |
-| `deleteModel`  | —                                                        | Called for both the row's trash button *and* the list's bulk-remove actions. |
+| Parameter                | Default                                                  | Purpose                                                 |
+| ------------------------ | -------------------------------------------------------- | ------------------------------------------------------- |
+| `sortBy`                 | `[\.groupDisplayName, \.createdAt]`                      | Sort descriptors handed to the underlying `@Query`.     |
+| `editability`            | `.automatic`                                             | Gates the mutating UI. See below.                       |
+| `addButtonLabel`         | `"Add Model"`                                            | Toolbar add button title (`LocalizedStringKey`).        |
+| `removeButtonLabel`      | `"Remove Model"`                                         | Toolbar remove button title.                            |
+| `editButtonLabel`        | `"Edit Model"`                                           | Toolbar edit button title.                              |
+| `editContextMenuLabel`   | `"Edit…"`                                                | Per-row context menu item.                              |
+| `removeContextMenuLabel` | `"Remove from Catalog & Delete Files"`                   | Per-row destructive context menu item.                  |
+| `rowLabels`              | `AcervoModelDownloadRow.Labels()`                        | Copy for the rows the list renders. See [Localizing copy](#localizing-copy). |
+| `editSheetLabels`        | `AcervoStoredModelEditSheet.Labels()`                    | Copy for the add/edit sheet presented internally. See [Localizing copy](#localizing-copy). |
+| `availability`           | —                                                        | Same contract as `AcervoModelsSection`.                 |
+| `download`               | —                                                        | Same contract as `AcervoModelsSection`.                 |
+| `deleteModel`            | —                                                        | Called for both the row's trash button *and* the list's bulk-remove actions. |
 
 #### Editability
 
@@ -151,6 +160,86 @@ let container = try ModelContainer(
 - It does not seed fixtures or sample data — the host's responsibility, typically in a one-shot on the container.
 - It does not render its own `NavigationStack` — embed it in whatever shell your app uses, and set `.navigationTitle` on the list (or the parent).
 
+#### Hosting a `#Preview`
+
+The list reads a `ModelContainer` from the environment, so previews need one — typically an in-memory store seeded with sample records. `.modelContainer(for:inMemory:)` is a SwiftData API, so the preview file needs `import SwiftData` even though the body only references `SwiftAcervoUI`:
+
+```swift
+import SwiftAcervoUI
+import SwiftData
+import SwiftUI
+
+#Preview {
+    NavigationStack {
+        AcervoModelsList(
+            availability: { _ in .available },
+            download: { _, _ in },
+            deleteModel: { _ in }
+        )
+        .navigationTitle("Models")
+    }
+    .modelContainer(for: StoredModelReference.self, inMemory: true)
+}
+```
+
+`StoredModelReference` is a typealias to a SwiftData-managed type, but the typealias alone doesn't pull `SwiftData` into the host's translation unit — the `.modelContainer(...)` modifier does, and that lives in `SwiftData`.
+
+#### Minimal host integration
+
+A complete, copy-pasteable starting point — app struct, container init, content view:
+
+```swift
+import SwiftAcervo
+import SwiftAcervoUI
+import SwiftData
+import SwiftUI
+
+@main
+struct MyApp: App {
+    let container: ModelContainer = {
+        do {
+            return try ModelContainer(
+                for: StoredModelReference.self,
+                migrationPlan: AcervoMigrationPlan.self
+            )
+        } catch {
+            fatalError("Could not create ModelContainer: \(error)")
+        }
+    }()
+
+    var body: some Scene {
+        WindowGroup {
+            NavigationStack {
+                ContentView()
+            }
+        }
+        .modelContainer(container)
+    }
+}
+
+struct ContentView: View {
+    var body: some View {
+        AcervoModelsList(
+            availability: { item in await Acervo.availability(item.id) },
+            download: { item, progress in
+                try await Acervo.ensureAvailable(
+                    item.id,
+                    files: [],
+                    progress: { tick in progress(tick.overallProgress) }
+                )
+            },
+            deleteModel: { item in try Acervo.deleteModel(item.id) }
+        )
+        .navigationTitle("Models")
+        #if os(macOS)
+        .frame(minWidth: 560, minHeight: 400)
+        #endif
+    }
+}
+```
+
+That's the whole shell. `@Query` inside `AcervoModelsList` populates the rows from the container; adds/edits/deletes flow back through the same container automatically.
+
 ### `AcervoStoredModelEditSheet`
 
 The add/edit form `AcervoModelsList` presents internally, also available standalone for hosts that want to drive their own add/edit flow (e.g. a different entry point than the toolbar). The sheet is *value-driven*: it never touches `ModelContext` and instead hands the caller a normalized `Draft` on save.
@@ -171,6 +260,8 @@ AcervoStoredModelEditSheet(mode: .add) { draft in
 
 In `.edit(_:)` mode the identifier field is locked (the slug is the primary key and cannot be renamed in place — delete + re-insert to "rename").
 
+All user-visible copy (section headers, field placeholders, footers, the navigation title, Cancel/Save) is configurable via an `AcervoStoredModelEditSheet.Labels` struct passed as the `labels:` parameter. See [Localizing copy](#localizing-copy) below.
+
 ### `AcervoModelDownloadInterstitial`
 
 A first-launch / no-model-present prompt. Use this in place of your main UI when no model is downloaded yet — it walks the user through downloading a single nominated model. Internally drives the same controller as the row, so its state machine is identical.
@@ -189,7 +280,48 @@ if viewModel.allModelsMissing {
 }
 ```
 
-All copy is configurable via `LocalizedStringKey`s — defaults are English-only on purpose. Pass localized keys that resolve against your own `Localizable.xcstrings`.
+All copy is configurable via `LocalizedStringKey` init parameters — defaults are English-only on purpose. Pass localized keys that resolve against your own `Localizable.xcstrings`.
+
+---
+
+## Localizing copy
+
+Every user-visible string in `SwiftAcervoUI` is parameterized via `LocalizedStringKey` so a host can fully localize the catalog UI without forking. Defaults are English literals; hosts pass `LocalizedStringKey` values that resolve against their own `Localizable.xcstrings`.
+
+The surface is split across the three components that render text:
+
+- **`AcervoModelDownloadRow.Labels`** — `downloadButtonLabel`, `deleteButtonLabel`, and an `errorMessage: (Error) -> LocalizedStringKey` closure (the inline error needs runtime interpolation of the underlying error description).
+- **`AcervoStoredModelEditSheet.Labels`** — navigation titles (`addTitle`, `editTitle`), section headers, footers, field placeholders, the slug-immutable help tooltip, and the Cancel / Save toolbar buttons. 18 fields total.
+- **`AcervoModelDownloadInterstitial`** — flat init parameters (no `Labels` struct): `title`, `welcomeMessage`, `promptSubtitle`, `downloadButtonLabel`, `downloadingTitle`, `downloadingFootnote`, `completionTitle`, `completionMessage`, `downloadFailedTitle`, `retryButtonLabel`, `skipButtonLabel`.
+
+`AcervoModelsList` doesn't render any text of its own beyond the toolbar buttons and per-row context menu (those 5 are inline `LocalizedStringKey` init params on the list itself). For the rows and the add/edit sheet it presents internally, pass through `rowLabels:` and `editSheetLabels:`:
+
+```swift
+AcervoModelsList(
+    rowLabels: .init(
+        downloadButtonLabel: "row.download",
+        deleteButtonLabel: "row.delete",
+        errorMessage: { error in
+            "row.error.\(error.localizedDescription)"
+        }
+    ),
+    editSheetLabels: .init(
+        addTitle: "sheet.title.add",
+        editTitle: "sheet.title.edit",
+        // ...
+    ),
+    addButtonLabel: "list.add",
+    removeButtonLabel: "list.remove",
+    editButtonLabel: "list.edit",
+    editContextMenuLabel: "list.contextMenu.edit",
+    removeContextMenuLabel: "list.contextMenu.remove",
+    availability: { ... },
+    download: { ... },
+    deleteModel: { ... }
+)
+```
+
+Every parameter is defaulted, so hosts that only need English can omit them entirely.
 
 ---
 
@@ -232,6 +364,8 @@ AcervoModelsSection(
 ### Recommended `ModelContainer` setup
 
 `StoredModelReference` is a typealias to the *current* schema version's concrete model type. The library also exports `AcervoMigrationPlan`, an Apple-blessed `SchemaMigrationPlan` that describes how the schema evolves between versions. Pass both to your container so future schema bumps migrate cleanly:
+
+> **Pass `migrationPlan: AcervoMigrationPlan.self` — it is required, not optional.** A container constructed without it compiles and runs fine today, but the moment SwiftAcervoUI ships a schema bump the next launch on a real user's device will throw at `ModelContainer.init` and the app will fail to open the catalog. There is no "fallback to lightweight" — SwiftData refuses to migrate a versioned schema without a plan. Always pair `for: StoredModelReference.self` with `migrationPlan: AcervoMigrationPlan.self`.
 
 ```swift
 import SwiftUI
