@@ -5,8 +5,8 @@ import PackageDescription
 let package = Package(
   name: "SwiftAcervo",
   platforms: [
-    .macOS("26.3"),
-    .iOS("26.3"),
+    .macOS(.v26),
+    .iOS(.v26),
   ],
   products: [
     .library(
@@ -20,7 +20,8 @@ let package = Package(
     .executable(name: "acervo", targets: ["acervo"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.8.0")),
+    .package(
+      url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.8.0")),
     .package(url: "https://github.com/jkandzi/Progress.swift", .upToNextMajor(from: "0.4.0")),
   ],
   targets: [

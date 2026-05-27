@@ -65,6 +65,13 @@ public struct AcervoModelsList: View {
   @State private var sheet: ActiveSheet?
 
   private let editability: Editability
+  private let addButtonLabel: LocalizedStringKey
+  private let removeButtonLabel: LocalizedStringKey
+  private let editButtonLabel: LocalizedStringKey
+  private let editContextMenuLabel: LocalizedStringKey
+  private let removeContextMenuLabel: LocalizedStringKey
+  private let rowLabels: AcervoModelDownloadRow.Labels
+  private let editSheetLabels: AcervoStoredModelEditSheet.Labels
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
   private let download:
     @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws -> Void
@@ -72,10 +79,24 @@ public struct AcervoModelsList: View {
 
   /// Creates the list.
   ///
+  /// All user-visible copy is parameterized via `LocalizedStringKey` so
+  /// hosts can supply localized strings that resolve against their own
+  /// `Localizable.xcstrings`. Defaults are English-only on purpose.
+  ///
   /// - Parameters:
   ///   - sortBy: Sort descriptors for the underlying `@Query`. Defaults to
   ///     `groupDisplayName` then `createdAt` ascending.
   ///   - editability: How the mutating UI is gated. See `Editability`.
+  ///   - addButtonLabel: Toolbar "Add" button title. Default `"Add Model"`.
+  ///   - removeButtonLabel: Toolbar "Remove" button title. Default `"Remove Model"`.
+  ///   - editButtonLabel: Toolbar "Edit" button title. Default `"Edit Model"`.
+  ///   - editContextMenuLabel: Per-row context menu "Edit" item. Default `"Edit…"`.
+  ///   - removeContextMenuLabel: Per-row context menu destructive item.
+  ///     Default `"Remove from Catalog & Delete Files"`.
+  ///   - rowLabels: Copy for the rows the list renders. Defaults inherit
+  ///     from `AcervoModelDownloadRow.Labels()`.
+  ///   - editSheetLabels: Copy for the add/edit sheet the list presents
+  ///     internally. Defaults inherit from `AcervoStoredModelEditSheet.Labels()`.
   ///   - availability: Reads current `ModelAvailability` for a row.
   ///   - download: Performs the download, calling the provided progress
   ///     sink with values in `0.0...1.0`.
@@ -88,6 +109,13 @@ public struct AcervoModelsList: View {
       SortDescriptor(\.createdAt),
     ],
     editability: Editability = .automatic,
+    addButtonLabel: LocalizedStringKey = "Add Model",
+    removeButtonLabel: LocalizedStringKey = "Remove Model",
+    editButtonLabel: LocalizedStringKey = "Edit Model",
+    editContextMenuLabel: LocalizedStringKey = "Edit…",
+    removeContextMenuLabel: LocalizedStringKey = "Remove from Catalog & Delete Files",
+    rowLabels: AcervoModelDownloadRow.Labels = AcervoModelDownloadRow.Labels(),
+    editSheetLabels: AcervoStoredModelEditSheet.Labels = AcervoStoredModelEditSheet.Labels(),
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
     download:
       @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
@@ -96,6 +124,13 @@ public struct AcervoModelsList: View {
   ) {
     _models = Query(sort: sortBy)
     self.editability = editability
+    self.addButtonLabel = addButtonLabel
+    self.removeButtonLabel = removeButtonLabel
+    self.editButtonLabel = editButtonLabel
+    self.editContextMenuLabel = editContextMenuLabel
+    self.removeContextMenuLabel = removeContextMenuLabel
+    self.rowLabels = rowLabels
+    self.editSheetLabels = editSheetLabels
     self.availability = availability
     self.download = download
     self.deleteModel = deleteModel
@@ -122,12 +157,12 @@ public struct AcervoModelsList: View {
     .sheet(item: $sheet) { sheet in
       switch sheet {
       case .add:
-        AcervoStoredModelEditSheet(mode: .add) { draft in
+        AcervoStoredModelEditSheet(mode: .add, labels: editSheetLabels) { draft in
           insert(draft)
         }
       case .edit(let id):
         if let model = models.first(where: { $0.id == id }) {
-          AcervoStoredModelEditSheet(mode: .edit(model)) { draft in
+          AcervoStoredModelEditSheet(mode: .edit(model), labels: editSheetLabels) { draft in
             apply(draft, to: model)
           }
         }
@@ -167,14 +202,15 @@ public struct AcervoModelsList: View {
       item: stored.rowItem,
       availability: availability,
       download: download,
-      deleteModel: deleteModel
+      deleteModel: deleteModel,
+      labels: rowLabels
     )
     .tag(stored.id)
 
     if isEditable {
       rowView.contextMenu {
-        Button("Edit…") { sheet = .edit(stored.id) }
-        Button("Remove from Catalog & Delete Files", role: .destructive) {
+        Button(editContextMenuLabel) { sheet = .edit(stored.id) }
+        Button(removeContextMenuLabel, role: .destructive) {
           delete([stored])
         }
       }
@@ -192,13 +228,13 @@ public struct AcervoModelsList: View {
         Button {
           sheet = .add
         } label: {
-          Label("Add Model", systemImage: "plus")
+          Label(addButtonLabel, systemImage: "plus")
         }
 
         Button(role: .destructive) {
           deleteSelected()
         } label: {
-          Label("Remove Model", systemImage: "minus")
+          Label(removeButtonLabel, systemImage: "minus")
         }
         .disabled(selection.isEmpty)
 
@@ -210,7 +246,7 @@ public struct AcervoModelsList: View {
             sheet = .edit(only)
           }
         } label: {
-          Label("Edit Model", systemImage: "pencil")
+          Label(editButtonLabel, systemImage: "pencil")
         }
         .disabled(selection.count != 1)
       }

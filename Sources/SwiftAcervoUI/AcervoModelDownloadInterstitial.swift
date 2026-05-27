@@ -50,6 +50,7 @@ public struct AcervoModelDownloadInterstitial: View {
   private let downloadingFootnote: LocalizedStringKey
   private let completionTitle: LocalizedStringKey
   private let completionMessage: LocalizedStringKey
+  private let downloadFailedTitle: LocalizedStringKey
   private let retryButtonLabel: LocalizedStringKey
   private let skipButtonLabel: LocalizedStringKey
   private let systemImage: String
@@ -87,6 +88,8 @@ public struct AcervoModelDownloadInterstitial: View {
   ///   - downloadingFootnote: Caption shown under the percent label.
   ///   - completionTitle: Headline shown when download succeeds.
   ///   - completionMessage: Body copy shown on completion.
+  ///   - downloadFailedTitle: Headline shown in the error state above
+  ///     the underlying error description. Default `"Download Failed"`.
   ///   - retryButtonLabel: Label for the retry button in the error
   ///     state.
   ///   - skipButtonLabel: Label for the optional "Download Later"
@@ -113,6 +116,7 @@ public struct AcervoModelDownloadInterstitial: View {
       "This may take several minutes depending on your connection speed.",
     completionTitle: LocalizedStringKey = "Model Ready",
     completionMessage: LocalizedStringKey = "Setup complete. You're ready to go.",
+    downloadFailedTitle: LocalizedStringKey = "Download Failed",
     retryButtonLabel: LocalizedStringKey = "Try Again",
     skipButtonLabel: LocalizedStringKey = "Download Later",
     systemImage: String = "arrow.down.circle",
@@ -130,6 +134,7 @@ public struct AcervoModelDownloadInterstitial: View {
     self.downloadingFootnote = downloadingFootnote
     self.completionTitle = completionTitle
     self.completionMessage = completionMessage
+    self.downloadFailedTitle = downloadFailedTitle
     self.retryButtonLabel = retryButtonLabel
     self.skipButtonLabel = skipButtonLabel
     self.systemImage = systemImage
@@ -304,7 +309,7 @@ public struct AcervoModelDownloadInterstitial: View {
         Image(systemName: "exclamationmark.triangle.fill")
           .foregroundStyle(.red)
           .accessibilityHidden(true)
-        Text("Download Failed")
+        Text(downloadFailedTitle)
           .font(.headline)
           .foregroundStyle(.red)
       }

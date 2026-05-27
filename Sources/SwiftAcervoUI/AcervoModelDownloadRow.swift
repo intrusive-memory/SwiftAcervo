@@ -22,13 +22,47 @@ import SwiftUI
 ///
 /// Apps embed this row directly, or — more commonly — let
 /// `AcervoModelsSection` render rows for them given an array of items.
+///
+/// All user-visible copy is parameterized via `Labels` so hosts can
+/// supply `LocalizedStringKey` values resolved against their own
+/// `Localizable.xcstrings`. Defaults are English-only on purpose.
 public struct AcervoModelDownloadRow: View {
 
+  /// User-visible copy for the row.
+  ///
+  /// `errorMessage` is a closure rather than a literal because the
+  /// inline error must interpolate the underlying error's description.
+  /// Hosts that need a localized error string return a
+  /// `LocalizedStringKey` built from their own catalog inside the
+  /// closure.
+  public struct Labels {
+    public var downloadButtonLabel: LocalizedStringKey
+    public var deleteButtonLabel: LocalizedStringKey
+    public var errorMessage: @Sendable (Error) -> LocalizedStringKey
+
+    public init(
+      downloadButtonLabel: LocalizedStringKey = "Download",
+      deleteButtonLabel: LocalizedStringKey = "Delete",
+      errorMessage: @escaping @Sendable (Error) -> LocalizedStringKey = { error in
+        "Download failed: \(error.localizedDescription). Tap Download to retry."
+      }
+    ) {
+      self.downloadButtonLabel = downloadButtonLabel
+      self.deleteButtonLabel = deleteButtonLabel
+      self.errorMessage = errorMessage
+    }
+  }
+
   @State private var controller: AcervoModelRowController
+  private let labels: Labels
 
   /// Creates a row bound to the given controller.
-  public init(controller: AcervoModelRowController) {
+  public init(
+    controller: AcervoModelRowController,
+    labels: Labels = Labels()
+  ) {
     _controller = State(initialValue: controller)
+    self.labels = labels
   }
 
   /// Convenience initializer that constructs the controller inline from
@@ -40,7 +74,8 @@ public struct AcervoModelDownloadRow: View {
     download:
       @escaping @Sendable (AcervoModelRowItem, @escaping @Sendable (Double) -> Void) async throws ->
       Void,
-    deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void
+    deleteModel: @escaping @Sendable (AcervoModelRowItem) async throws -> Void,
+    labels: Labels = Labels()
   ) {
     _controller = State(
       initialValue: AcervoModelRowController(
@@ -50,6 +85,7 @@ public struct AcervoModelDownloadRow: View {
         deleteModel: deleteModel
       )
     )
+    self.labels = labels
   }
 
   public var body: some View {
@@ -135,7 +171,7 @@ public struct AcervoModelDownloadRow: View {
     case .notAvailable, .partial:
       VStack(alignment: .trailing, spacing: 4) {
         if let error = controller.lastError {
-          Text("Download failed: \(error.localizedDescription). Tap Download to retry.")
+          Text(labels.errorMessage(error))
             .font(.caption)
             .foregroundStyle(.red)
             .multilineTextAlignment(.trailing)
@@ -146,7 +182,7 @@ public struct AcervoModelDownloadRow: View {
         Button {
           Task { await controller.startDownload() }
         } label: {
-          Label("Download", systemImage: "arrow.down.circle")
+          Label(labels.downloadButtonLabel, systemImage: "arrow.down.circle")
         }
         .buttonStyle(.bordered)
         .accessibilityIdentifier(
@@ -174,7 +210,7 @@ public struct AcervoModelDownloadRow: View {
         Button(role: .destructive) {
           Task { await controller.deleteModel() }
         } label: {
-          Label("Delete", systemImage: "trash")
+          Label(labels.deleteButtonLabel, systemImage: "trash")
             .labelStyle(.iconOnly)
         }
         .buttonStyle(.borderless)
