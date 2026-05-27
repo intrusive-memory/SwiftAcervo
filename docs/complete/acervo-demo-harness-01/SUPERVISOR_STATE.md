@@ -1,3 +1,10 @@
+---
+mission: acervo-demo-harness
+feature_name: OPERATION SELF-FEEDING CANARY
+iteration: 1
+state: completed
+---
+
 # SUPERVISOR_STATE.md — OPERATION SELF-FEEDING CANARY
 
 ## Terminology

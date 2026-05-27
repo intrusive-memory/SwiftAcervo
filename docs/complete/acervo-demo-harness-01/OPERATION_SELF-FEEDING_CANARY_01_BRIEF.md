@@ -3,7 +3,7 @@ mission: acervo-demo-harness
 feature_name: OPERATION SELF-FEEDING CANARY
 iteration: 1
 generated: 2026-05-26
-state: complete
+state: completed
 ---
 
 # Iteration 01 Brief — OPERATION SELF-FEEDING CANARY

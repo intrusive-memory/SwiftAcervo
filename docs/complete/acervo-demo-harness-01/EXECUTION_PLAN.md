@@ -3,7 +3,7 @@ mission: acervo-demo-harness
 feature_name: OPERATION SELF-FEEDING CANARY
 source: REQUIREMENTS.md
 created: 2026-05-26
-state: running
+state: completed
 iteration: 1
 starting_point_commit: cfad41d727e8eda72cc213b794d562d8cac2f044
 mission_branch: model-widget
