@@ -149,6 +149,9 @@ public struct AcervoModelsList: View {
               .font(.caption)
               .fontWeight(.semibold)
               .foregroundStyle(.secondary)
+              .accessibilityIdentifier(
+                "\(AcervoUIAccessibility.engineGroupHeaderPrefix).\(group.key)"
+              )
           }
         }
       }
