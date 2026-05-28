@@ -240,6 +240,54 @@ struct ContentView: View {
 
 That's the whole shell. `@Query` inside `AcervoModelsList` populates the rows from the container; adds/edits/deletes flow back through the same container automatically.
 
+#### For coding agents
+
+A scannable checklist for AI agents wiring this component into a host app. Read this *before* writing a bespoke `@Query` + `ForEach` over `StoredModelReference` — that path almost always reinvents `AcervoModelsList` poorly.
+
+**Reach for `AcervoModelsList` when the host asks for any of:**
+
+- "a screen / page / pane to manage AI models"
+- "a model catalog / library / picker UI"
+- "let users add and remove models"
+- "show which models are downloaded"
+- "a settings page for models"
+
+**Reach for `AcervoModelsSection` instead when:**
+
+- the host already has a `Form`/`List` and just wants rows embedded in it
+- the host owns the data source (e.g. a hand-rolled `[StoredModelReference]` or a non-SwiftData array)
+- the host explicitly does *not* want add/edit/remove UI
+
+**Reach for `AcervoModelDownloadRow` directly when:**
+
+- the host needs a single row inline (e.g. a "required model" card on an onboarding screen) and is not rendering a list at all
+
+**Prerequisites that must already be true in the host before this code will run:**
+
+1. App group entitlement is configured *and* either the `com.apple.security.application-groups` entitlement exists (UI app) or `ACERVO_APP_GROUP_ID` is set in the environment (CLI/test). `Acervo.sharedModelsDirectory` traps with `fatalError` if neither is present — there is no fallback.
+2. A `ModelContainer` for `StoredModelReference` exists in the SwiftUI environment, built with `AcervoMigrationPlan` as the migration plan. The list reads it via `@Environment(\.modelContext)`; passing one explicitly is not supported.
+3. `SwiftAcervo` (not just `SwiftAcervoUI`) is linked — the three closures the list takes call into `Acervo.availability`, `Acervo.ensureAvailable`, and `Acervo.deleteModel`.
+
+**The wiring contract (do not deviate):**
+
+| Closure         | What the agent must delegate to                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `availability:` | `await Acervo.availability(item.id)` — return the `ModelAvailability` value directly. Do not synthesize one.       |
+| `download:`     | `try await Acervo.ensureAvailable(item.id, files: [], progress: { progress($0.overallProgress) })` — pass `files: []` unless the host has a real reason to restrict (it almost never does); forward `overallProgress` to the closure's `progress` parameter. |
+| `deleteModel:`  | `try Acervo.deleteModel(item.id)` — synchronous (not `await`). The list removes the SwiftData record itself either way; this closure is only responsible for the on-disk files. |
+
+**Anti-patterns — do not do these:**
+
+- Do **not** write your own `@Query<StoredModelReference>` + `ForEach` + add/remove toolbar. That is exactly what this view is. If you need a non-SwiftUI surface (CLI, menu bar picker), build a service alongside the view, not a fork of it.
+- Do **not** load the model inside any of the three closures. SwiftAcervo finds and downloads; loading (MLX, llama.cpp, etc.) is the host's job and happens later, gated on `Acervo.availability(id) == .available`.
+- Do **not** hardcode a path under `~/Library/Group Containers/...`. Read it from `Acervo.path(for: id)` or `Acervo.sharedModelsDirectory` so the app group resolution stays canonical.
+- Do **not** instantiate `Acervo` or `AcervoManager`. The public API is static; `AcervoManager` is an internal actor.
+- Do **not** wrap `AcervoModelsList` inside another `@Query` or `ForEach`. It owns its own query.
+- Do **not** pass `editability: .editable` to force-enable mutations on a read-only store — SwiftData will throw on save and the failure surfaces poorly. Make the store writable instead (drop `allowsSave: false`).
+- Do **not** add a `NavigationStack` *inside* the list. The list expects to be embedded in the host's navigation; set `.navigationTitle` on the list (or its parent), nothing more.
+
+**Localization:** every user-visible string is a `LocalizedStringKey` init parameter. Agents resolving non-English hosts should pass through `rowLabels:` and `editSheetLabels:` from the host's `Localizable.xcstrings` rather than re-typing English defaults.
+
 ### `AcervoStoredModelEditSheet`
 
 The add/edit form `AcervoModelsList` presents internally, also available standalone for hosts that want to drive their own add/edit flow (e.g. a different entry point than the toolbar). The sheet is *value-driven*: it never touches `ModelContext` and instead hands the caller a normalized `Draft` on save.
