@@ -2,7 +2,7 @@ import Foundation
 
 /// Errors raised while reconciling a freshly-downloaded file against the
 /// authoritative HuggingFace LFS metadata record.
-enum HFIntegrityError: Error, CustomStringConvertible {
+public enum HFIntegrityError: Error, CustomStringConvertible {
 
   /// The SHA-256 advertised by HuggingFace (`oid` field) did not match
   /// the hash computed locally from the staging file.
@@ -14,7 +14,7 @@ enum HFIntegrityError: Error, CustomStringConvertible {
   /// The HuggingFace LFS API responded without a decodable `oid` field.
   case missingOID(filename: String)
 
-  var description: String {
+  public var description: String {
     switch self {
     case .checksumMismatch(let filename, let expected, let actual):
       return
@@ -29,7 +29,7 @@ enum HFIntegrityError: Error, CustomStringConvertible {
 
 /// Static hints surfaced when LFS verification fails in patterns that
 /// map to operator-actionable conditions.
-enum LFSVerificationHints {
+public enum LFSVerificationHints {
   /// When every file-level `verifyLFS` call returned HTTP 404, the
   /// repo almost certainly is not Git LFS-backed: the LFS metadata
   /// endpoint exists per file, and a 404 across the entire repo means
@@ -46,7 +46,7 @@ enum LFSVerificationHints {
   ///   2. Repos that aren't backed by either LFS or Xet (small
   ///      models like lmstudio-community/* and aydin99/*). For these,
   ///      `--no-verify` is the correct answer.
-  static let notLFSBackedHint =
+  public static let notLFSBackedHint =
     """
 
     hint: every file returned HTTP 404 from the HuggingFace LFS API.
@@ -67,7 +67,7 @@ enum LFSVerificationHints {
 
 /// Errors raised while reconciling a freshly-downloaded staging
 /// directory against the authoritative HuggingFace tree listing.
-enum HFTreeError: Error, CustomStringConvertible {
+public enum HFTreeError: Error, CustomStringConvertible {
 
   /// The HuggingFace tree API returned a non-2xx HTTP status for every
   /// revision we tried (typically `main` and `master`).
@@ -77,7 +77,7 @@ enum HFTreeError: Error, CustomStringConvertible {
   /// the expected JSON array of tree entries.
   case decodeFailed(modelId: String, underlying: String)
 
-  var description: String {
+  public var description: String {
     switch self {
     case .httpError(let status, let modelId):
       return "HF tree API returned HTTP \(status) for \(modelId)"
@@ -87,22 +87,52 @@ enum HFTreeError: Error, CustomStringConvertible {
   }
 }
 
+/// Errors raised while streaming raw file bytes from HuggingFace's
+/// `resolve` endpoint into a staging directory.
+public enum HFDownloadError: Error, CustomStringConvertible {
+
+  /// The `resolve` endpoint returned a non-2xx HTTP status for a file.
+  case httpError(statusCode: Int, path: String)
+
+  /// The bytes written to disk did not match the size HuggingFace
+  /// advertises in its tree listing. This is the native equivalent of
+  /// the silent-Xet "wrote only a pointer" failure mode the Python
+  /// client exhibits without `hf_xet`.
+  case sizeMismatch(path: String, expected: Int64, actual: Int64)
+
+  public var description: String {
+    switch self {
+    case .httpError(let status, let path):
+      return "HF resolve endpoint returned HTTP \(status) for \(path)"
+    case .sizeMismatch(let path, let expected, let actual):
+      return
+        "HF download size mismatch for \(path): expected \(expected) bytes, wrote \(actual)"
+    }
+  }
+}
+
 /// One file as advertised by the HuggingFace tree endpoint.
-struct HFTreeFile: Sendable, Equatable {
+public struct HFTreeFile: Sendable, Equatable {
   /// Path relative to the repo root (e.g. `model.safetensors` or
   /// `subfolder/config.json`).
-  let path: String
+  public let path: String
   /// Size in bytes that HF expects the file to occupy on disk.
-  let size: Int64
+  public let size: Int64
   /// `true` when the tree entry carries the `xetHash` field, indicating
   /// the file is stored in HuggingFace Xet (vs. classic LFS or inline).
-  let isXet: Bool
+  public let isXet: Bool
+
+  public init(path: String, size: Int64, isXet: Bool) {
+    self.path = path
+    self.size = size
+    self.isXet = isXet
+  }
 }
 
 /// One file whose staged on-disk state did not match the HF tree.
-struct HFCompletenessFailure: Sendable {
+public struct HFCompletenessFailure: Sendable {
 
-  enum Reason: Sendable {
+  public enum Reason: Sendable {
     /// The file is in the HF tree but not present on disk at all.
     case missing
     /// The file is on disk but its size does not match HF's record.
@@ -111,11 +141,17 @@ struct HFCompletenessFailure: Sendable {
     case sizeMismatch(expected: Int64, actual: Int64)
   }
 
-  let path: String
-  let reason: Reason
-  let isXet: Bool
+  public let path: String
+  public let reason: Reason
+  public let isXet: Bool
 
-  var description: String {
+  public init(path: String, reason: Reason, isXet: Bool) {
+    self.path = path
+    self.reason = reason
+    self.isXet = isXet
+  }
+
+  public var description: String {
     let suffix = isXet ? " [Xet]" : ""
     switch reason {
     case .missing:
@@ -136,7 +172,7 @@ struct HFCompletenessFailure: Sendable {
 /// `https://huggingface.co/api/models/<model-id>/lfs/<filename>`. On
 /// mismatch the staging file is deleted and `HFIntegrityError` is thrown,
 /// aborting the pipeline.
-actor HuggingFaceClient {
+public actor HuggingFaceClient {
 
   /// JSON shape returned by the HF LFS metadata endpoint. The API returns
   /// additional fields we do not use; only `oid` and `size` are decoded.
@@ -147,6 +183,7 @@ actor HuggingFaceClient {
 
   private let session: URLSession
   private let apiBase: URL
+  private let resolveBase: URL
 
   /// Test-only seam. When non-nil, the no-arg/default-session
   /// initializer routes through this session instead of
@@ -155,12 +192,14 @@ actor HuggingFaceClient {
   /// `nil` in their teardown to keep the production path unchanged.
   nonisolated(unsafe) static var defaultSessionOverride: URLSession?
 
-  init(
+  public init(
     session: URLSession? = nil,
-    apiBase: URL = URL(string: "https://huggingface.co/api/models")!
+    apiBase: URL = URL(string: "https://huggingface.co/api/models")!,
+    resolveBase: URL = URL(string: "https://huggingface.co")!
   ) {
     self.session = session ?? Self.defaultSessionOverride ?? .shared
     self.apiBase = apiBase
+    self.resolveBase = resolveBase
   }
 
   /// Verifies that `actualSHA256` matches the `oid` HuggingFace advertises
@@ -176,7 +215,7 @@ actor HuggingFaceClient {
   ///   - stagingURL: Local file URL that will be removed on mismatch.
   /// - Throws: `HFIntegrityError` on mismatch, missing `oid`, bad HTTP
   ///   status, or network failure.
-  func verifyLFS(
+  public func verifyLFS(
     modelId: String,
     filename: String,
     actualSHA256: String,
@@ -243,7 +282,7 @@ actor HuggingFaceClient {
   /// - Returns: Every entry whose `type == "file"`, with size and
   ///   Xet-status preserved. Directory entries are filtered out.
   /// - Throws: `HFTreeError` on non-2xx responses or malformed JSON.
-  func fetchRepoFiles(modelId: String) async throws -> [HFTreeFile] {
+  public func fetchRepoFiles(modelId: String) async throws -> [HFTreeFile] {
     var lastError: HFTreeError = .httpError(statusCode: 0, modelId: modelId)
     for revision in ["main", "master"] {
       do {
@@ -265,7 +304,7 @@ actor HuggingFaceClient {
   /// Fetches the file listing for a specific revision (branch or
   /// commit SHA). Most callers should use ``fetchRepoFiles(modelId:)``,
   /// which retries across the conventional default branches.
-  func fetchRepoFiles(modelId: String, revision: String) async throws -> [HFTreeFile] {
+  public func fetchRepoFiles(modelId: String, revision: String) async throws -> [HFTreeFile] {
     var results: [HFTreeFile] = []
     var nextURL: URL? = buildTreeURL(modelId: modelId, revision: revision)
 
@@ -326,7 +365,7 @@ actor HuggingFaceClient {
   /// - Throws: `HFTreeError` if the tree endpoint cannot be reached.
   ///   I/O errors while stat-ing local files are reported as
   ///   `Reason.missing` rather than thrown.
-  func verifyDownloadCompleteness(
+  public func verifyDownloadCompleteness(
     modelId: String,
     stagingURL: URL,
     requestedFiles: [String]
@@ -370,7 +409,145 @@ actor HuggingFaceClient {
     return failures
   }
 
+  // MARK: - Source download (refetch-from-source)
+
+  /// Streams every file (or the requested subset) for `modelId` from
+  /// HuggingFace's `resolve` endpoint into `destination`, reproducing the
+  /// repo's directory layout. This is the native, dependency-free
+  /// alternative to shelling out to the Python `hf` CLI.
+  ///
+  /// The `resolve` endpoint serves the **complete** bytes for every file —
+  /// inline, classic-LFS, and Xet-backed alike — over plain HTTP. Xet is a
+  /// client-side dedup optimization, not a requirement for retrieving the
+  /// bytes, so no `hf_xet`/Python runtime is needed here. The trade-off is
+  /// no chunk-level dedup, so large blobs transfer in full.
+  ///
+  /// Files are written to `<destination>/<path>.part` and atomically moved
+  /// into place only after the on-disk size matches HuggingFace's tree
+  /// record. A size mismatch throws `HFDownloadError.sizeMismatch`, which
+  /// is the native guard against the silent-incomplete failure mode.
+  ///
+  /// - Parameters:
+  ///   - modelId: `org/repo` HuggingFace model identifier.
+  ///   - destination: Directory to populate. Intermediate subdirectories
+  ///     are created as needed; existing files are overwritten.
+  ///   - files: When non-empty, restrict the download to these
+  ///     repo-relative paths. When empty, every file in the tree is
+  ///     fetched. Names absent from the tree are ignored.
+  ///   - revision: Branch or commit SHA to resolve against. Defaults to
+  ///     `main`.
+  /// - Throws: `HFTreeError` if enumeration fails, `HFDownloadError` on a
+  ///   non-2xx resolve response or post-write size mismatch, plus any
+  ///   I/O or network error.
+  public func downloadRepo(
+    modelId: String,
+    into destination: URL,
+    files requestedFiles: [String] = [],
+    revision: String = "main"
+  ) async throws {
+    let allFiles = try await fetchRepoFiles(modelId: modelId, revision: revision)
+
+    let targets: [HFTreeFile]
+    if requestedFiles.isEmpty {
+      targets = allFiles
+    } else {
+      let requested = Set(requestedFiles)
+      targets = allFiles.filter { requested.contains($0.path) }
+    }
+
+    for file in targets {
+      try await downloadFile(
+        modelId: modelId,
+        path: file.path,
+        revision: revision,
+        expectedSize: file.size,
+        into: destination
+      )
+    }
+  }
+
+  /// Streams a single repo file to `<destination>/<path>`, verifying the
+  /// written byte count against `expectedSize` before promoting the
+  /// `.part` file into place.
+  private func downloadFile(
+    modelId: String,
+    path: String,
+    revision: String,
+    expectedSize: Int64,
+    into destination: URL
+  ) async throws {
+    let fm = FileManager.default
+    let fileURL = destination.appendingPathComponent(path)
+    try fm.createDirectory(
+      at: fileURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+
+    let partURL = fileURL.appendingPathExtension("part")
+    try? fm.removeItem(at: partURL)
+    fm.createFile(atPath: partURL.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: partURL)
+
+    var request = URLRequest(url: buildResolveURL(modelId: modelId, revision: revision, path: path))
+    request.httpMethod = "GET"
+    if let token = ProcessInfo.processInfo.environment["HF_TOKEN"], !token.isEmpty {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
+
+    do {
+      let (asyncBytes, response) = try await session.bytes(for: request)
+      if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+        throw HFDownloadError.httpError(statusCode: http.statusCode, path: path)
+      }
+
+      var buffer = Data()
+      buffer.reserveCapacity(1 << 16)
+      for try await byte in asyncBytes {
+        buffer.append(byte)
+        if buffer.count >= (1 << 16) {
+          try handle.write(contentsOf: buffer)
+          buffer.removeAll(keepingCapacity: true)
+        }
+      }
+      if !buffer.isEmpty {
+        try handle.write(contentsOf: buffer)
+      }
+      try handle.close()
+    } catch {
+      try? handle.close()
+      try? fm.removeItem(at: partURL)
+      throw error
+    }
+
+    let actualSize = (try? fm.attributesOfItem(atPath: partURL.path)[.size] as? Int64) ?? 0
+    guard actualSize == expectedSize else {
+      try? fm.removeItem(at: partURL)
+      throw HFDownloadError.sizeMismatch(
+        path: path,
+        expected: expectedSize,
+        actual: actualSize
+      )
+    }
+
+    try? fm.removeItem(at: fileURL)
+    try fm.moveItem(at: partURL, to: fileURL)
+  }
+
   // MARK: - URL construction
+
+  /// Builds `https://huggingface.co/<model-id>/resolve/<revision>/<path>`,
+  /// the canonical HTTP download endpoint that serves complete file bytes
+  /// for inline, LFS, and Xet-backed files alike.
+  func buildResolveURL(modelId: String, revision: String, path: String) -> URL {
+    var url = resolveBase
+    for component in modelId.split(separator: "/", omittingEmptySubsequences: false) {
+      url.appendPathComponent(String(component))
+    }
+    url.appendPathComponent("resolve")
+    url.appendPathComponent(revision)
+    url.appendPathComponent(path)
+    return url
+  }
 
   /// Builds `https://huggingface.co/api/models/<model-id>/lfs/<filename>`,
   /// percent-encoding path components so filenames with spaces or unicode

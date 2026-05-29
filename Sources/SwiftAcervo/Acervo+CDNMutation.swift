@@ -532,4 +532,83 @@ extension Acervo {
       progress: progress
     )
   }
+
+  // MARK: - recacheFromHuggingFace
+
+  /// Re-fetches a model directly from HuggingFace and republishes it to the
+  /// CDN — the turnkey refetch-from-source path.
+  ///
+  /// The fetch uses the native
+  /// ``HuggingFaceClient/downloadRepo(modelId:into:files:revision:)``, which
+  /// streams every file from HuggingFace's `resolve` endpoint with no Python
+  /// `hf` CLI or `hf_xet` dependency (works on iOS and macOS alike). The
+  /// download is self-verifying: each file's on-disk size must match
+  /// HuggingFace's tree record before it is promoted, guarding against the
+  /// silent-incomplete (Xet-pointer-only) failure mode. A fetch failure is
+  /// wrapped in `AcervoError.fetchSourceFailed`, matching `recache(...)`.
+  ///
+  /// ## Packaging shapes
+  ///
+  /// This call mirrors **one HuggingFace repo** to **one CDN slug**, which
+  /// maps cleanly onto both supported model layouts:
+  ///
+  /// - **Flux2 (N:1 bundle)** — `black-forest-labs/FLUX.2-klein-4B` is a
+  ///   single repo bundling transformer + text_encoder + tokenizer + vae +
+  ///   scheduler in subfolders. One call mirrors the whole bundle. Because
+  ///   the HF id differs from the published slug, pass
+  ///   `slug: "flux2-klein-4b"`. To mirror just one logical component, pass
+  ///   its subfolder paths via `files:` (e.g. `["transformer/...", ...]`).
+  /// - **PixArt (1:1 per-component)** — the T5 encoder, DiT backbone, and
+  ///   SDXL VAE each live in their own repo with their own manifest. Make
+  ///   one call per repo; each fetches and publishes independently.
+  ///
+  /// - Parameters:
+  ///   - modelId: `org/repo` HuggingFace identifier to fetch from.
+  ///   - stagingDirectory: Directory populated with the fetched files.
+  ///     Existing contents are not cleaned up; hand in a clean directory
+  ///     if that matters.
+  ///   - credentials: S3 credentials and addressing for the CDN bucket.
+  ///   - slug: CDN slug to publish under. When `nil`, the slug is derived
+  ///     from `modelId` (`org_repo`). Set this when the published name
+  ///     differs from the HF id — the Flux2 case.
+  ///   - files: When non-empty, restrict the fetch to these repo-relative
+  ///     paths. When empty, the whole repo is mirrored.
+  ///   - revision: HuggingFace branch or commit SHA. Defaults to `main`.
+  ///   - keepOrphans: When `true`, the orphan-prune step is skipped.
+  ///   - progress: Optional callback forwarded to `publishModel`.
+  /// - Returns: The `CDNManifest` produced by `publishModel`.
+  /// - Throws: `AcervoError.fetchSourceFailed(modelId:underlying:)` wrapping
+  ///   any `HFTreeError`/`HFDownloadError` from the fetch, plus any error
+  ///   `publishModel` can raise.
+  @discardableResult
+  public static func recacheFromHuggingFace(
+    modelId: String,
+    stagingDirectory: URL,
+    credentials: AcervoCDNCredentials,
+    slug: String? = nil,
+    files: [String] = [],
+    revision: String = "main",
+    keepOrphans: Bool = false,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil
+  ) async throws -> CDNManifest {
+    let client = HuggingFaceClient()
+    do {
+      try await client.downloadRepo(
+        modelId: modelId,
+        into: stagingDirectory,
+        files: files,
+        revision: revision
+      )
+    } catch {
+      throw AcervoError.fetchSourceFailed(modelId: modelId, underlying: error)
+    }
+    return try await publishModel(
+      modelId: modelId,
+      directory: stagingDirectory,
+      credentials: credentials,
+      keepOrphans: keepOrphans,
+      progress: progress,
+      slugOverride: slug
+    )
+  }
 }

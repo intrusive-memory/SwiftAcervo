@@ -917,7 +917,108 @@ public static func recache(
 ) async throws -> CDNManifest
 ```
 
-Convenience over `publishModel`: the caller-supplied `fetchSource` closure populates `stagingDirectory` with model files (e.g., by shelling out to `hf`), then the populated directory is handed to `publishModel` for the atomic publish and orphan prune. The library is agnostic to where bytes come from. Throws `AcervoError.fetchSourceFailed(modelId:underlying:)` if the fetch closure throws.
+Convenience over `publishModel`: the caller-supplied `fetchSource` closure populates `stagingDirectory` with model files, then the populated directory is handed to `publishModel` for the atomic publish and orphan prune. The library is agnostic to where bytes come from — supply your own closure for git, S3, a tarball, etc. For the common "refetch from HuggingFace" case use `recacheFromHuggingFace` (below), which pre-wires the native fetch. Throws `AcervoError.fetchSourceFailed(modelId:underlying:)` if the fetch closure throws.
+
+#### `Acervo.recacheFromHuggingFace(modelId:stagingDirectory:credentials:slug:files:revision:keepOrphans:progress:)`
+
+```swift
+@discardableResult
+public static func recacheFromHuggingFace(
+    modelId: String,
+    stagingDirectory: URL,
+    credentials: AcervoCDNCredentials,
+    slug: String? = nil,
+    files: [String] = [],
+    revision: String = "main",
+    keepOrphans: Bool = false,
+    progress: (@Sendable (AcervoPublishProgress) -> Void)? = nil
+) async throws -> CDNManifest
+```
+
+The turnkey **refetch-from-source** path. Fetches `modelId` directly from HuggingFace via the native [`HuggingFaceClient`](#16--huggingface-source-fetch-huggingfaceclientswift) (no Python `hf` CLI, no `hf_xet` — works on iOS and macOS), then publishes to the CDN via `publishModel`. The download is self-verifying: every file's on-disk size must match HuggingFace's tree record before promotion, which is the native guard against the silent-incomplete (Xet-pointer-only) failure mode. A fetch failure surfaces as `AcervoError.fetchSourceFailed(modelId:underlying:)`.
+
+One HF repo → one CDN slug, which covers both packaging shapes:
+
+- **Flux2 (N:1 bundle).** `black-forest-labs/FLUX.2-klein-4B` is a single repo bundling transformer + text_encoder + tokenizer + vae + scheduler in subfolders. One call mirrors the whole bundle. Because the HF id differs from the published slug, pass `slug: "flux2-klein-4b"`. To mirror a single logical component, pass its subfolder paths via `files:`.
+- **PixArt (1:1 per-component).** The T5 encoder, DiT backbone, and SDXL VAE each live in their own repo. Make one call per repo.
+
+```swift
+// Flux2: bundled repo, renamed slug
+try await Acervo.recacheFromHuggingFace(
+    modelId: "black-forest-labs/FLUX.2-klein-4B",
+    stagingDirectory: staging,
+    credentials: creds,
+    slug: "flux2-klein-4b"
+)
+
+// PixArt: one call per component repo
+for repo in ["intrusive-memory/t5-xxl-encoder-int4-mlx",
+             "intrusive-memory/pixart-sigma-xl-dit-int4-mlx",
+             "intrusive-memory/sdxl-vae-decoder-fp16-mlx"] {
+    try await Acervo.recacheFromHuggingFace(
+        modelId: repo, stagingDirectory: staging.appendingPathComponent(repo), credentials: creds)
+}
+```
+
+> **Slug rename matters for Flux2.** When `slug` is `nil` the CDN key is derived from `modelId` (`org_repo`). The Flux2 upstream id (`black-forest-labs/FLUX.2-klein-4B`) is *not* the published slug (`flux2-klein-4b`), so omitting `slug:` would publish under the wrong key. PixArt components are already published under their HF-derived names, so they don't need it.
+
+---
+
+### 16 · HuggingFace Source Fetch (`HuggingFaceClient.swift`)
+
+`HuggingFaceClient` is a standalone `actor` (not part of `Acervo`) that talks to HuggingFace's public API. It backs `recacheFromHuggingFace` but is usable directly when you need the pieces. It carries **zero dependencies beyond Foundation** and never shells out — the only network surface is `huggingface.co`. An `HF_TOKEN` environment variable, when set, is attached as a bearer token for gated/private repos (its value is never logged).
+
+```swift
+public init(
+    session: URLSession? = nil,
+    apiBase: URL = URL(string: "https://huggingface.co/api/models")!,
+    resolveBase: URL = URL(string: "https://huggingface.co")!
+)
+```
+
+#### `downloadRepo(modelId:into:files:revision:)`
+
+```swift
+public func downloadRepo(
+    modelId: String,
+    into destination: URL,
+    files requestedFiles: [String] = [],
+    revision: String = "main"
+) async throws
+```
+
+Streams every file (or the `files:` subset) for `modelId` from HuggingFace's `resolve` endpoint into `destination`, reproducing the repo's directory layout. The `resolve` endpoint serves the **complete** bytes for inline, classic-LFS, and Xet-backed files alike, so no `hf_xet`/Python runtime is needed; the trade-off is no chunk-level dedup, so large blobs transfer in full. Files are written to `<path>.part` and atomically moved into place only after the on-disk size matches HuggingFace's tree record — a mismatch throws `HFDownloadError.sizeMismatch`. Names absent from the tree are ignored.
+
+#### `fetchRepoFiles(modelId:)` / `fetchRepoFiles(modelId:revision:)`
+
+```swift
+public func fetchRepoFiles(modelId: String) async throws -> [HFTreeFile]
+public func fetchRepoFiles(modelId: String, revision: String) async throws -> [HFTreeFile]
+```
+
+Lists every file in the repo with its size and Xet status. The no-revision overload tries `main` then falls back to `master`, following HF's `Link: rel="next"` pagination so repos with more than 50 entries return complete results. Throws `HFTreeError` on non-2xx responses or malformed JSON.
+
+#### `verifyLFS(modelId:filename:actualSHA256:stagingURL:)`
+
+```swift
+public func verifyLFS(
+    modelId: String, filename: String, actualSHA256: String, stagingURL: URL
+) async throws
+```
+
+Compares a locally-computed SHA-256 against the `oid` HuggingFace advertises for an LFS-backed file. On mismatch it deletes `stagingURL` and throws `HFIntegrityError.checksumMismatch`. Note: non-LFS files (and most Xet repos) return HTTP 404 here — see `LFSVerificationHints.notLFSBackedHint` for how to interpret an all-404 sweep.
+
+#### `verifyDownloadCompleteness(modelId:stagingURL:requestedFiles:)`
+
+```swift
+public func verifyDownloadCompleteness(
+    modelId: String, stagingURL: URL, requestedFiles: [String]
+) async throws -> [HFCompletenessFailure]
+```
+
+Walks a staging directory and reports every file whose on-disk size diverges from HuggingFace's tree listing. An empty result means the staging directory is consistent with HF and safe to promote. This is the size-based completeness gate, independent of LFS SHA-256 verification.
+
+**Supporting types:** `HFTreeFile` (`path`, `size`, `isXet`), `HFCompletenessFailure` (`path`, `reason`, `isXet`), and the error enums `HFTreeError`, `HFIntegrityError`, `HFDownloadError`, plus the `LFSVerificationHints` namespace.
 
 ---
 

@@ -407,6 +407,15 @@ Acervo.register([
 
 Bundle descriptors MUST use the explicit-files initializer. The bare un-hydrated initializer is not compatible with the bundle pattern — hydration replaces `files` with the full manifest, which loses the per-component file scope. See [USAGE-library.md — Bundle Components](USAGE-library.md#bundle-components) for the full contract guarantees and a worked example.
 
+#### The two shapes on the producer side (refetch-from-source)
+
+The same 1:1 / N:1 split governs how a model is **re-fetched from HuggingFace and republished** via `Acervo.recacheFromHuggingFace(...)`. The mirror is always one HF repo → one CDN slug, so the two shapes differ only in how many calls you make:
+
+- **PixArt (1:1).** Each component is its own HF repo, so you make one `recacheFromHuggingFace` call per component. Each fetches and publishes independently, and the HF-derived slug is already correct (no `slug:` override needed).
+- **Flux2 (N:1).** The whole bundle is one HF repo, so one call mirrors transformer + text_encoder + tokenizer + vae + scheduler together. The upstream id (`black-forest-labs/FLUX.2-klein-4B`) is not the published slug, so you **must** pass `slug: "flux2-klein-4b"`. To mirror a single subfolder, scope the call with `files:`.
+
+The native fetch streams every file from HuggingFace's `resolve` endpoint (complete bytes for inline, LFS, and Xet files alike — no Python `hf` CLI or `hf_xet`) and verifies each file's size against HF's tree record before promoting it. This is consistent with the "HF is the source of truth; the CDN mirrors HF packaging exactly" rule — neither shape re-packs or re-splits files. See [USAGE-library.md §15–16](USAGE-library.md#15--cdn-mutation-acervocdnmutationswift).
+
 ---
 
 ## Why These Patterns?

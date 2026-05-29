@@ -25,7 +25,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
 - CDN mutation API: `Acervo.publishModel(modelId:directory:credentials:keepOrphans:progress:)`, `Acervo.deleteFromCDN(modelId:credentials:progress:)`, `Acervo.recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:)` — native SigV4 path, no `aws` CLI
-- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download (thin wrapper around the library API)
+- `HuggingFaceClient` (library, `SwiftAcervo`): native HuggingFace API client (tree enumeration, LFS/size verification, and `downloadRepo(...)` byte fetch via the `resolve` endpoint). Pure Foundation, no Python `hf`/`hf_xet`, works on iOS and macOS.
+- Refetch-from-source: `Acervo.recacheFromHuggingFace(modelId:stagingDirectory:credentials:slug:files:revision:...)` — wires the native fetch into the publish pipeline. One HF repo → one CDN slug. Flux2 (N:1 bundle) needs `slug:` to rename `black-forest-labs/FLUX.2-klein-4B` → `flux2-klein-4b`; PixArt (1:1 per-component) makes one call per repo.
+- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download. Still shells out to the Python `hf` CLI for the actual transfer (the native `downloadRepo` is available in the library but the CLI has not been rewired onto it).
 
 **Critical Rules**:
 - ONLY supports iOS 26.0+ and macOS 26.0+ (NEVER add code for older platforms)

@@ -27,6 +27,7 @@
   import Foundation
   import Testing
 
+  @testable import SwiftAcervo
   @testable import acervo
 
   extension ProcessEnvironmentSuite {
