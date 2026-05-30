@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.18.2
+**Version**: 0.19.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -25,7 +25,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths
 - CDN mutation API: `Acervo.publishModel(modelId:directory:credentials:keepOrphans:progress:)`, `Acervo.deleteFromCDN(modelId:credentials:progress:)`, `Acervo.recache(modelId:stagingDirectory:credentials:fetchSource:keepOrphans:progress:)` — native SigV4 path, no `aws` CLI
-- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download (thin wrapper around the library API)
+- `HuggingFaceClient` (library, `SwiftAcervo`): native HuggingFace API client (tree enumeration, LFS/size verification, and `downloadRepo(...)` byte fetch via the `resolve` endpoint). Pure Foundation, no Python `hf`/`hf_xet`, works on iOS and macOS.
+- Refetch-from-source: `Acervo.recacheFromHuggingFace(modelId:stagingDirectory:credentials:slug:files:revision:...)` — wires the native fetch into the publish pipeline. One HF repo → one CDN slug. Flux2 (N:1 bundle) needs `slug:` to rename `black-forest-labs/FLUX.2-klein-4B` → `flux2-klein-4b`; PixArt (1:1 per-component) makes one call per repo.
+- `acervo` CLI tool for CDN upload, manifest generation, and HuggingFace download. Still shells out to the Python `hf` CLI for the actual transfer (the native `downloadRepo` is available in the library but the CLI has not been rewired onto it).
 
 **Critical Rules**:
 - ONLY supports iOS 26.0+ and macOS 26.0+ (NEVER add code for older platforms)
@@ -39,10 +41,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 ## Where to find things
 
-The repo ships two surfaces, each with its own reference document:
+The repo ships three surfaces, each with its own reference document:
 
 - **[Docs/USAGE-library.md](Docs/USAGE-library.md)** — Library reference. Compiled from `Sources/SwiftAcervo/*.swift`. Every public symbol with signature + usage example. Read this before suggesting changes to the public API or before answering "how do I use SwiftAcervo from my app/library".
 - **[Docs/USAGE-cli.md](Docs/USAGE-cli.md)** — CLI reference. Captured from `acervo --help` plus every subcommand. Read this before suggesting changes to CLI behavior or before answering "how do I run acervo".
+- **[Docs/USAGE-ui-components.md](Docs/USAGE-ui-components.md)** — SwiftAcervoUI reference. Documents the SwiftUI drop-in components (`AcervoModelsList`, etc.) and the SwiftData-backed `StoredModelReference` persistence scaffold. Compiled from `Sources/SwiftAcervoUI/*.swift`. Read this before suggesting changes to the UI module or before answering "how do I show a models list in my app".
 
 Topic-specific docs (architectural background, not consumer entry points):
 
