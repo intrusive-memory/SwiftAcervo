@@ -7,6 +7,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.19.0]
+
+### Added
+
+- **`HuggingFaceClient` is now part of the `SwiftAcervo` library** (moved out of the `acervo` CLI target) and its surface is `public`. It carries zero dependencies beyond Foundation and never shells out — the only network surface is `huggingface.co`.
+
+- **Native refetch-from-source path.** `HuggingFaceClient.downloadRepo(modelId:into:files:revision:)` streams every file (or a `files:` subset) from HuggingFace's `resolve` endpoint into a staging directory, reproducing the repo's directory layout. The `resolve` endpoint serves complete bytes for inline, classic-LFS, and Xet-backed files alike, so no Python `hf` CLI or `hf_xet` runtime is required (works on iOS and macOS). Each file is promoted only after its on-disk size matches HuggingFace's tree record — a native guard against the silent-incomplete (Xet-pointer-only) failure mode. Adds `buildResolveURL(...)` and the `HFDownloadError` enum.
+
+- **`Acervo.recacheFromHuggingFace(modelId:stagingDirectory:credentials:slug:files:revision:keepOrphans:progress:)`.** Turnkey wrapper that wires the native fetch into the publish pipeline. One HF repo → one CDN slug, covering both packaging shapes: the **Flux2 (N:1 bundle)** case uses `slug:` to rename `black-forest-labs/FLUX.2-klein-4B` → `flux2-klein-4b`; the **PixArt (1:1 per-component)** case makes one call per component repo. A fetch failure surfaces as `AcervoError.fetchSourceFailed`.
+
+### Notes
+
+- The `acervo` CLI still shells out to the Python `hf` CLI for downloads; the native `downloadRepo` is available in the library but the CLI has not been rewired onto it.
+
 ## [0.17.0] - Unreleased
 
 ### Fixed

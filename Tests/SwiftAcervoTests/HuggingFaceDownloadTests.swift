@@ -109,8 +109,10 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       let client = HuggingFaceClient(session: MockURLProtocol.session())
       try await client.downloadRepo(modelId: "org/repo", into: dest, files: ["config.json"])
 
-      #expect(FileManager.default.fileExists(atPath: dest.appendingPathComponent("config.json").path))
-      #expect(!FileManager.default.fileExists(atPath: dest.appendingPathComponent("weights.bin").path))
+      #expect(
+        FileManager.default.fileExists(atPath: dest.appendingPathComponent("config.json").path))
+      #expect(
+        !FileManager.default.fileExists(atPath: dest.appendingPathComponent("weights.bin").path))
     }
 
     // MARK: - Size-mismatch guard (silent-incomplete protection)
@@ -139,7 +141,8 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         thrown = error
       }
 
-      guard case let .some(HFDownloadError.sizeMismatch(path, expected, actual)) = thrown else {
+      guard case .some(HFDownloadError.sizeMismatch(let path, let expected, let actual)) = thrown
+      else {
         Issue.record("expected HFDownloadError.sizeMismatch, got \(String(describing: thrown))")
         return
       }
@@ -147,13 +150,16 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       #expect(expected == 9999)
       #expect(actual == 10)
       // Neither the final file nor the .part scratch should survive.
-      #expect(!FileManager.default.fileExists(atPath: dest.appendingPathComponent("model.bin").path))
-      #expect(!FileManager.default.fileExists(atPath: dest.appendingPathComponent("model.bin.part").path))
+      #expect(
+        !FileManager.default.fileExists(atPath: dest.appendingPathComponent("model.bin").path))
+      #expect(
+        !FileManager.default.fileExists(atPath: dest.appendingPathComponent("model.bin.part").path))
     }
 
     // MARK: - recacheFromHuggingFace error wrapping
 
-    @Test("recacheFromHuggingFace wraps a fetch failure in fetchSourceFailed before any CDN traffic")
+    @Test(
+      "recacheFromHuggingFace wraps a fetch failure in fetchSourceFailed before any CDN traffic")
     func recacheWrapsFetchFailure() async throws {
       MockURLProtocol.reset()
       defer { MockURLProtocol.reset() }
@@ -190,7 +196,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         thrown = error
       }
 
-      guard case let .some(AcervoError.fetchSourceFailed(modelId, underlying)) = thrown else {
+      guard case .some(AcervoError.fetchSourceFailed(let modelId, let underlying)) = thrown else {
         Issue.record("expected AcervoError.fetchSourceFailed, got \(String(describing: thrown))")
         return
       }
