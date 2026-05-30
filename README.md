@@ -2,7 +2,7 @@
 
 Manifest-driven shared AI model discovery, download, and verification for iOS 26.0+ and macOS 26.0+. Zero external dependencies (Foundation + CryptoKit only).
 
-This repository ships two things:
+This repository ships three things:
 
 ## Library
 
@@ -11,6 +11,10 @@ A Swift package that consuming apps and libraries add as a dependency to discove
 ## CLI
 
 `acervo`, a command-line tool for operator-side workflows: downloading models from HuggingFace, generating CDN manifests, uploading to R2, verifying integrity, and managing local cache. The full reference is at **[Docs/USAGE-cli.md](Docs/USAGE-cli.md)** — that document is the captured `acervo --help` output for every subcommand.
+
+## UI Components
+
+`SwiftAcervoUI`, a thin SwiftUI layer with drop-in components (`AcervoModelsList` and friends) for managing on-device models, plus a SwiftData-backed `StoredModelReference` persistence scaffold. The full reference is at **[Docs/USAGE-ui-components.md](Docs/USAGE-ui-components.md)** — compiled from `Sources/SwiftAcervoUI/`.
 
 ---
 

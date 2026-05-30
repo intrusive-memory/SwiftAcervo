@@ -41,10 +41,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 ## Where to find things
 
-The repo ships two surfaces, each with its own reference document:
+The repo ships three surfaces, each with its own reference document:
 
 - **[Docs/USAGE-library.md](Docs/USAGE-library.md)** — Library reference. Compiled from `Sources/SwiftAcervo/*.swift`. Every public symbol with signature + usage example. Read this before suggesting changes to the public API or before answering "how do I use SwiftAcervo from my app/library".
 - **[Docs/USAGE-cli.md](Docs/USAGE-cli.md)** — CLI reference. Captured from `acervo --help` plus every subcommand. Read this before suggesting changes to CLI behavior or before answering "how do I run acervo".
+- **[Docs/USAGE-ui-components.md](Docs/USAGE-ui-components.md)** — SwiftAcervoUI reference. Documents the SwiftUI drop-in components (`AcervoModelsList`, etc.) and the SwiftData-backed `StoredModelReference` persistence scaffold. Compiled from `Sources/SwiftAcervoUI/*.swift`. Read this before suggesting changes to the UI module or before answering "how do I show a models list in my app".
 
 Topic-specific docs (architectural background, not consumer entry points):
 
