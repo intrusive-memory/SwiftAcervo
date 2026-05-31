@@ -59,6 +59,11 @@ public enum AcervoUIAccessibility {
   /// uppercased caption rendered above each group of rows.
   public static let engineGroupHeaderPrefix = "settings.engineGroup"
 
+  /// Identifier for the "Reveal Models Folder in Finder" link rendered at
+  /// the top of `AcervoModelsList` (macOS only). Opens the shared models
+  /// parent directory in Finder.
+  public static let modelsFolderRevealButton = "model.revealModelsFolder"
+
   // MARK: - Onboarding / Download Interstitial
 
   /// Welcome headline identifier on the interstitial's prompt state.

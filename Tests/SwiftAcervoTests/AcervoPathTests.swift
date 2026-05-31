@@ -207,6 +207,94 @@ extension SharedStaticStateSuite.AppGroupEnvironmentSuite {
         #expect(sharedDir.lastPathComponent == "SharedModels")
       }
     }
+
+    // MARK: - ACERVO_MODELS_DIR override
+
+    /// Snapshots and restores `ACERVO_MODELS_DIR` around `body`, setting it to
+    /// `value` (or unsetting it when `value` is nil). Restores the prior value
+    /// on exit, including on throw, so serialized siblings see a clean slate.
+    private func withOverrideEnv<R>(
+      _ value: String?,
+      _ body: () throws -> R
+    ) rethrows -> R {
+      let key = Acervo.modelsDirectoryOverrideVariable
+      let previous = ProcessInfo.processInfo.environment[key]
+      if let value {
+        setenv(key, value, 1)
+      } else {
+        unsetenv(key)
+      }
+      defer {
+        if let previous {
+          setenv(key, previous, 1)
+        } else {
+          unsetenv(key)
+        }
+      }
+      return try body()
+    }
+
+    @Test("ACERVO_MODELS_DIR overrides sharedModelsDirectory to the literal path")
+    func overrideRedirectsSharedModelsDirectory() {
+      let override = "/tmp/acervo-override-test-models"
+      withOverrideEnv(override) {
+        let expected = URL(fileURLWithPath: override, isDirectory: true)
+        #expect(Acervo.sharedModelsDirectory == expected)
+      }
+    }
+
+    @Test("ACERVO_MODELS_DIR takes precedence over a configured App Group ID")
+    func overrideWinsOverAppGroup() {
+      let override = "/tmp/acervo-override-wins"
+      // App Group is also configured, but the override must short-circuit it.
+      withIsolatedSharedModelsDirectory { _ in
+        withOverrideEnv(override) {
+          let expected = URL(fileURLWithPath: override, isDirectory: true)
+          #expect(Acervo.sharedModelsDirectory == expected)
+        }
+      }
+    }
+
+    @Test("empty ACERVO_MODELS_DIR is ignored, falling back to App Group resolution")
+    func emptyOverrideFallsThroughToAppGroup() {
+      withIsolatedSharedModelsDirectory { sharedDir in
+        withOverrideEnv("") {
+          // Empty override must not hijack resolution: the App Group path wins.
+          #expect(Acervo.sharedModelsDirectory == sharedDir)
+          #expect(Acervo.sharedModelsDirectory.lastPathComponent == "SharedModels")
+        }
+      }
+    }
+
+    @Test("absent ACERVO_MODELS_DIR uses App Group resolution")
+    func absentOverrideUsesAppGroup() {
+      withIsolatedSharedModelsDirectory { sharedDir in
+        withOverrideEnv(nil) {
+          #expect(Acervo.sharedModelsDirectory == sharedDir)
+        }
+      }
+    }
+
+    @Test("override path is used verbatim without a SharedModels suffix")
+    func overridePathHasNoSharedModelsSuffix() {
+      let override = "/tmp/acervo-override-verbatim"
+      withOverrideEnv(override) {
+        // Unlike App Group resolution, the override is the model root itself —
+        // consumers hardlink the slug subdirectories directly under it.
+        #expect(Acervo.sharedModelsDirectory.lastPathComponent == "acervo-override-verbatim")
+      }
+    }
+
+    @Test("modelDirectory resolves under the ACERVO_MODELS_DIR override")
+    func modelDirectoryUnderOverride() throws {
+      let override = "/tmp/acervo-override-models"
+      try withOverrideEnv(override) {
+        let dir = try Acervo.modelDirectory(for: "intrusive-memory/t5-xxl-int4-mlx")
+        let expected = URL(fileURLWithPath: override, isDirectory: true)
+          .appendingPathComponent("intrusive-memory_t5-xxl-int4-mlx")
+        #expect(dir == expected)
+      }
+    }
   }
 
 }  // extension SharedStaticStateSuite.AppGroupEnvironmentSuite

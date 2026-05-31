@@ -10,6 +10,10 @@ import SwiftAcervo
 import SwiftData
 import SwiftUI
 
+#if canImport(AppKit)
+  import AppKit
+#endif
+
 /// A drop-in catalog manager for `StoredModelReference` records.
 ///
 /// The list `@Query`s the current `ModelContext` for every
@@ -70,6 +74,7 @@ public struct AcervoModelsList: View {
   private let editButtonLabel: LocalizedStringKey
   private let editContextMenuLabel: LocalizedStringKey
   private let removeContextMenuLabel: LocalizedStringKey
+  private let revealFolderButtonLabel: LocalizedStringKey
   private let rowLabels: AcervoModelDownloadRow.Labels
   private let editSheetLabels: AcervoStoredModelEditSheet.Labels
   private let availability: @Sendable (AcervoModelRowItem) async -> ModelAvailability
@@ -114,6 +119,7 @@ public struct AcervoModelsList: View {
     editButtonLabel: LocalizedStringKey = "Edit Model",
     editContextMenuLabel: LocalizedStringKey = "Edit…",
     removeContextMenuLabel: LocalizedStringKey = "Remove from Catalog & Delete Files",
+    revealFolderButtonLabel: LocalizedStringKey = "Reveal Models Folder in Finder",
     rowLabels: AcervoModelDownloadRow.Labels = AcervoModelDownloadRow.Labels(),
     editSheetLabels: AcervoStoredModelEditSheet.Labels = AcervoStoredModelEditSheet.Labels(),
     availability: @escaping @Sendable (AcervoModelRowItem) async -> ModelAvailability,
@@ -129,6 +135,7 @@ public struct AcervoModelsList: View {
     self.editButtonLabel = editButtonLabel
     self.editContextMenuLabel = editContextMenuLabel
     self.removeContextMenuLabel = removeContextMenuLabel
+    self.revealFolderButtonLabel = revealFolderButtonLabel
     self.rowLabels = rowLabels
     self.editSheetLabels = editSheetLabels
     self.availability = availability
@@ -138,6 +145,16 @@ public struct AcervoModelsList: View {
 
   public var body: some View {
     List(selection: $selection) {
+      #if os(macOS)
+        Button {
+          revealModelsDirectory()
+        } label: {
+          Label(revealFolderButtonLabel, systemImage: "folder")
+        }
+        .buttonStyle(.link)
+        .accessibilityIdentifier(AcervoUIAccessibility.modelsFolderRevealButton)
+      #endif
+
       ForEach(groupedModels, id: \.key) { group in
         Section {
           ForEach(group.models) { stored in
@@ -172,6 +189,22 @@ public struct AcervoModelsList: View {
       }
     }
   }
+
+  // MARK: - Reveal in Finder
+
+  #if os(macOS)
+    /// Opens the shared models parent directory in Finder. Creates the
+    /// directory first if it does not yet exist so the reveal always lands
+    /// somewhere (a fresh install may not have downloaded anything yet).
+    private func revealModelsDirectory() {
+      let directory = Acervo.sharedModelsDirectory
+      try? FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+      )
+      NSWorkspace.shared.open(directory)
+    }
+  #endif
 
   // MARK: - Editability resolution
 
