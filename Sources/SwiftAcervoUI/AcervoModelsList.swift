@@ -11,7 +11,7 @@ import SwiftData
 import SwiftUI
 
 #if canImport(AppKit)
-import AppKit
+  import AppKit
 #endif
 
 /// A drop-in catalog manager for `StoredModelReference` records.
@@ -146,13 +146,13 @@ public struct AcervoModelsList: View {
   public var body: some View {
     List(selection: $selection) {
       #if os(macOS)
-      Button {
-        revealModelsDirectory()
-      } label: {
-        Label(revealFolderButtonLabel, systemImage: "folder")
-      }
-      .buttonStyle(.link)
-      .accessibilityIdentifier(AcervoUIAccessibility.modelsFolderRevealButton)
+        Button {
+          revealModelsDirectory()
+        } label: {
+          Label(revealFolderButtonLabel, systemImage: "folder")
+        }
+        .buttonStyle(.link)
+        .accessibilityIdentifier(AcervoUIAccessibility.modelsFolderRevealButton)
       #endif
 
       ForEach(groupedModels, id: \.key) { group in
@@ -193,17 +193,17 @@ public struct AcervoModelsList: View {
   // MARK: - Reveal in Finder
 
   #if os(macOS)
-  /// Opens the shared models parent directory in Finder. Creates the
-  /// directory first if it does not yet exist so the reveal always lands
-  /// somewhere (a fresh install may not have downloaded anything yet).
-  private func revealModelsDirectory() {
-    let directory = Acervo.sharedModelsDirectory
-    try? FileManager.default.createDirectory(
-      at: directory,
-      withIntermediateDirectories: true
-    )
-    NSWorkspace.shared.open(directory)
-  }
+    /// Opens the shared models parent directory in Finder. Creates the
+    /// directory first if it does not yet exist so the reveal always lands
+    /// somewhere (a fresh install may not have downloaded anything yet).
+    private func revealModelsDirectory() {
+      let directory = Acervo.sharedModelsDirectory
+      try? FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true
+      )
+      NSWorkspace.shared.open(directory)
+    }
   #endif
 
   // MARK: - Editability resolution
