@@ -32,6 +32,35 @@ extension Acervo {
   /// 3. `fatalError` — no silent fallback
   public static let appGroupEnvironmentVariable = "ACERVO_APP_GROUP_ID"
 
+  /// Environment variable that overrides ``sharedModelsDirectory`` with an
+  /// explicit filesystem path, bypassing App Group resolution entirely.
+  ///
+  /// Intended for **test runners and CLI tools that cannot reach the App Group
+  /// container**. An unentitled `xctest` process is blocked by the macOS
+  /// sandbox (MACF) from `fopen()`-ing files inside
+  /// `~/Library/Group Containers/<group>/…`, even though those files are
+  /// readable from an entitled shell. Such a runner can hardlink the model
+  /// files into a temporary directory (e.g. `/tmp/models`) from an entitled
+  /// context and point Acervo at it via this variable.
+  ///
+  /// When set to a non-empty value, ``sharedModelsDirectory`` returns this
+  /// path directly and never consults ``appGroupEnvironmentVariable`` or the
+  /// entitlement, so the App Group identifier need not be configured. The
+  /// directory layout under the override must match the normal layout:
+  /// one slugified `<org>_<repo>` subdirectory per component (see
+  /// ``slugify(_:)``).
+  ///
+  /// ```sh
+  /// # In a test target's scheme / Makefile (xcodebuild strips the
+  /// # TEST_RUNNER_ prefix before injecting into the xctest process):
+  /// export TEST_RUNNER_ACERVO_MODELS_DIR=/tmp/models
+  /// ```
+  ///
+  /// - Important: This is a deliberate escape hatch. It is never consulted by
+  ///   sandboxed UI apps in normal operation (they don't set it). Do not set
+  ///   it in production environments.
+  public static let modelsDirectoryOverrideVariable = "ACERVO_MODELS_DIR"
+
   /// The subdirectory name within the App Group container for model storage.
   private static let modelsSubdirectory = "SharedModels"
 
@@ -122,6 +151,16 @@ extension Acervo {
   ///   path because that is exactly the divergence the App Group container
   ///   exists to prevent.
   public static var sharedModelsDirectory: URL {
+    // Explicit override (see ``modelsDirectoryOverrideVariable``): an
+    // unentitled test runner / CLI can point Acervo at a hardlinked mirror
+    // that the macOS sandbox does not block. Checked first so the App Group
+    // identifier is not required when the override is in effect.
+    if let override = ProcessInfo.processInfo.environment[modelsDirectoryOverrideVariable],
+      !override.isEmpty
+    {
+      return URL(fileURLWithPath: override, isDirectory: true)
+    }
+
     guard let groupID = resolvedAppGroupIdentifier else {
       fatalError(
         """
