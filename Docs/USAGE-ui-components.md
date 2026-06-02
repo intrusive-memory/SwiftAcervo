@@ -332,6 +332,56 @@ All copy is configurable via `LocalizedStringKey` init parameters — defaults a
 
 ---
 
+## Accessibility identifiers
+
+Every interactive element these components render carries a stable `accessibilityIdentifier`, exposed as a constant on the public `AcervoUIAccessibility` enum so host XCUITests reference the value rather than hardcoding the string. Per-row identifiers are built by appending the row item's `id` to the listed prefix (e.g. `"model.downloadButton.\(item.id)"`).
+
+```swift
+// In an XCUITest target:
+import SwiftAcervoUI
+
+let download = app.buttons["\(AcervoUIAccessibility.modelDownloadButtonPrefix).mlx-community/whisper"]
+download.tap()
+app.textFields[AcervoUIAccessibility.editSheetDisplayNameField].typeText("Whisper")
+app.buttons[AcervoUIAccessibility.editSheetSaveButton].tap()
+```
+
+| Constant | Identifier | Where | Notes |
+| --- | --- | --- | --- |
+| `modelRowPrefix` | `model.row.<id>` | `AcervoModelDownloadRow` | Present on every row. |
+| `modelDownloadButtonPrefix` | `model.downloadButton.<id>` | row | `.notAvailable` / `.partial` states. |
+| `modelDownloadingPrefix` | `model.downloading.<id>` | row | `.downloading` state (progress bar). |
+| `modelDownloadedPrefix` | `model.downloaded.<id>` | row | `.available` state container. |
+| `modelDeleteButtonPrefix` | `model.deleteButton.<id>` | row | `.available` state. |
+| `modelErrorPrefix` | `model.error.<id>` | row | Inline error after a failed attempt. |
+| `engineGroupHeaderPrefix` | `settings.engineGroup.<groupID>` | section / list | Group caption header. |
+| `modelsFolderRevealButton` | `model.revealModelsFolder` | `AcervoModelsList` | macOS reveal-in-Finder link. |
+| `listAddButton` | `model.list.addButton` | list toolbar | Editable lists only. |
+| `listRemoveButton` | `model.list.removeButton` | list toolbar | Editable lists only. |
+| `listEditButton` | `model.list.editButton` | list toolbar | Editable lists only. |
+| `listEditMenuItemPrefix` | `model.editMenuItem.<id>` | per-row context menu | Editable lists only. |
+| `listRemoveMenuItemPrefix` | `model.removeMenuItem.<id>` | per-row context menu | Editable lists only. |
+| `editSheetIDField` | `editSheet.idField` | `AcervoStoredModelEditSheet` | Disabled in `.edit` mode. |
+| `editSheetDisplayNameField` | `editSheet.displayNameField` | edit sheet | |
+| `editSheetSubtitleEditor` | `editSheet.subtitleEditor` | edit sheet | Multi-line `TextEditor`. |
+| `editSheetGroupIDField` | `editSheet.groupIDField` | edit sheet | |
+| `editSheetGroupDisplayNameField` | `editSheet.groupDisplayNameField` | edit sheet | |
+| `editSheetOriginField` | `editSheet.originField` | edit sheet | |
+| `editSheetCancelButton` | `editSheet.cancelButton` | edit sheet toolbar | |
+| `editSheetSaveButton` | `editSheet.saveButton` | edit sheet toolbar | Disabled until valid. |
+| `onboardingWelcome` | `onboarding.welcome` | `AcervoModelDownloadInterstitial` | Prompt headline. |
+| `onboardingModelInfo` | `onboarding.modelInfo` | interstitial | Model display name. |
+| `onboardingDownloadButton` | `onboarding.downloadButton` | interstitial | Primary CTA. |
+| `onboardingSkipButton` | `onboarding.skipButton` | interstitial | Only when `onSkip` is wired. |
+| `onboardingDownloadProgress` | `onboarding.downloadProgress` | interstitial | Downloading state. |
+| `onboardingComplete` | `onboarding.complete` | interstitial | `.available` completion headline. |
+| `onboardingError` | `onboarding.error` | interstitial | Inline error message. |
+| `onboardingRetryButton` | `onboarding.retryButton` | interstitial | Error state. |
+
+These strings are a public contract pinned by `AcervoUIAccessibilityTests` — a rename has to update the test on purpose, so consumer UI suites won't break silently.
+
+---
+
 ## Localizing copy
 
 Every user-visible string in `SwiftAcervoUI` is parameterized via `LocalizedStringKey` so a host can fully localize the catalog UI without forking. Defaults are English literals; hosts pass `LocalizedStringKey` values that resolve against their own `Localizable.xcstrings`.

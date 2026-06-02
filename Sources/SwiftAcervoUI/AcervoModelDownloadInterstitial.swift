@@ -318,6 +318,7 @@ public struct AcervoModelDownloadInterstitial: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
+        .accessibilityIdentifier(AcervoUIAccessibility.onboardingError)
 
       Button {
         Task { await controller.startDownload() }
@@ -341,6 +342,7 @@ public struct AcervoModelDownloadInterstitial: View {
       Text(completionTitle)
         .font(.title2)
         .fontWeight(.semibold)
+        .accessibilityIdentifier(AcervoUIAccessibility.onboardingComplete)
 
       Text(completionMessage)
         .font(.callout)

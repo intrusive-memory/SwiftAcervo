@@ -239,17 +239,20 @@ public struct AcervoStoredModelEditSheet: View {
             .textFieldStyle(.roundedBorder)
             .disabled(isEditing)
             .help(isEditing ? labels.slugImmutableHelp : "")
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetIDField)
         }
 
         Section(labels.displaySectionHeader) {
           TextField(labels.displayNamePlaceholder, text: $draft.displayName)
             .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetDisplayNameField)
         }
 
         Section {
           TextEditor(text: $draft.subtitleText)
             .font(.body.monospaced())
             .frame(minHeight: 100)
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetSubtitleEditor)
         } header: {
           Text(labels.subtitleLinesSectionHeader)
         } footer: {
@@ -261,8 +264,10 @@ public struct AcervoStoredModelEditSheet: View {
         Section {
           TextField(labels.groupIDPlaceholder, text: $draft.groupID)
             .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetGroupIDField)
           TextField(labels.groupDisplayNamePlaceholder, text: $draft.groupDisplayName)
             .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetGroupDisplayNameField)
         } header: {
           Text(labels.groupingSectionHeader)
         } footer: {
@@ -274,6 +279,7 @@ public struct AcervoStoredModelEditSheet: View {
         Section {
           TextField(labels.originPlaceholder, text: $draft.origin)
             .textFieldStyle(.roundedBorder)
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetOriginField)
         } header: {
           Text(labels.originSectionHeader)
         } footer: {
@@ -287,6 +293,7 @@ public struct AcervoStoredModelEditSheet: View {
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button(labels.cancelButtonLabel) { dismiss() }
+            .accessibilityIdentifier(AcervoUIAccessibility.editSheetCancelButton)
         }
         ToolbarItem(placement: .confirmationAction) {
           Button(labels.saveButtonLabel) {
@@ -294,6 +301,7 @@ public struct AcervoStoredModelEditSheet: View {
             dismiss()
           }
           .disabled(!isValid)
+          .accessibilityIdentifier(AcervoUIAccessibility.editSheetSaveButton)
         }
       }
     }
