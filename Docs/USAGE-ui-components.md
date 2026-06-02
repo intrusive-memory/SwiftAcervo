@@ -519,6 +519,44 @@ struct AddModelButton: View {
 
 Deleting a record removes the catalog entry, but the on-disk model binary lives in the shared App Group container and must be cleared separately via `Acervo.delete(slug:)` if you also want to free that disk space.
 
+### Seeding the catalog declaratively
+
+Most apps don't want to hand-roll insert/delete logic on launch — they have a fixed list of models they support and just want the store to reflect it. Two static helpers on `StoredModelReference` reconcile a `ModelContext` against a desired set:
+
+| Helper | Behavior |
+| ------ | -------- |
+| `ensureSeeded(_:in:)`     | **Additive.** Inserts each reference whose `id` is not already present; existing records are left untouched. Never removes anything. |
+| `ensureOnlySeeded(_:in:)` | **Authoritative.** Inserts what's missing *and* deletes every stored record whose `id` is not in the supplied set, so the store ends up containing exactly that set. |
+
+Both match records by `id` (the unique slug), skip an `id` that already exists rather than overwriting it (so host edits to a still-supported model survive re-seeding), collapse duplicate `id`s within the input, and are idempotent. Both are `@MainActor` and `throws` (they `fetch` and `save`); call them from a `@MainActor` context such as `.task`/`onAppear` or app startup. Each returns the ids it changed (`ensureSeeded` → inserted ids; `ensureOnlySeeded` → `(inserted:removed:)`), which you can ignore with `@discardableResult`.
+
+```swift
+import SwiftData
+import SwiftAcervoUI
+
+@MainActor
+func seedSupportedModels(into context: ModelContext) throws {
+    let supported = [
+        StoredModelReference(
+            id: "black-forest-labs/FLUX.2-klein-4B",
+            displayName: "FLUX.2 Klein 4B",
+            subtitleLines: ["4.2 GB", "8 GB RAM minimum"]
+        ),
+        StoredModelReference(
+            id: "PixArt-alpha/PixArt-XL-2-1024-MS",
+            displayName: "PixArt-Σ XL",
+            subtitleLines: ["2.4 GB"]
+        ),
+    ]
+
+    // Catalog now contains exactly these two — anything else (e.g. a model
+    // that was offered in a prior build but pulled from the CDN) is removed.
+    try StoredModelReference.ensureOnlySeeded(supported, in: context)
+}
+```
+
+Use `ensureSeeded` when the host's list is a baseline the user may add to; use `ensureOnlySeeded` when the host's list is the complete, authoritative catalog and stale entries must be pruned. As with manual deletes, `ensureOnlySeeded` only removes the SwiftData catalog entry — the on-disk binary, if any, is still cleared separately via `Acervo.delete(slug:)`.
+
 ---
 
 ## Versioning the schema with `VersionedSchema`
