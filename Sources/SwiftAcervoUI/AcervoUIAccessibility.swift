@@ -64,6 +64,57 @@ public enum AcervoUIAccessibility {
   /// parent directory in Finder.
   public static let modelsFolderRevealButton = "model.revealModelsFolder"
 
+  // MARK: - AcervoModelsList toolbar + context menu
+
+  /// Toolbar "Add" button identifier on `AcervoModelsList`. Present only
+  /// when the list resolves to editable.
+  public static let listAddButton = "model.list.addButton"
+
+  /// Toolbar "Remove" button identifier on `AcervoModelsList`. Present
+  /// only when the list resolves to editable.
+  public static let listRemoveButton = "model.list.removeButton"
+
+  /// Toolbar "Edit" button identifier on `AcervoModelsList`. Present only
+  /// when the list resolves to editable.
+  public static let listEditButton = "model.list.editButton"
+
+  /// Per-row context-menu "Edit" item identifier prefix. Full id:
+  /// `"model.editMenuItem.<item.id>"`. Present only when the list
+  /// resolves to editable.
+  public static let listEditMenuItemPrefix = "model.editMenuItem"
+
+  /// Per-row context-menu destructive "Remove" item identifier prefix.
+  /// Full id: `"model.removeMenuItem.<item.id>"`. Present only when the
+  /// list resolves to editable.
+  public static let listRemoveMenuItemPrefix = "model.removeMenuItem"
+
+  // MARK: - AcervoStoredModelEditSheet
+
+  /// Slug / identifier text field. Editable in add mode, disabled in
+  /// edit mode.
+  public static let editSheetIDField = "editSheet.idField"
+
+  /// Display-name text field.
+  public static let editSheetDisplayNameField = "editSheet.displayNameField"
+
+  /// Multi-line subtitle text editor.
+  public static let editSheetSubtitleEditor = "editSheet.subtitleEditor"
+
+  /// Group-ID text field.
+  public static let editSheetGroupIDField = "editSheet.groupIDField"
+
+  /// Group display-name text field.
+  public static let editSheetGroupDisplayNameField = "editSheet.groupDisplayNameField"
+
+  /// Origin text field.
+  public static let editSheetOriginField = "editSheet.originField"
+
+  /// Cancel toolbar button.
+  public static let editSheetCancelButton = "editSheet.cancelButton"
+
+  /// Save toolbar button. Disabled until the draft is valid.
+  public static let editSheetSaveButton = "editSheet.saveButton"
+
   // MARK: - Onboarding / Download Interstitial
 
   /// Welcome headline identifier on the interstitial's prompt state.
@@ -78,6 +129,14 @@ public enum AcervoUIAccessibility {
 
   /// Progress bar identifier on the interstitial's downloading state.
   public static let onboardingDownloadProgress = "onboarding.downloadProgress"
+
+  /// Completion-state headline identifier on the interstitial. Present
+  /// only when the model has finished downloading (`.available`).
+  public static let onboardingComplete = "onboarding.complete"
+
+  /// Inline error-message identifier on the interstitial's error state.
+  /// Present alongside `onboardingRetryButton` when a download fails.
+  public static let onboardingError = "onboarding.error"
 
   /// Retry button identifier on the interstitial's error state.
   public static let onboardingRetryButton = "onboarding.retryButton"

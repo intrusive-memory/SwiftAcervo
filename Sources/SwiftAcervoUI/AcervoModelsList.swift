@@ -246,9 +246,15 @@ public struct AcervoModelsList: View {
     if isEditable {
       rowView.contextMenu {
         Button(editContextMenuLabel) { sheet = .edit(stored.id) }
+          .accessibilityIdentifier(
+            "\(AcervoUIAccessibility.listEditMenuItemPrefix).\(stored.id)"
+          )
         Button(removeContextMenuLabel, role: .destructive) {
           delete([stored])
         }
+        .accessibilityIdentifier(
+          "\(AcervoUIAccessibility.listRemoveMenuItemPrefix).\(stored.id)"
+        )
       }
     } else {
       rowView
@@ -266,6 +272,7 @@ public struct AcervoModelsList: View {
         } label: {
           Label(addButtonLabel, systemImage: "plus")
         }
+        .accessibilityIdentifier(AcervoUIAccessibility.listAddButton)
 
         Button(role: .destructive) {
           deleteSelected()
@@ -273,6 +280,7 @@ public struct AcervoModelsList: View {
           Label(removeButtonLabel, systemImage: "minus")
         }
         .disabled(selection.isEmpty)
+        .accessibilityIdentifier(AcervoUIAccessibility.listRemoveButton)
 
         Button {
           if let only = selection.first,
@@ -285,6 +293,7 @@ public struct AcervoModelsList: View {
           Label(editButtonLabel, systemImage: "pencil")
         }
         .disabled(selection.count != 1)
+        .accessibilityIdentifier(AcervoUIAccessibility.listEditButton)
       }
     }
   }
