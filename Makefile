@@ -27,7 +27,7 @@ DERIVED_DATA = $(HOME)/Library/Developer/Xcode/DerivedData
 
 .PHONY: build test test-ios test-perf test-plan-shape clean resolve lint help release \
         build-acervo install-acervo release-acervo \
-        test-acervo-unit test-acervo-cdn
+        test-acervo-unit test-acervo-cdn codesign-cli
 
 build:
 	xcodebuild build -scheme $(SCHEME) -destination $(DESTINATION)
@@ -121,6 +121,29 @@ test-acervo-cdn: resolve
 	  -destination $(DESTINATION) \
 	  -only-testing:AcervoToolTests/CDNManifestFetchTests
 
+# ── App Group code-signing ────────────────────────────────────────────────
+# Sign the acervo CLI with the com.apple.security.application-groups entitlement
+# so the group ID is embedded in the binary and SwiftAcervo resolves the shared
+# models container (~/Library/Group Containers/group.intrusive-memory.models/)
+# WITHOUT requiring ACERVO_APP_GROUP_ID in the environment. Container access is
+# plain POSIX (same-user, mode 700); the entitlement only supplies the group
+# identifier at runtime via SecTaskCopyValueForEntitlement.
+#
+# Default identity is ad-hoc (-), which is sufficient for the entitlement to be
+# read back at runtime. For a distributable build, override with a Developer ID
+# by certificate SHA-1 (names collide in the keychain):
+#   make install-acervo codesign-cli CODESIGN_IDENTITY=<sha1>
+APP_GROUP_ID ?= group.intrusive-memory.models
+CODESIGN_IDENTITY ?= -
+CODESIGN_FLAGS ?=
+CODESIGN_ENTITLEMENTS ?= cli.entitlements
+
+codesign-cli:
+	@test -f "$(BIN_DIR)/$(ACERVO_BINARY)" || { echo "Error: $(BIN_DIR)/$(ACERVO_BINARY) not found — run 'make install-acervo' or 'make release-acervo' first."; exit 1; }
+	@codesign --force --sign "$(CODESIGN_IDENTITY)" --entitlements "$(CODESIGN_ENTITLEMENTS)" $(CODESIGN_FLAGS) "$(BIN_DIR)/$(ACERVO_BINARY)"
+	@echo "Signed $(BIN_DIR)/$(ACERVO_BINARY) (identity: $(CODESIGN_IDENTITY), group: $(APP_GROUP_ID))"
+	@codesign -d --entitlements - "$(BIN_DIR)/$(ACERVO_BINARY)" 2>/dev/null | grep -A1 "application-groups" || true
+
 help:
 	@echo "Available targets:"
 	@echo "  build                    - Build the SwiftAcervo scheme"
@@ -135,6 +158,7 @@ help:
 	@echo "  install-acervo           - Build acervo and install to $(BIN_DIR)/ (Debug)"
 	@echo "  release                  - Alias for release-acervo (used by CI)"
 	@echo "  release-acervo           - Build acervo and install to $(BIN_DIR)/ (Release)"
+	@echo "  codesign-cli             - Sign the acervo CLI with the App Group entitlement (run after install/release)"
 	@echo "  test-acervo-unit         - Run acervo CLI unit tests (macOS only, no credentials)"
 	@echo "  test-acervo-cdn          - Fetch and verify a known CDN manifest (macOS only, network, no creds)"
 	@echo "  help                     - Show this help message"

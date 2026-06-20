@@ -133,6 +133,91 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       #expect(objects[0].etag == "\"aaaa\"")
     }
 
+    // MARK: - listCommonPrefixes
+
+    @Test("listCommonPrefixes returns grouped sub-prefixes across pages")
+    func listCommonPrefixesPaginates() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      // Page 1 also includes a top-level <Prefix> (the request prefix) that
+      // must NOT leak into the results — only the CommonPrefixes entries do.
+      let firstPage = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Name>test-bucket</Name>
+          <Prefix>models/</Prefix>
+          <Delimiter>/</Delimiter>
+          <IsTruncated>true</IsTruncated>
+          <NextContinuationToken>NEXT-TOKEN-1</NextContinuationToken>
+          <CommonPrefixes><Prefix>models/alpha/</Prefix></CommonPrefixes>
+          <CommonPrefixes><Prefix>models/beta/</Prefix></CommonPrefixes>
+        </ListBucketResult>
+        """
+
+      let secondPage = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Name>test-bucket</Name>
+          <Prefix>models/</Prefix>
+          <Delimiter>/</Delimiter>
+          <IsTruncated>false</IsTruncated>
+          <CommonPrefixes><Prefix>models/gamma/</Prefix></CommonPrefixes>
+        </ListBucketResult>
+        """
+
+      MockURLProtocol.responder = { request in
+        let urlString = request.url?.absoluteString ?? ""
+        let isPageTwo = urlString.contains("continuation-token")
+        let body = isPageTwo ? secondPage : firstPage
+        return Self.http(
+          request,
+          status: 200,
+          headers: ["Content-Type": "application/xml"],
+          body: Data(body.utf8)
+        )
+      }
+
+      let client = Self.makeClient()
+      let prefixes = try await client.listCommonPrefixes(prefix: "models/")
+
+      #expect(MockURLProtocol.requestCount == 2)
+      #expect(prefixes == ["models/alpha/", "models/beta/", "models/gamma/"])
+    }
+
+    @Test("Acervo._listCDNModels strips the models/ prefix and sorts slugs")
+    func listCDNModelsNormalizesAndSorts() async throws {
+      MockURLProtocol.reset()
+      defer { MockURLProtocol.reset() }
+
+      let page = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Name>test-bucket</Name>
+          <Prefix>models/</Prefix>
+          <Delimiter>/</Delimiter>
+          <IsTruncated>false</IsTruncated>
+          <CommonPrefixes><Prefix>models/zebra_model/</Prefix></CommonPrefixes>
+          <CommonPrefixes><Prefix>models/Alpha_model/</Prefix></CommonPrefixes>
+        </ListBucketResult>
+        """
+
+      MockURLProtocol.responder = { request in
+        Self.http(
+          request,
+          status: 200,
+          headers: ["Content-Type": "application/xml"],
+          body: Data(page.utf8)
+        )
+      }
+
+      let client = Self.makeClient()
+      let slugs = try await Acervo._listCDNModels(client: client)
+
+      // models/ prefix and trailing slash gone; case-insensitive sort.
+      #expect(slugs == ["Alpha_model", "zebra_model"])
+    }
+
     // MARK: - headObject
 
     @Test("headObject returns metadata on HTTP 200")

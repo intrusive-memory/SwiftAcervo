@@ -198,12 +198,42 @@ public actor S3CDNClient {
     var continuationToken: String? = nil
 
     repeat {
-      let (objects, nextToken) = try await listOnePage(
+      let page = try await listOnePage(
         prefix: prefix,
+        delimiter: nil,
         continuationToken: continuationToken
       )
-      collected.append(contentsOf: objects)
-      continuationToken = nextToken
+      collected.append(contentsOf: page.objects)
+      continuationToken = page.nextToken
+    } while continuationToken != nil
+
+    return collected
+  }
+
+  /// Lists the immediate "subdirectory" prefixes under `prefix`.
+  ///
+  /// Issues a delimiter-grouped `ListObjectsV2` and returns the
+  /// `CommonPrefixes` strings — i.e. the keys that share a `prefix`-rooted
+  /// path segment up to the first `delimiter`. Each returned value still
+  /// carries the requested `prefix` and a trailing `delimiter` (e.g.
+  /// `"models/foo/"`); callers strip those if they want bare names. Objects
+  /// that live directly at `prefix` (no further delimiter) are not returned —
+  /// only the grouped sub-prefixes. Paginates until the listing is complete.
+  public func listCommonPrefixes(
+    prefix: String,
+    delimiter: String = "/"
+  ) async throws -> [String] {
+    var collected: [String] = []
+    var continuationToken: String? = nil
+
+    repeat {
+      let page = try await listOnePage(
+        prefix: prefix,
+        delimiter: delimiter,
+        continuationToken: continuationToken
+      )
+      collected.append(contentsOf: page.commonPrefixes)
+      continuationToken = page.nextToken
     } while continuationToken != nil
 
     return collected
@@ -211,12 +241,16 @@ public actor S3CDNClient {
 
   private func listOnePage(
     prefix: String,
+    delimiter: String?,
     continuationToken: String?
-  ) async throws -> (objects: [S3Object], nextToken: String?) {
+  ) async throws -> (objects: [S3Object], commonPrefixes: [String], nextToken: String?) {
     var queryItems: [URLQueryItem] = [
       URLQueryItem(name: "list-type", value: "2"),
       URLQueryItem(name: "prefix", value: prefix),
     ]
+    if let delimiter {
+      queryItems.append(URLQueryItem(name: "delimiter", value: delimiter))
+    }
     if let continuationToken {
       queryItems.append(
         URLQueryItem(name: "continuation-token", value: continuationToken)
@@ -249,7 +283,7 @@ public actor S3CDNClient {
     }
 
     let parsed = try ListObjectsV2Parser.parse(data)
-    return (parsed.objects, parsed.nextContinuationToken)
+    return (parsed.objects, parsed.commonPrefixes, parsed.nextContinuationToken)
   }
 
   // MARK: - headObject
@@ -1053,11 +1087,13 @@ public actor S3CDNClient {
 
 /// Event-driven parser for the `ListObjectsV2` response. We only extract
 /// the fields downstream code uses: `Contents/Key`, `Contents/Size`,
-/// `Contents/ETag`, `IsTruncated`, and `NextContinuationToken`.
+/// `Contents/ETag`, `CommonPrefixes/Prefix`, `IsTruncated`, and
+/// `NextContinuationToken`.
 private final class ListObjectsV2Parser: NSObject, XMLParserDelegate {
 
   struct Result {
     var objects: [S3Object] = []
+    var commonPrefixes: [String] = []
     var isTruncated: Bool = false
     var nextContinuationToken: String? = nil
   }
@@ -1070,6 +1106,11 @@ private final class ListObjectsV2Parser: NSObject, XMLParserDelegate {
   private var currentETag: String? = nil
   private var currentText: String = ""
   private var insideContents: Bool = false
+  // `<Prefix>` appears both at the top level (echoing the request prefix)
+  // and inside each `<CommonPrefixes>` group. We only want the latter, so
+  // we gate Prefix capture on this flag.
+  private var insideCommonPrefixes: Bool = false
+  private var currentCommonPrefix: String? = nil
 
   static func parse(_ data: Data) throws -> Result {
     let delegate = ListObjectsV2Parser()
@@ -1102,6 +1143,9 @@ private final class ListObjectsV2Parser: NSObject, XMLParserDelegate {
       currentKey = nil
       currentSize = nil
       currentETag = nil
+    } else if elementName == "CommonPrefixes" {
+      insideCommonPrefixes = true
+      currentCommonPrefix = nil
     }
   }
 
@@ -1138,6 +1182,18 @@ private final class ListObjectsV2Parser: NSObject, XMLParserDelegate {
           )
         }
         insideContents = false
+      default:
+        break
+      }
+    } else if insideCommonPrefixes {
+      switch elementName {
+      case "Prefix":
+        currentCommonPrefix = trimmed
+      case "CommonPrefixes":
+        if let p = currentCommonPrefix, !p.isEmpty {
+          result.commonPrefixes.append(p)
+        }
+        insideCommonPrefixes = false
       default:
         break
       }

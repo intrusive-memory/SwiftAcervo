@@ -859,7 +859,23 @@ Throws: `AcervoError.urlRequiredForSlug`, `AcervoError.manifestFetchFailed`, `Ac
 
 ### 15 · CDN Mutation (`Acervo+CDNMutation.swift`)
 
-**Operator-side APIs** for publishing, deleting, and recaching models on the private R2 CDN. These are used by the `acervo` CLI and CI/CD workflows, not by model consumers.
+**Operator-side APIs** for listing, publishing, deleting, and recaching models on the private R2 CDN. These are used by the `acervo` CLI and CI/CD workflows, not by model consumers.
+
+---
+
+#### `Acervo.listCDNModels(credentials:)`
+
+```swift
+public static func listCDNModels(
+    credentials: AcervoCDNCredentials
+) async throws -> [String]
+```
+
+Lists the slug of every model directory present under the CDN's `models/` prefix, sorted case-insensitively. Issues a delimiter-grouped signed `ListObjectsV2` and returns the immediate sub-directory names (e.g. `"mlx-community_Qwen2.5-7B-Instruct-4bit"`).
+
+This is a **raw inventory** — it downloads nothing, fetches no manifests, and makes **no claim** about whether any listed model is complete or valid. A returned slug only means an object key exists under `models/<slug>/`. Throws `AcervoError.cdnAuthorizationFailed(operation:)` on 401/403 or `AcervoError.cdnOperationFailed(...)` otherwise.
+
+This is the CDN counterpart to the local-disk `Acervo.listModels()` (§4 Discovery), which enumerates the on-disk shared models directory and returns `[AcervoModel]`. The distinct name keeps "what's on the CDN" separate from "what's downloaded locally". Backs the `acervo list` CLI command.
 
 ---
 
