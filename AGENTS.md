@@ -36,6 +36,22 @@ The CLI resolves every credential and path from the environment — the library 
 
 `SwiftAcervoUI`, the SwiftUI surface (rows, sections, the full catalog manager, the add/edit sheet, SwiftData persistence). The full reference lives at **[Docs/USAGE-ui-components.md](Docs/USAGE-ui-components.md)**. Each component has a `#### For coding agents` subsection with trigger phrases, prerequisites, the wiring contract, and anti-patterns — read it before wiring a host app's model UI.
 
+## Queryable Codemap
+
+A prebuilt [graphify](https://pypi.org/project/graphifyy/) knowledge graph of this
+codebase lives in [`graphify-out/`](graphify-out/) (2958 nodes · 5961 edges). **Prefer
+querying it before grepping** for architecture or "what connects to what" questions:
+
+```bash
+graphify query "How does X flow through the system?"
+graphify path "TypeA" "TypeB"      # shortest path between two nodes
+graphify explain "SomeType"        # plain-language node explanation
+```
+
+Human-readable summary: [`graphify-out/GRAPH_REPORT.md`](graphify-out/GRAPH_REPORT.md).
+Refresh after significant changes with `/codemap` (or
+`graphify . --backend claude-cli`).
+
 ---
 
 For project-level guidance (build commands, test conventions, platform requirements, security rules), read [CLAUDE.md](CLAUDE.md).
