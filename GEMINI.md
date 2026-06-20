@@ -8,7 +8,7 @@ updated: 2026-06-20
 
 **SwiftAcervo** -- Shared AI model discovery and management.
 
-**Version**: 0.20.0
+**Version**: 0.20.0-dev
 
 Canonical model path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
 
