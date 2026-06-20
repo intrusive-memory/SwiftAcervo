@@ -1,5 +1,5 @@
 ---
-updated: 2026-05-18
+updated: 2026-06-20
 ---
 
 # GEMINI.md
@@ -8,7 +8,7 @@ updated: 2026-05-18
 
 **SwiftAcervo** -- Shared AI model discovery and management.
 
-**Version**: 0.19.2-dev
+**Version**: 0.20.0
 
 Canonical model path: App Group container (`group.intrusive-memory.models`) + `SharedModels/{org}_{repo}/`
 

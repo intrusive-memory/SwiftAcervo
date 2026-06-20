@@ -1,5 +1,5 @@
 ---
-updated: 2026-05-18
+updated: 2026-06-20
 ---
 
 # CLAUDE.md
@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.19.2-dev
+**Version**: 0.20.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
