@@ -16,24 +16,38 @@ downloading from HuggingFace, generating SHA-256 manifests, uploading to
 Cloudflare R2 via the native publish pipeline in SwiftAcervo, and running a
 6-step integrity pipeline (CHECKs 1–6).
 
-COMMON ENVIRONMENT VARIABLES
-  HF_TOKEN                 HuggingFace API token (required for private/gated
-models)
-  R2_ACCESS_KEY_ID         Cloudflare R2 access key (required for
-upload/ship/recache)
-  R2_SECRET_ACCESS_KEY     Cloudflare R2 secret key (required for
-upload/ship/recache)
-  R2_BUCKET                R2 bucket name (default: intrusive-memory-models)
-  R2_ENDPOINT              R2 S3-compatible endpoint URL
-  R2_PUBLIC_URL            Public CDN base URL for CHECK 5/6 verification
-  R2_REGION                R2 region (default: auto)
-  STAGING_DIR              Override default staging root (/tmp/acervo-staging)
+ENVIRONMENT VARIABLES
+  HuggingFace
+    HF_TOKEN                HuggingFace API token for private/gated models
+                            (or pass --token). Exported to the `hf` CLI.
+  Cloudflare R2 / CDN (required for list, upload, ship, recache, delete --cdn)
+    R2_ACCESS_KEY_ID        R2 access key id. Required.
+    R2_SECRET_ACCESS_KEY    R2 secret access key. Required.
+    R2_ENDPOINT             R2 S3-compatible API endpoint (signed writes
+                            and listing). Required.
+    R2_PUBLIC_URL           Public CDN base URL (readback CHECK 5/6).
+                            Required.
+    R2_BUCKET               Bucket name. Optional; default
+                            intrusive-memory-models.
+    R2_REGION               Region literal. Optional; default auto.
+  Local paths
+    STAGING_DIR             Staging root for download/recache. Optional;
+                            default /tmp/acervo-staging.
+    ACERVO_APP_GROUP_ID     App Group id that locates the shared models
+                            directory for cache-scoped operations.
+    ACERVO_MODELS_DIR       Absolute override for the shared models
+                            directory (takes precedence over the App Group).
+    ACERVO_OFFLINE          When set (e.g. =1), forbid all network access;
+                            serve only what is already on disk.
 
 REQUIRED TOOLS
   hf        HuggingFace CLI — used for model downloads (brew install
 huggingface-hub)
 
 TYPICAL WORKFLOW
+  # See what is already on the CDN:
+  acervo list
+
   # Download and publish a model in one step:
   acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit
 
@@ -61,6 +75,7 @@ SUBCOMMANDS:
                           intrusive-memory CDN.
   ship                    Download a model from HuggingFace and mirror it to
                           the CDN.
+  list                    List the model directories present on the CDN.
   manifest                Generate a CDN manifest.json for a local model
                           directory.
   verify                  Verify a local or CDN-hosted model against its
@@ -288,6 +303,37 @@ OPTIONS:
   --version               Show the version.
   -h, --help              Show help information.
 
+```
+
+---
+
+## `acervo list`
+
+```
+OVERVIEW: List the model directories present on the CDN.
+
+Prints one model slug per line for every directory under models/ in the
+R2 bucket. Output is sorted case-insensitively.
+
+This command does not validate models. A listed slug only means a
+directory exists under models/<slug>/; it does not guarantee a complete
+or usable model. Use `acervo verify` for integrity checks.
+
+REQUIRED ENVIRONMENT
+  R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_PUBLIC_URL
+  R2_BUCKET (optional; defaults to intrusive-memory-models)
+
+EXAMPLES
+  acervo list
+  acervo list --bucket my-other-bucket
+
+USAGE: acervo list [--bucket <bucket>] [--endpoint <endpoint>]
+
+OPTIONS:
+  -b, --bucket <bucket>   R2 bucket override (otherwise uses $R2_BUCKET).
+  --endpoint <endpoint>   R2 endpoint override (otherwise uses $R2_ENDPOINT).
+  --version               Show the version.
+  -h, --help              Show help information.
 ```
 
 ---
