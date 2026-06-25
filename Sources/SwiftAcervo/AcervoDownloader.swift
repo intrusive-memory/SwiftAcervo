@@ -718,8 +718,20 @@ extension AcervoDownloader {
       effectiveRequest.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
     }
 
-    // Stream the HTTP response using bytes(for:)
-    let (asyncBytes, response) = try await session.bytes(for: effectiveRequest)
+    // Stream the HTTP response as OS-sized `Data` chunks instead of one
+    // `UInt8` at a time. `bytes(for:)` yields a `UInt8` async sequence, so a
+    // multi-GB model crosses the `AsyncSequence.next()` machinery billions of
+    // times and the download becomes CPU-bound on async-iteration overhead
+    // rather than network/disk bound (issue #69). `chunkedResponseStream`
+    // delivers the identical body via a `URLSessionDataDelegate`, surfacing the
+    // ~16-64 KB chunks the OS hands us; the resume / hashing / progress
+    // bookkeeping below is unchanged, just driven per chunk instead of per
+    // byte. A transport failure here throws a non-`AcervoError`, so the
+    // caller's fallback to `fallbackDownloadFile` is preserved.
+    let (response, byteStream) = try await chunkedResponseStream(
+      for: effectiveRequest,
+      session: session
+    )
 
     // Validate HTTP status: 200 (full body) or 206 (partial). If we sent a
     // Range header and the server responded 200, the server ignored it and
@@ -818,10 +830,12 @@ extension AcervoDownloader {
     buffer.reserveCapacity(streamChunkSize)
 
     do {
-      for try await byte in asyncBytes {
-        buffer.append(byte)
+      for try await chunk in byteStream {
+        buffer.append(chunk)
 
-        // Flush buffer when it reaches chunk size
+        // Flush buffer when it reaches chunk size. Accumulating whole `Data`
+        // chunks (rather than single bytes) preserves the existing 4 MB
+        // write / hash / progress granularity exactly.
         if buffer.count >= streamChunkSize {
           hasher.update(data: buffer)
           try fileHandle.write(contentsOf: buffer)
@@ -923,6 +937,199 @@ extension AcervoDownloader {
         fileIndex: fileIndex,
         totalFiles: totalFiles
       ))
+  }
+}
+
+// MARK: - Chunked Streaming Transport
+
+extension AcervoDownloader {
+
+  /// Streams an HTTP response body as OS-sized `Data` chunks rather than one
+  /// `UInt8` at a time.
+  ///
+  /// `URLSession.bytes(for:)` vends the body as a `UInt8` async sequence; every
+  /// byte crosses the `AsyncSequence.next()` suspension machinery, which makes
+  /// multi-GB model downloads CPU-bound on async-iteration overhead instead of
+  /// network/disk bound (issue #69). This helper instead drives a
+  /// `URLSessionDataTask` through `ChunkedDownloadDelegate`, surfacing the
+  /// whole `Data` chunks the OS delivers (~16-64 KB) via an
+  /// `AsyncThrowingStream`.
+  ///
+  /// The return shape mirrors `bytes(for:)`: the `URLResponse` resolves as soon
+  /// as the response headers arrive (so the caller can run its 200-vs-206
+  /// status checks before consuming the body), and the stream then yields the
+  /// body chunk-by-chunk. A transport failure before the headers arrive is
+  /// thrown from this call; a failure mid-body terminates the returned stream
+  /// (so the active `for try await` throws). Both surface as non-`AcervoError`,
+  /// preserving `downloadFile`'s fallback to `fallbackDownloadFile`.
+  ///
+  /// The injected `session`'s own delegate (e.g. `SecureDownloadDelegate`'s
+  /// redirect rejection) is still consulted for any method this per-task
+  /// delegate does not implement, so the CDN-host security guard is unaffected.
+  ///
+  /// - Parameters:
+  ///   - request: The configured request (including any `Range` header).
+  ///   - session: The session to issue the data task on. Tests may inject a
+  ///     `URLProtocol`-backed mock that delivers the body in multiple chunks.
+  /// - Returns: The response and an `AsyncThrowingStream` of body `Data` chunks.
+  static func chunkedResponseStream(
+    for request: URLRequest,
+    session: URLSession
+  ) async throws -> (URLResponse, AsyncThrowingStream<Data, Error>) {
+    let delegate = ChunkedDownloadDelegate()
+    let task = session.dataTask(with: request)
+    // A per-task delegate (macOS 12 / iOS 15+) receives the data callbacks
+    // without disturbing the session-level delegate used for redirect security.
+    task.delegate = delegate
+    delegate.attachTask(task)
+
+    let stream = AsyncThrowingStream<Data, Error> { continuation in
+      // Cancel the in-flight task if the consumer stops iterating early (e.g.
+      // a disk-write error breaks out of the loop in `streamDownloadFile`).
+      continuation.onTermination = { [delegate] _ in
+        delegate.cancelTask()
+      }
+      delegate.attachStream(continuation)
+    }
+
+    task.resume()
+
+    // Suspend until the response headers arrive (or the task fails first),
+    // matching the `(bytes, response)` ordering of `bytes(for:)`.
+    let response = try await delegate.awaitResponse()
+    return (response, stream)
+  }
+
+  /// Bridges a delegate-driven `URLSessionDataTask` to async `Data`-chunk
+  /// delivery for ``chunkedResponseStream(for:session:)``.
+  ///
+  /// `@unchecked Sendable`: all mutable state is guarded by `lock`, and the
+  /// session invokes the delegate callbacks serially on its delegate queue.
+  final class ChunkedDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+
+    private let lock = NSLock()
+    private var responseContinuation: CheckedContinuation<URLResponse, Error>?
+    private var responseSettled = false
+    private var pendingResponse: URLResponse?
+    private var pendingError: Error?
+    private var streamContinuation: AsyncThrowingStream<Data, Error>.Continuation?
+    private var task: URLSessionTask?
+
+    /// Records the task so the stream's termination handler can cancel it.
+    func attachTask(_ task: URLSessionTask) {
+      lock.lock()
+      defer { lock.unlock() }
+      self.task = task
+    }
+
+    /// Stores the body stream's continuation. Chunks delivered before the
+    /// caller begins iterating are buffered by the stream (`.unbounded`).
+    func attachStream(_ continuation: AsyncThrowingStream<Data, Error>.Continuation) {
+      lock.lock()
+      defer { lock.unlock() }
+      streamContinuation = continuation
+    }
+
+    /// Cancels the underlying task (safe to call from any thread).
+    func cancelTask() {
+      lock.lock()
+      let task = self.task
+      lock.unlock()
+      task?.cancel()
+    }
+
+    /// Suspends until the first response header arrives, or the task fails
+    /// before delivering any response. Awaited exactly once. If the response
+    /// (or failure) already landed before this call — the delegate callbacks
+    /// run on the session's queue and can race ahead of this suspension — it
+    /// resolves immediately from the recorded result rather than hanging.
+    func awaitResponse() async throws -> URLResponse {
+      try await withCheckedThrowingContinuation { continuation in
+        lock.lock()
+        if responseSettled {
+          let response = pendingResponse
+          let error = pendingError
+          lock.unlock()
+          if let response {
+            continuation.resume(returning: response)
+          } else {
+            continuation.resume(throwing: error ?? URLError(.badServerResponse))
+          }
+          return
+        }
+        responseContinuation = continuation
+        lock.unlock()
+      }
+    }
+
+    // MARK: URLSessionDataDelegate
+
+    func urlSession(
+      _ session: URLSession,
+      dataTask: URLSessionDataTask,
+      didReceive response: URLResponse,
+      completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+      lock.lock()
+      let continuation = responseContinuation
+      responseContinuation = nil
+      responseSettled = true
+      pendingResponse = response
+      lock.unlock()
+
+      continuation?.resume(returning: response)
+      completionHandler(.allow)
+    }
+
+    func urlSession(
+      _ session: URLSession,
+      dataTask: URLSessionDataTask,
+      didReceive data: Data
+    ) {
+      lock.lock()
+      let continuation = streamContinuation
+      lock.unlock()
+      continuation?.yield(data)
+    }
+
+    func urlSession(
+      _ session: URLSession,
+      task: URLSessionTask,
+      didCompleteWithError error: Error?
+    ) {
+      lock.lock()
+      let responseContinuation = self.responseContinuation
+      self.responseContinuation = nil
+      let alreadySettled = responseSettled
+      if !alreadySettled {
+        responseSettled = true
+        pendingError = error
+      }
+      let streamContinuation = self.streamContinuation
+      self.streamContinuation = nil
+      self.task = nil
+      lock.unlock()
+
+      if let error {
+        // Transport failure. If the headers never arrived, surface the error to
+        // `awaitResponse()`; otherwise terminate the body stream so the active
+        // iteration throws (the KEEP-the-part-file path in streamDownloadFile).
+        if !alreadySettled {
+          responseContinuation?.resume(throwing: error)
+        }
+        streamContinuation?.finish(throwing: error)
+      } else {
+        // Clean completion. A successful HTTP exchange always delivers the
+        // response before completing, so `responseContinuation` is normally
+        // nil here; the guard only fires for the degenerate "finished without
+        // a response" case, where we surface a transport error rather than
+        // leave `awaitResponse()` suspended forever.
+        if !alreadySettled {
+          responseContinuation?.resume(throwing: URLError(.badServerResponse))
+        }
+        streamContinuation?.finish()
+      }
+    }
   }
 }
 
