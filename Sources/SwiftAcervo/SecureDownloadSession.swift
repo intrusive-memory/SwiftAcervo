@@ -17,7 +17,10 @@ import Foundation
 final class SecureDownloadDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
 
   /// The allowed CDN host for all model downloads.
-  static let allowedHost = "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev"
+  ///
+  /// Derived from the consumer-supplied `Acervo.cdnBaseURL`; there is no
+  /// hardcoded host. See Docs/CDN_CONFIGURATION.md.
+  static var allowedHost: String { Acervo.cdnAllowedHost }
 
   func urlSession(
     _ session: URLSession,

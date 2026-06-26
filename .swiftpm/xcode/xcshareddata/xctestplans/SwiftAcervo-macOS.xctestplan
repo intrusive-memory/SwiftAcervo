@@ -8,6 +8,14 @@
           {
             "key" : "ACERVO_APP_GROUP_ID",
             "value" : "group.acervo.testbundle.default"
+          },
+          {
+            "key" : "ACERVO_CDN_BASE_URL",
+            "value" : "https://cdn.intrusive-memory.productions/models"
+          },
+          {
+            "key" : "R2_PUBLIC_URL",
+            "value" : "https://cdn.intrusive-memory.productions"
           }
         ]
       }

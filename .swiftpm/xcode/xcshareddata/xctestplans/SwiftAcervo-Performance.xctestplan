@@ -10,6 +10,10 @@
             "value" : "group.acervo.testbundle.default"
           },
           {
+            "key" : "ACERVO_CDN_BASE_URL",
+            "value" : "https://cdn.intrusive-memory.productions/models"
+          },
+          {
             "key" : "ACERVO_PERF_NET",
             "value" : "wifi"
           },

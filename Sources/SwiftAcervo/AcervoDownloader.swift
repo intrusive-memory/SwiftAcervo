@@ -15,7 +15,9 @@
 // legacy download(for:) + verifyAgainstManifest pattern.
 //
 // CDN URL format:
-//   https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/{slug}/{fileName}
+//   https://<your-cdn>/models/{slug}/{fileName}
+// The base (`https://<your-cdn>/models`) is consumer-supplied via
+// `Acervo.cdnBaseURL`; there is no hardcoded host. See Docs/CDN_CONFIGURATION.md.
 //
 // All downloads use SecureDownloadSession which rejects redirects
 // to non-CDN domains.
@@ -29,9 +31,6 @@ import OSLog
 /// All methods are static. This struct is not publicly exposed; consumers
 /// use `Acervo.download()` and related public API instead.
 struct AcervoDownloader: Sendable {
-
-  /// The base URL for the CDN model repository.
-  static let cdnBaseURL = "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models"
 
   /// Logger for download-related diagnostics.
   private static let logger = Logger(
@@ -112,7 +111,7 @@ extension AcervoDownloader {
   /// - Returns: The fully qualified CDN download URL.
   static func buildURL(modelId: String, fileName: String) -> URL {
     let slug = Acervo.slugify(modelId)
-    var url = URL(string: cdnBaseURL)!
+    var url = URL(string: Acervo.cdnBaseURL)!
       .appendingPathComponent(slug)
 
     // Handle subdirectory files by appending each path component separately
@@ -130,7 +129,7 @@ extension AcervoDownloader {
   /// - Returns: The URL of `manifest.json` on the CDN.
   static func buildManifestURL(modelId: String) -> URL {
     let slug = Acervo.slugify(modelId)
-    return URL(string: cdnBaseURL)!
+    return URL(string: Acervo.cdnBaseURL)!
       .appendingPathComponent(slug)
       .appendingPathComponent("manifest.json")
   }
