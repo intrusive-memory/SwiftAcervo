@@ -609,6 +609,12 @@ private func perfRunRepeatableTier(
     modelId: modelId, tier: tier, container: containerLabel, cache: "cold",
     samples: samples, singleRun: false
   )
+
+  // ----- Baseline regression check / write (§6) -----
+  let medianThru = perfMedian(samples.map { s -> Double in
+    s.wallSeconds > 0 ? Double(s.verifiedBytes) / s.wallSeconds / 1_048_576 : 0
+  })
+  perfApplyBaseline(tier: tier, modelId: modelId, medianThroughputMBps: medianThru)
 }
 
 /// Times a download of `modelId` from `baseDirectory` while capturing
@@ -667,6 +673,148 @@ private func perfMeasureDownloadWithFileTiming(
     ),
     files: fileCollector.fileTimings
   )
+}
+
+// MARK: - Baseline Regression Support
+
+/// A single per-tier performance baseline entry serialized by BASELINE_WRITE.
+private struct PerfBaselineEntry: Codable {
+  /// The model id for which this tier was measured.
+  let modelId: String
+  /// Median throughput in MB/s (the single-run throughput for the large tier).
+  let medianThroughputMBps: Double
+  /// ISO-8601 timestamp when this baseline was captured.
+  let capturedAt: String
+}
+
+/// The complete baseline document. Keyed by tier name ("tiny", "small", "large").
+private struct PerfBaseline: Codable {
+  var entries: [String: PerfBaselineEntry]
+}
+
+/// Serialization guard: prevents concurrent @Test functions from racing on
+/// the baseline file when Swift Testing's parallel scheduler runs multiple
+/// tiers simultaneously.
+private let perfBaselineLock = NSLock()
+
+/// Reads and decodes the baseline JSON at `path`. Returns nil without failing
+/// when the file is absent (first BASELINE_WRITE run) or malformed.
+private func perfReadBaseline(from path: String) -> PerfBaseline? {
+  let url = URL(fileURLWithPath: path)
+  guard let data = try? Data(contentsOf: url) else { return nil }
+  return try? JSONDecoder().decode(PerfBaseline.self, from: data)
+}
+
+/// Merges one tier entry into the baseline file at `path` using a
+/// read–modify–write, serialised by `perfBaselineLock`. Creates the file when
+/// absent; atomically writes on success; prints a `[PERF]` diagnostic on failure.
+private func perfWriteBaselineEntry(tier: String, entry: PerfBaselineEntry, to path: String) {
+  perfBaselineLock.lock()
+  defer { perfBaselineLock.unlock() }
+
+  var baseline = perfReadBaseline(from: path) ?? PerfBaseline(entries: [:])
+  baseline.entries[tier] = entry
+
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+  guard let data = try? encoder.encode(baseline) else {
+    print("[PERF] BASELINE_WRITE encode-error tier=\(tier) path=\(path)")
+    return
+  }
+  do {
+    try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    print("[PERF] BASELINE_WRITE tier=\(tier) path=\(path)")
+  } catch {
+    print("[PERF] BASELINE_WRITE write-error \(error) tier=\(tier) path=\(path)")
+  }
+}
+
+/// Compares `currentMBps` against the baseline entry for `tier`+`modelId`.
+///
+/// - When the measured throughput is below `baseline.medianThroughputMBps
+///   × (1 – margin)`, a `[PERF] REGRESSION …` line is printed.
+/// - `ACERVO_PERF_STRICT=1` is the ONLY condition under which a test is failed
+///   via `Issue.record`; without it the function only warns (print-and-continue).
+/// - The margin comes from `ACERVO_PERF_MARGIN` (fractional, default 0.25 = 25%).
+/// - The comparison is ALWAYS against the baseline value — NEVER against a
+///   hardcoded absolute MB/s literal.
+private func perfCheckRegression(
+  tier: String,
+  modelId: String,
+  currentMBps: Double,
+  baseline: PerfBaseline
+) {
+  guard let entry = baseline.entries[tier], entry.modelId == modelId else {
+    print(
+      "[PERF] BASELINE no-entry tier=\(tier) model=\(modelId) — skipping comparison"
+    )
+    return
+  }
+
+  let env = ProcessInfo.processInfo.environment
+  let margin = Double(env["ACERVO_PERF_MARGIN"] ?? "") ?? 0.25
+  let threshold = entry.medianThroughputMBps * (1.0 - margin)
+
+  guard currentMBps < threshold else {
+    print(
+      "[PERF] BASELINE OK tier=\(tier) model=\(modelId)"
+        + " current=\(String(format: "%.2f", currentMBps))MB/s"
+        + " baseline=\(String(format: "%.2f", entry.medianThroughputMBps))MB/s"
+    )
+    return
+  }
+
+  let pctDrop =
+    entry.medianThroughputMBps > 0
+    ? (entry.medianThroughputMBps - currentMBps) / entry.medianThroughputMBps * 100.0
+    : 0.0
+  let msg =
+    "[PERF] REGRESSION tier=\(tier) model=\(modelId)"
+    + " current=\(String(format: "%.2f", currentMBps))MB/s"
+    + " baseline=\(String(format: "%.2f", entry.medianThroughputMBps))MB/s"
+    + " drop=\(String(format: "%.1f", pctDrop))%"
+    + " margin=\(String(format: "%.0f", margin * 100))%"
+    + " threshold=\(String(format: "%.2f", threshold))MB/s"
+  print(msg)
+  if env["ACERVO_PERF_STRICT"] == "1" {
+    Issue.record("\(msg)")
+  }
+}
+
+/// Runs the baseline read-compare-write cycle for a given tier after throughput
+/// medians have been computed. Call this inside a gated code path (i.e. only
+/// when `ACERVO_PERF_TESTS` is set).
+///
+/// - When `ACERVO_PERF_BASELINE` is set, loads the baseline and calls
+///   `perfCheckRegression` — which warns (or fails in strict mode) on regression.
+/// - When `ACERVO_PERF_BASELINE_WRITE` is set, serialises the current median
+///   into the baseline file via `perfWriteBaselineEntry`.
+private func perfApplyBaseline(
+  tier: String,
+  modelId: String,
+  medianThroughputMBps: Double
+) {
+  let env = ProcessInfo.processInfo.environment
+  if let baselinePath = env["ACERVO_PERF_BASELINE"] {
+    if let baseline = perfReadBaseline(from: baselinePath) {
+      perfCheckRegression(
+        tier: tier, modelId: modelId,
+        currentMBps: medianThroughputMBps, baseline: baseline
+      )
+    } else {
+      print(
+        "[PERF] BASELINE unreadable path=\(baselinePath) tier=\(tier) — skipping comparison"
+      )
+    }
+  }
+  if let writePath = env["ACERVO_PERF_BASELINE_WRITE"] {
+    let entry = PerfBaselineEntry(
+      modelId: modelId,
+      medianThroughputMBps: medianThroughputMBps,
+      capturedAt: ISO8601DateFormatter().string(from: Date())
+    )
+    perfWriteBaselineEntry(tier: tier, entry: entry, to: writePath)
+  }
 }
 
 // MARK: - Performance Suite
@@ -830,5 +978,11 @@ struct StreamingPerformanceTests {
       modelId: largeModelId, tier: "large", container: containerLabel, cache: "cold",
       samples: [sample], singleRun: true
     )
+
+    // ----- Baseline regression check / write (§6) -----
+    let singleThru: Double =
+      sample.wallSeconds > 0
+      ? Double(sample.verifiedBytes) / sample.wallSeconds / 1_048_576 : 0
+    perfApplyBaseline(tier: "large", modelId: largeModelId, medianThroughputMBps: singleThru)
   }
 }
