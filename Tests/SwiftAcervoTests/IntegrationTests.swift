@@ -351,7 +351,7 @@ struct SubdirectoryFileDownloadIntegrationTests {
 
     // Verify the URL includes the subdirectory path
     #expect(url.absoluteString.contains("speech_tokenizer/config.json"))
-    #expect(url.absoluteString.hasPrefix("https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/"))
+    #expect(url.absoluteString.hasPrefix(Acervo.cdnBaseURL))
   }
 
   @Test("downloadFiles creates subdirectory for nested file path")

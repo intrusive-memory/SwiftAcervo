@@ -9,7 +9,7 @@ struct SecureDownloadSessionTests {
 
   @Test("allowedHost matches the CDN domain")
   func allowedHost() {
-    #expect(SecureDownloadDelegate.allowedHost == "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev")
+    #expect(SecureDownloadDelegate.allowedHost == Acervo.cdnAllowedHost)
   }
 
   @Test("SecureDownloadSession shared instance is not nil")
@@ -27,7 +27,7 @@ struct SecureDownloadSessionTests {
 
     let response = HTTPURLResponse(
       url: URL(
-        string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/config.json")!,
+        string: "\(Acervo.cdnBaseURL)/org_repo/config.json")!,
       statusCode: 301,
       httpVersion: nil,
       headerFields: nil
@@ -55,12 +55,12 @@ struct SecureDownloadSessionTests {
   func allowCDNRedirect() async {
     let delegate = SecureDownloadDelegate()
     let redirectURL = URL(
-      string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/other-path")!
+      string: "\(Acervo.cdnBaseURL)/org_repo/other-path")!
     let redirectRequest = URLRequest(url: redirectURL)
 
     let response = HTTPURLResponse(
       url: URL(
-        string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/config.json")!,
+        string: "\(Acervo.cdnBaseURL)/org_repo/config.json")!,
       statusCode: 301,
       httpVersion: nil,
       headerFields: nil

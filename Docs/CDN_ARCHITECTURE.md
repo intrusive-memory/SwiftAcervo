@@ -1,3 +1,7 @@
+---
+type: reference
+---
+
 # CDN_ARCHITECTURE.md — How CDN Downloads Work
 
 **For**: Understanding the security model, integrity verification, and technical details of how SwiftAcervo downloads models.
@@ -8,7 +12,7 @@
 
 All SwiftAcervo downloads come exclusively from a private Cloudflare R2 CDN. Every file is verified with per-file SHA-256 checksums before being moved to the destination directory. Redirects to non-CDN domains are rejected.
 
-**CDN Base URL**: `https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/`
+**CDN Base URL**: consumer-supplied via `Acervo.cdnBaseURL` — there is **no hardcoded default**. See [CDN_CONFIGURATION.md](CDN_CONFIGURATION.md) for the contract (env var `ACERVO_CDN_BASE_URL` / Info.plist key `AcervoCDNBaseURL`). The running example below uses `https://cdn.intrusive-memory.productions/models`.
 
 ---
 

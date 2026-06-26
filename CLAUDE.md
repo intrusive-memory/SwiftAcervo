@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 
 **Project**: SwiftAcervo - Shared AI model discovery and management
 
-**Version**: 0.20.1
+**Version**: 0.21.0
 
 **Platforms**: iOS 26.0+, macOS 26.0+
 
@@ -34,6 +34,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - ONLY supports iOS 26.0+ and macOS 26.0+ (NEVER add code for older platforms)
 - Zero external dependencies (Foundation + CryptoKit only)
 - All downloads go through the private R2 CDN
+- The CDN base URL is **consumer-supplied with no hardcoded default** — set via `ACERVO_CDN_BASE_URL` (CLI/tests/CI) or the `AcervoCDNBaseURL` Info.plist key (UI apps); a missing/malformed value traps with `fatalError`. See [Docs/CDN_CONFIGURATION.md](Docs/CDN_CONFIGURATION.md).
 - `config.json` presence is the universal model validity marker
 - Canonical path: `~/Library/Group Containers/<group-id>/SharedModels/{org}_{repo}/`. The group ID is supplied per-consumer via `com.apple.security.application-groups` entitlement (UI apps) or the `ACERVO_APP_GROUP_ID` environment variable (CLIs/tests). No fallback — `Acervo.sharedModelsDirectory` traps with `fatalError` if neither source is configured.
 - Manifest-first file selection: consumers do not know what files exist until the CDN manifest returns; the manifest is the sole authoritative source, and names not in it throw `AcervoError.fileNotInManifest`.

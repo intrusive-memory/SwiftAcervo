@@ -32,8 +32,12 @@ struct VerifyCommand: AsyncParsableCommand {
         every local file against the CDN manifest. Useful for auditing a
         staging tree against what was previously published.
 
+      REQUIRED ENVIRONMENT VARIABLES (CDN mode only)
+        R2_PUBLIC_URL   Public CDN base URL, domain only, no /models suffix
+                        (e.g. https://cdn.intrusive-memory.productions).
+                        No default — CDN mode fails if it is unset.
+
       OPTIONAL ENVIRONMENT VARIABLES (CDN mode only)
-        R2_PUBLIC_URL   Public CDN base URL (default: https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev)
         STAGING_DIR     Staging root (default: /tmp/acervo-staging)
 
       EXAMPLES
@@ -132,7 +136,7 @@ struct VerifyCommand: AsyncParsableCommand {
       throw ExitCode.failure
     }
 
-    let publicBase = Self.resolvePublicBaseURL()
+    let publicBase = try Self.resolvePublicBaseURL()
 
     let manifest: CDNManifest
     do {
@@ -196,13 +200,30 @@ struct VerifyCommand: AsyncParsableCommand {
     return URL(fileURLWithPath: "/tmp/acervo-staging", isDirectory: true)
   }
 
-  private static func resolvePublicBaseURL() -> URL {
-    if let raw = ProcessInfo.processInfo.environment["R2_PUBLIC_URL"],
-      let url = URL(string: raw)
-    {
-      return url
+  /// Resolves the public CDN base URL (domain-only convention; the `/models`
+  /// segment is appended later by `fetchCDNManifest`). Sourced solely from the
+  /// `R2_PUBLIC_URL` environment variable — there is no hardcoded default. A
+  /// missing or malformed value is a configuration error.
+  ///
+  /// Note: this is intentionally NOT wired to `Acervo.cdnBaseURL`. That value
+  /// includes the `/models` path prefix, whereas this CLI convention is
+  /// domain-only and appends `/models` itself.
+  private static func resolvePublicBaseURL() throws -> URL {
+    guard let raw = ProcessInfo.processInfo.environment["R2_PUBLIC_URL"], !raw.isEmpty,
+      let url = URL(string: raw), url.scheme != nil, url.host != nil
+    else {
+      FileHandle.standardError.write(
+        Data(
+          """
+          error: R2_PUBLIC_URL is not set (or is malformed).
+          Set it to the public CDN base URL, domain only, no /models suffix, e.g.:
+              export R2_PUBLIC_URL=https://cdn.intrusive-memory.productions
+
+          """.utf8)
+      )
+      throw ExitCode.failure
     }
-    return URL(string: "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev")!
+    return url
   }
 
   private static func slug(from modelId: String) -> String {
