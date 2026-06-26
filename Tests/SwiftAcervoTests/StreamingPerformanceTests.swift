@@ -140,6 +140,74 @@ private struct PerfSample {
   let ttfbSeconds: Double
 }
 
+/// Per-file throughput sample captured from progress callbacks.
+private struct PerfFileSample {
+  let fileName: String
+  let totalBytes: Int64
+  let durationSeconds: Double
+  var throughputMBps: Double {
+    totalBytes > 0 && durationSeconds > 0
+      ? Double(totalBytes) / durationSeconds / 1_048_576
+      : 0
+  }
+}
+
+/// Thread-safe collector for per-file timing. Tracks the first-byte and
+/// completion instants for each file index in the progress stream, so that
+/// per-file throughput can be computed after the download completes.
+private final class PerfFileTimingCollector: @unchecked Sendable {
+  private let lock = NSLock()
+  private var _firstByteInstant: ContinuousClock.Instant?
+  private var _fileNames: [Int: String] = [:]
+  private var _fileTotalBytes: [Int: Int64] = [:]
+  private var _fileStartInstant: [Int: ContinuousClock.Instant] = [:]
+  private var _fileEndInstant: [Int: ContinuousClock.Instant] = [:]
+
+  func record(_ report: AcervoDownloadProgress, at instant: ContinuousClock.Instant) {
+    lock.lock()
+    defer { lock.unlock() }
+    let idx = report.fileIndex
+    if _firstByteInstant == nil, report.bytesDownloaded > 0 {
+      _firstByteInstant = instant
+    }
+    _fileNames[idx] = report.fileName
+    if let total = report.totalBytes {
+      _fileTotalBytes[idx] = total
+    }
+    // Stamp the first byte arrival for this file (start of per-file window).
+    if _fileStartInstant[idx] == nil, report.bytesDownloaded > 0 {
+      _fileStartInstant[idx] = instant
+    }
+    // Stamp completion when all bytes for this file have arrived.
+    if let total = report.totalBytes, total > 0, report.bytesDownloaded >= total {
+      _fileEndInstant[idx] = instant
+    }
+  }
+
+  var firstByteInstant: ContinuousClock.Instant? {
+    lock.lock()
+    defer { lock.unlock() }
+    return _firstByteInstant
+  }
+
+  /// Returns per-file timing samples for files where both first-byte and
+  /// completion instants were captured. Files skipped by the cache-hit path
+  /// will not appear here (no bytes transferred → no start instant stamped).
+  var fileTimings: [PerfFileSample] {
+    lock.lock()
+    defer { lock.unlock() }
+    return _fileStartInstant.keys.sorted().compactMap { idx -> PerfFileSample? in
+      guard let name = _fileNames[idx],
+            let total = _fileTotalBytes[idx],
+            let start = _fileStartInstant[idx],
+            let end = _fileEndInstant[idx]
+      else { return nil }
+      let duration = perfSeconds(end - start)
+      return PerfFileSample(fileName: name, totalBytes: total, durationSeconds: duration)
+    }
+  }
+}
+
 // MARK: - Container Modes
 
 /// Active on-disk container mode for a measurement run.
@@ -386,6 +454,7 @@ private func perfEmitSummary(
   modelId: String,
   tier: String,
   container: String,
+  cache: String,
   samples: [PerfSample],
   singleRun: Bool
 ) {
@@ -424,7 +493,7 @@ private func perfEmitSummary(
       + " thruMin=\(fmt2(throughputs.min() ?? thruMid))MB/s"
       + " thruMax=\(fmt2(throughputs.max() ?? thruMid))MB/s"
       + " ttfb=\(fmt(ttfbMid))s"
-      + " cache=cold"
+      + " cache=\(cache)"
       + " chunked=on"
       + " verified=yes"
       + " net=\(net)"
@@ -432,6 +501,61 @@ private func perfEmitSummary(
       + " machine=\(machine)"
       + " os=\(osVersion)"
   )
+}
+
+/// Times one warm (cache-hit) pass: files MUST already be on disk. The
+/// cold-vs-warm ratio test calls this immediately after the cold pass, against
+/// the same temp root (so the model dir is already populated). Because the
+/// warm path skips byte transfer, there is NO residue assertion here.
+///
+/// Only public `Acervo.*` entry points are called inside the timed window.
+private func perfMeasureWarmPass(
+  modelId: String,
+  baseDirectory: URL
+) async throws -> PerfSample {
+  let collector = PerfProgressCollector()
+  let clock = ContinuousClock()
+
+  // ----- Phase 2 (warm): timed download via the PUBLIC Acervo API -----
+  let start = clock.now
+  try await Acervo.download(
+    modelId,
+    files: [],
+    progress: { report in
+      collector.record(report, at: clock.now)
+    },
+    in: baseDirectory
+  )
+  let end = clock.now
+  // <<< CLOCK STOPS HERE. >>>
+
+  let wallSeconds = perfSeconds(end - start)
+  let ttfb: Double = {
+    guard let first = collector.firstByteInstant else { return 0 }
+    return perfSeconds(first - start)
+  }()
+
+  // Byte count from manifest (outside the timed window — post-clock).
+  let manifest = try await Acervo.fetchManifest(for: modelId)
+  let verifiedBytes = manifest.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
+
+  return PerfSample(verifiedBytes: verifiedBytes, wallSeconds: wallSeconds, ttfbSeconds: ttfb)
+}
+
+/// Emits one greppable `[PERF]` line per file for which per-file timing was
+/// captured. Lines are tagged with `file=<name>` so they are distinct from
+/// the per-tier summary lines (which carry `model=` as the leading key).
+private func perfEmitPerFileLines(timings: [PerfFileSample], modelId: String) {
+  for t in timings {
+    print(
+      "[PERF] file=\(t.fileName)"
+        + " model=\(modelId)"
+        + " bytes=\(t.totalBytes)"
+        + " wall=\(String(format: "%.3f", t.durationSeconds))s"
+        + " thru=\(String(format: "%.2f", t.throughputMBps))MB/s"
+        + " cache=cold"
+    )
+  }
 }
 
 /// Runs a repeatable tier (tiny/small) for N≥5 cold iterations and emits a
@@ -482,8 +606,66 @@ private func perfRunRepeatableTier(
   }
 
   perfEmitSummary(
-    modelId: modelId, tier: tier, container: containerLabel,
+    modelId: modelId, tier: tier, container: containerLabel, cache: "cold",
     samples: samples, singleRun: false
+  )
+}
+
+/// Times a download of `modelId` from `baseDirectory` while capturing
+/// per-file timing from progress callbacks. Returns the overall `PerfSample`
+/// and the per-file breakdown.
+///
+/// Only public `Acervo.*` entry points are called inside the timed window.
+/// The independent on-disk validation (manifest comparison) runs AFTER the
+/// clock stops so it never inflates wall time.
+private func perfMeasureDownloadWithFileTiming(
+  modelId: String,
+  baseDirectory: URL
+) async throws -> (overall: PerfSample, files: [PerfFileSample]) {
+  let slug = Acervo.slugify(modelId)
+  let modelDir = baseDirectory.appendingPathComponent(slug)
+
+  // ----- Phase 1: residue-free cold start -----
+  let residueExists = FileManager.default.fileExists(atPath: modelDir.path)
+  #expect(
+    !residueExists,
+    "Residue found at \(modelDir.path) — SharedModels root must be pristine for \(modelId)"
+  )
+
+  // ----- Phase 2: timed download via the PUBLIC Acervo API -----
+  let fileCollector = PerfFileTimingCollector()
+  let overallCollector = PerfProgressCollector()
+  let clock = ContinuousClock()
+
+  let start = clock.now
+  try await Acervo.download(
+    modelId,
+    files: [],
+    progress: { report in
+      let now = clock.now
+      fileCollector.record(report, at: now)
+      overallCollector.record(report, at: now)
+    },
+    in: baseDirectory
+  )
+  let end = clock.now
+  // <<< CLOCK STOPS HERE. Everything below runs after the timed window. >>>
+
+  let wallSeconds = perfSeconds(end - start)
+  let ttfb: Double = {
+    guard let first = overallCollector.firstByteInstant else { return 0 }
+    return perfSeconds(first - start)
+  }()
+
+  // ----- Phase 3: independent on-disk validation (OUTSIDE the clock) -----
+  let manifest = try await Acervo.fetchManifest(for: modelId)
+  let verifiedBytes = manifest.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
+
+  return (
+    overall: PerfSample(
+      verifiedBytes: verifiedBytes, wallSeconds: wallSeconds, ttfbSeconds: ttfb
+    ),
+    files: fileCollector.fileTimings
   )
 }
 
@@ -513,6 +695,81 @@ struct StreamingPerformanceTests {
     }
     try await perfRunRepeatableTier(
       modelId: smallModelId, files: [], tier: "small"
+    )
+  }
+
+  /// Cold-vs-warm cache ratio for the small-tier model.
+  ///
+  /// Performs ONE cold pass (fresh temp root → full CDN download) then ONE
+  /// warm pass (same root, files already on disk → cache-hit skip path).
+  /// Emits a `[PERF]` line for each pass with the correct `cache=cold|warm`
+  /// tag, then prints `coldVsWarmRatio` (cold wall / warm wall).
+  @Test("Cold-vs-warm cache ratio for small-tier model (gated)")
+  func coldVsWarmCacheRatio() async throws {
+    guard ProcessInfo.processInfo.environment["ACERVO_PERF_TESTS"] != nil else {
+      return
+    }
+    guard !smallModelId.isEmpty else { return }
+
+    let tempBase = try makeTempSharedModels()
+    defer { cleanupTempDirectory(tempBase) }
+
+    // ----- COLD PASS -----
+    let coldSample = try await perfMeasureDownload(
+      modelId: smallModelId, files: [], baseDirectory: tempBase, useSharedDirectory: false
+    )
+    perfEmitSummary(
+      modelId: smallModelId, tier: "small", container: "temp", cache: "cold",
+      samples: [coldSample], singleRun: true
+    )
+
+    // ----- WARM PASS (same root — files already present; cache-hit path) -----
+    let warmSample = try await perfMeasureWarmPass(
+      modelId: smallModelId, baseDirectory: tempBase
+    )
+    perfEmitSummary(
+      modelId: smallModelId, tier: "small", container: "temp", cache: "warm",
+      samples: [warmSample], singleRun: true
+    )
+
+    // ----- Ratio -----
+    let coldWall = coldSample.wallSeconds
+    let warmWall = max(warmSample.wallSeconds, 0.001)  // guard against division by zero
+    let ratio = coldWall / warmWall
+    print(
+      "[PERF] coldVsWarmRatio=\(String(format: "%.2f", ratio))"
+        + " model=\(smallModelId)"
+        + " coldWall=\(String(format: "%.3f", coldWall))s"
+        + " warmWall=\(String(format: "%.3f", warmSample.wallSeconds))s"
+    )
+  }
+
+  /// Per-component (per-file) throughput for the small-tier model.
+  ///
+  /// Downloads `smallModelId` once (cold, fresh temp root) while capturing
+  /// per-file timing from `AcervoDownloadProgress` callbacks. Emits one
+  /// greppable `[PERF] file=…` line per file, then one overall summary line.
+  @Test("Per-component (per-file) throughput for small-tier model (gated)")
+  func perComponentThroughput() async throws {
+    guard ProcessInfo.processInfo.environment["ACERVO_PERF_TESTS"] != nil else {
+      return
+    }
+    guard !smallModelId.isEmpty else { return }
+
+    let tempBase = try makeTempSharedModels()
+    defer { cleanupTempDirectory(tempBase) }
+
+    let (overall, fileTimings) = try await perfMeasureDownloadWithFileTiming(
+      modelId: smallModelId, baseDirectory: tempBase
+    )
+
+    // Emit one greppable line per file (MB/s per component).
+    perfEmitPerFileLines(timings: fileTimings, modelId: smallModelId)
+
+    // Emit the overall per-run summary line.
+    perfEmitSummary(
+      modelId: smallModelId, tier: "small", container: "temp", cache: "cold",
+      samples: [overall], singleRun: true
     )
   }
 
@@ -570,7 +827,7 @@ struct StreamingPerformanceTests {
 
     // Large tier runs ONCE — labeled stat=single in the output (§5).
     perfEmitSummary(
-      modelId: largeModelId, tier: "large", container: containerLabel,
+      modelId: largeModelId, tier: "large", container: containerLabel, cache: "cold",
       samples: [sample], singleRun: true
     )
   }
