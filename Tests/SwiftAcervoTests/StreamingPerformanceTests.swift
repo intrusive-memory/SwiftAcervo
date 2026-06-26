@@ -40,11 +40,11 @@
 import Foundation
 import Testing
 
-#if canImport(Darwin)
-import Darwin
-#endif
-
 @testable import SwiftAcervo
+
+#if canImport(Darwin)
+  import Darwin
+#endif
 
 // MARK: - Performance Test Helpers
 
@@ -70,19 +70,19 @@ private func cleanupTempDirectory(_ url: URL) {
 /// platforms it is the device model identifier.
 private func perfMachineModel() -> String {
   #if canImport(Darwin)
-  var size = 0
-  guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else {
-    return "unknown"
-  }
-  var buffer = [CChar](repeating: 0, count: size)
-  guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else {
-    return "unknown"
-  }
-  // Decode up to (not including) the NUL terminator — the non-deprecated form.
-  let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-  return String(decoding: bytes, as: UTF8.self)
+    var size = 0
+    guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else {
+      return "unknown"
+    }
+    var buffer = [CChar](repeating: 0, count: size)
+    guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else {
+      return "unknown"
+    }
+    // Decode up to (not including) the NUL terminator — the non-deprecated form.
+    let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    return String(decoding: bytes, as: UTF8.self)
   #else
-  return "unknown"
+    return "unknown"
   #endif
 }
 
@@ -198,9 +198,9 @@ private final class PerfFileTimingCollector: @unchecked Sendable {
     defer { lock.unlock() }
     return _fileStartInstant.keys.sorted().compactMap { idx -> PerfFileSample? in
       guard let name = _fileNames[idx],
-            let total = _fileTotalBytes[idx],
-            let start = _fileStartInstant[idx],
-            let end = _fileEndInstant[idx]
+        let total = _fileTotalBytes[idx],
+        let start = _fileStartInstant[idx],
+        let end = _fileEndInstant[idx]
       else { return nil }
       let duration = perfSeconds(end - start)
       return PerfFileSample(fileName: name, totalBytes: total, durationSeconds: duration)
@@ -315,7 +315,9 @@ private func perfTeardownCanonicalContainer(_ container: PerfCanonicalContainer)
   let path = root.path
   // Guard 1: must be the `SharedModels` leaf of the testing group id.
   guard root.lastPathComponent == "SharedModels" else { return }
-  guard !container.testingGroupId.isEmpty, path.contains("/\(container.testingGroupId)/") else { return }
+  guard !container.testingGroupId.isEmpty, path.contains("/\(container.testingGroupId)/") else {
+    return
+  }
   // Guard 2: must NOT be the real container's tree.
   if let realGroupId = container.realGroupId, !realGroupId.isEmpty,
     path.contains("/\(realGroupId)/")
@@ -410,7 +412,9 @@ private func perfMeasureDownload(
     atPath: modelDir.path,
     isDirectory: &isDirectory
   )
-  #expect(dirExists && isDirectory.boolValue, "Canonical model directory should exist at \(modelDir.path)")
+  #expect(
+    dirExists && isDirectory.boolValue, "Canonical model directory should exist at \(modelDir.path)"
+  )
 
   // config.json is the universal model-validity marker (downloaded in every tier).
   let configPath = modelDir.appendingPathComponent("config.json")
@@ -611,9 +615,10 @@ private func perfRunRepeatableTier(
   )
 
   // ----- Baseline regression check / write (§6) -----
-  let medianThru = perfMedian(samples.map { s -> Double in
-    s.wallSeconds > 0 ? Double(s.verifiedBytes) / s.wallSeconds / 1_048_576 : 0
-  })
+  let medianThru = perfMedian(
+    samples.map { s -> Double in
+      s.wallSeconds > 0 ? Double(s.verifiedBytes) / s.wallSeconds / 1_048_576 : 0
+    })
   perfApplyBaseline(tier: tier, modelId: modelId, medianThroughputMBps: medianThru)
 }
 
