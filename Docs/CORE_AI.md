@@ -1,3 +1,7 @@
+---
+type: reference
+---
+
 # CORE_AI.md — SwiftAcervo in the macOS 27 / iOS 27 era
 
 **Status:** analysis & recommendation. Nothing here is implemented yet.
@@ -199,6 +203,34 @@ These are **not competing schemas** — they describe different layers and coexi
 2. **Apple's AOT story is an Acervo-shaped hole.** `coreai-build` emits one `.aimodelc` *per device architecture*, and Apple's guidance is literally *"host the compiled assets remotely and download the matching variant"* via **Background Assets** (a mature framework since 2022 — see §5c). That is Acervo's job — and Acervo adds the **per-file integrity verification Background Assets lacks**. A manifest can list `MyModel.<arch>.aimodelc` entries; the consumer reads `AIModel.deviceArchitectureName`, then fetches + verifies only the matching one. This is the strongest synergy in the whole analysis.
 3. **The `config.json` validity marker breaks for Core AI models** (affects R1). A `.aimodel`/`.aimodelc` model has no `config.json`; its validity marker is the bundle's own `AIModelAsset.isValid(at:)`. Acervo's universal `config.json`-presence rule must special-case Core AI assets.
 4. **Hash the bundle opaque, not per-internal-file.** `.aimodel` is a directory, but since its internals are undocumented and Core AI treats it as one unit, mirroring it as a single opaque blob (one SHA-256) is simpler and loses nothing. Per-internal-file hashing buys no verifiable guarantee.
+
+---
+
+## 5b-bis. `.mlpackage` (Core ML) vs. `.aimodel` (Core AI) — the spec axis
+
+A natural question when sizing up `.aimodel`: how does it compare to Core ML's older `.mlpackage`? On the one dimension that matters most to Acervo — *is there a published spec we can parse and verify against* — they are **opposites**.
+
+**`.mlpackage` is fully and openly specified; `.aimodel` is not.**
+
+- **Container.** Apple documents `.mlpackage` as "a file-system structure that can store a model in separate files, similar to an app bundle… separation of a model's architecture from its weights and biases." It is an OPC-style directory: a root `Manifest.json`, a `Data/com.apple.CoreML/` folder holding the model spec (`model.mlmodel`) and weights (`weights/weight.bin`) as **separate files**, plus editable metadata. (`.aimodel` is an opaque directory bundle with an undocumented internal layout — see §5b.)
+- **Model schema.** `coremltools` ships the **complete protobuf schema** — `Model.proto`, `MIL.proto`, and ~37 other `.proto` files — under coremltools' **BSD-3-Clause** license. You can parse, validate, or generate `.mlpackage` contents from a real grammar. `.aimodel` has **no published serialization schema** at all (API-defined format only; see §5d).
+
+| Dimension | `.mlpackage` (Core ML) | `.aimodel` (Core AI) |
+|---|---|---|
+| Container | OPC directory, **documented** (`Manifest.json` + `Data/`) | Opaque directory bundle |
+| Model schema | **Published protobuf** (`Model.proto`/`MIL.proto`, BSD-3) | **None published** — API-defined only |
+| Per-internal-file hashing | Meaningful (real structure, weights split out) | No — hash the blob whole (§5b takeaway 4) |
+| Platform floor | iOS 15 / macOS 12 — **well under Acervo's 26 floor** | iOS 27 / macOS 27, **Beta** |
+| Maturity | Stable since 2021 (WWDC21) | Beta, may change before GA |
+
+### Applicability to Acervo's models
+
+Two layers, two different answers — exactly the split established for `.aimodel`:
+
+1. **As a runtime format consumers run inference against — no, same wall as `.aimodel`.** Core ML is a *different runtime* from MLX. SwiftBruja and mlx-audio-swift load `.safetensors`/MLX weights and run on the Metal GPU via MLX; a `.mlpackage` does nothing for them unless rewritten onto Core ML. Worse, the model classes Acervo ships — LLMs, diffusion (FLUX.2/PixArt), TTS — are precisely Core ML's historical weak spot (large autoregressive transformers and diffusion pipelines convert painfully via `coremltools`, often with fidelity loss), and are not distributed as `.mlpackage` on HuggingFace anyway. Taking on that conversion stage for zero consumer demand is not worth it.
+2. **As a file type Acervo mirrors/verifies/distributes — yes, and it is the *friendliest* format Acervo could support.** It runs on the **macOS 26 floor today** (no 27 sprint, no Beta risk); because it is a real spec with **separated weights**, Acervo's per-file SHA-256 manifest model fits it perfectly (hash `model.mlmodel` and `weight.bin` independently — unlike the opaque-blob compromise `.aimodel` forces in §5b takeaway 4). The one shared caveat: a `.mlpackage` has `Manifest.json`, not `config.json`, so it needs the **same validity-marker special-case** already flagged for Core AI assets (§5b takeaway 3).
+
+**Bottom line:** the spec maturity gap does **not** change the §6 verdict. The gating question for both Core ML and Core AI is still *"does any consumer actually target this runtime?"* — and today, for both, the answer is no. The only difference: *if* a consumer ever does, `.mlpackage` is the cheaper, lower-risk format for Acervo to support — real spec, per-file verifiable, no platform-floor or Beta caveats. Do **not** build for it speculatively.
 
 ---
 
