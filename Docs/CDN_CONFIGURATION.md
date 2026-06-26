@@ -140,20 +140,139 @@ stderr guidance) when it is unset or malformed.
 
 ---
 
-## Migration note (existing consumers)
+## Fixing a broken consumer (migration playbook)
 
-This is a **breaking configuration change**. Before this change a CDN host was
-compiled into the library; now there is none. Any consumer that has not set
-`ACERVO_CDN_BASE_URL` (CLI/test/CI) or the `AcervoCDNBaseURL` `Info.plist` key
-(UI apps) will **`fatalError` on the first SwiftAcervo call that needs the CDN**.
+This is a **breaking configuration change**. Before it, a CDN host was compiled
+into the library; now there is none. Any consumer that has not supplied a value
+will crash on the first SwiftAcervo call that needs the CDN — `download`,
+`ensureComponentReady`, `fetchManifest`, etc.
 
-To migrate:
+### 1. Recognize the crash
 
-- **UI apps**: add the `AcervoCDNBaseURL` key to `Info.plist`.
-- **CLIs / scripts / CI**: `export ACERVO_CDN_BASE_URL=...`.
-- **Test targets**: add the entry to each test plan's
-  `environmentVariableEntries`.
-- **`acervo verify` (CDN mode)**: ensure `R2_PUBLIC_URL` is set (domain-only).
+The trap comes from `Acervo.cdnBaseURL` and looks like this:
+
+```
+SwiftAcervo: no CDN base URL configured.
+
+UI apps: add the AcervoCDNBaseURL key to your Info.plist.
+CLI tools / scripts / test runners / CI: export ACERVO_CDN_BASE_URL ...
+```
+
+(If you instead see `malformed ACERVO_CDN_BASE_URL: <value>`, the value *is* set
+but isn't a valid `https://…` URL with a host — fix the value, see
+[Value format](#value-format).)
+
+It is the exact sibling of the existing `no App Group identifier configured`
+trap. If you already configure `ACERVO_APP_GROUP_ID`, set the CDN URL **the same
+way, in the same place**.
+
+### 2. Find your consumer type
+
+| You are… | Who sets the value | Fix |
+| --- | --- | --- |
+| A **UI app** (the app target that ships to users) | The app | `Info.plist` key — §3 |
+| A **library that depends on SwiftAcervo** (e.g. SwiftBruja, mlx-audio-swift) | **Not you — the app that embeds you** | §4 (do *not* hardcode it) |
+| A **CLI tool / script** | The process environment | `export` — §5 |
+| A **test target** (xctest via `xcodebuild`) | The test plan or the runner env | §6 |
+| A **CI pipeline** | The workflow | §6 / §7 |
+
+### 3. UI app — `Info.plist`
+
+Static:
+
+```xml
+<key>AcervoCDNBaseURL</key>
+<string>https://cdn.intrusive-memory.productions/models</string>
+```
+
+Per-environment (staging vs prod) via build settings — define `ACERVO_CDN_BASE_URL`
+in each `.xcconfig`, then reference it with Info.plist variable substitution:
+
+```xml
+<key>AcervoCDNBaseURL</key>
+<string>$(ACERVO_CDN_BASE_URL)</string>
+```
+
+No code change is needed — SwiftAcervo reads `Bundle.main` on first use.
+
+### 4. A library that depends on SwiftAcervo — **do not set it**
+
+This is the case most likely to be done wrong. If your library (SwiftBruja,
+mlx-audio-swift, etc.) just *re-exports* SwiftAcervo's download capability to an
+app, then:
+
+- **Your library code sets nothing.** The CDN host is a deployment decision that
+  belongs to the **embedding app**, not to you. Hardcoding it in your library
+  re-introduces exactly the lock-in this change removed and overrides the app's
+  choice.
+- **You DO fix two things in your own repo:**
+  1. **Your test target** — so your CI goes green again (§6).
+  2. **Any example / demo app** you ship — add the `Info.plist` key (§3).
+- **Propagate the contract downstream.** Add one line to your library's README:
+  *"Consumers must configure SwiftAcervo's CDN base URL — set `ACERVO_CDN_BASE_URL`
+  (CLI/tests) or the `AcervoCDNBaseURL` Info.plist key (apps). See
+  SwiftAcervo's CDN_CONFIGURATION.md."*
+
+### 5. CLI tool / script — environment variable
+
+```sh
+export ACERVO_CDN_BASE_URL=https://cdn.intrusive-memory.productions/models
+```
+
+Put it in `~/.zprofile` for interactive use, or in the launch context
+(`launchd`/`systemd` unit, wrapper script, container env) for a packaged tool.
+
+### 6. Test target (xctest) — two ways
+
+`xcodebuild` does **not** forward your shell environment to the `xctest` runner,
+so `export`-ing in the CI step is **not enough**. Pick one:
+
+**(a) Test plan (persistent).** Add to the plan's `environmentVariableEntries`:
+
+```json
+"environmentVariableEntries" : [
+  { "key" : "ACERVO_CDN_BASE_URL", "value" : "https://cdn.intrusive-memory.productions/models" }
+]
+```
+
+**(b) `TEST_RUNNER_` prefix (no plan edit).** `xcodebuild` strips the
+`TEST_RUNNER_` prefix and injects the rest into the runner process:
+
+```sh
+TEST_RUNNER_ACERVO_CDN_BASE_URL=https://cdn.intrusive-memory.productions/models \
+  xcodebuild test -scheme YourScheme -destination '...'
+```
+
+This is the same mechanism SwiftAcervo documents for `ACERVO_MODELS_DIR`, and it
+is the easiest path for a repo that doesn't want to edit `.xctestplan` files.
+
+### 7. CI pipeline (GitHub Actions)
+
+If your test step already runs through a test plan that carries the variable,
+nothing more is needed. Otherwise, inject it at the `xcodebuild` call alongside
+the App Group id you already set:
+
+```yaml
+- name: Test
+  run: |
+    TEST_RUNNER_ACERVO_CDN_BASE_URL=https://cdn.intrusive-memory.productions/models \
+    TEST_RUNNER_ACERVO_APP_GROUP_ID=group.acervo.testbundle.default \
+    xcodebuild test -scheme YourScheme -destination 'platform=macOS,arch=arm64'
+```
+
+### 8. `acervo verify` (CDN mode)
+
+Separate variable, separate convention: set **`R2_PUBLIC_URL`** (domain-only, **no**
+`/models` suffix), e.g. `https://cdn.intrusive-memory.productions`. It also has no
+default and fails cleanly when unset.
+
+### 9. Verify the fix
+
+- **App / CLI:** the call that used to trap now reaches the network. A one-liner
+  sanity check anywhere after launch: `print(Acervo.cdnBaseURL)` should print your
+  value, not crash.
+- **Tests:** the previously-trapping test now runs (and, for live tests, reaches
+  the configured host).
 
 ---
 
