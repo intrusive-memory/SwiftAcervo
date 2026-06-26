@@ -91,6 +91,9 @@
          <TestPlanReference
             reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-iOS.xctestplan">
          </TestPlanReference>
+         <TestPlanReference
+            reference = "container:.swiftpm/xcode/xcshareddata/xctestplans/SwiftAcervo-Performance.xctestplan">
+         </TestPlanReference>
       </TestPlans>
       <Testables>
          <TestableReference

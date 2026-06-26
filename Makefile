@@ -43,6 +43,16 @@ test-ios:
 	  ONLY_ACTIVE_ARCH=YES \
 	  COMPILER_INDEX_STORE_ENABLE=NO
 
+# Live-network performance tests — NEVER run in CI.
+# ACERVO_PERF_TESTS=1 is baked into the Performance test plan, so plain
+# `make test-perf` opens the gate automatically. Requires a live network
+# connection; the small tier downloads ~5 GB over ~10–25 minutes.
+# Default container mode: container=temp (a unique temp SharedModels root
+# per iteration; the developer's real models directory is never touched).
+# Canonical (app-group container) mode — opt-in; set ACERVO_PERF_CANONICAL=1
+# and ACERVO_PERF_APP_GROUP_ID=<testing-group-id> in the Performance plan's
+# environmentVariableEntries (must be distinct from ACERVO_APP_GROUP_ID;
+# shell env vars are NOT propagated by xcodebuild — use the plan).
 test-perf:
 	xcodebuild test -scheme $(TEST_SCHEME) -testPlan $(PERF_TESTPLAN) \
 	  -destination $(DESTINATION)
