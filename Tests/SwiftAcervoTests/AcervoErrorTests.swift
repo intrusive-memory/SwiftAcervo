@@ -44,6 +44,11 @@ struct AcervoErrorTests {
           manifestChecksum: String(repeating: "0", count: 64)
         )
       ),
+      .reshardInvalidCap(0),
+      .reshardMalformedSafetensors(
+        path: "/tmp/staging/model.safetensors", detail: "truncated header"),
+      .reshardDuplicateTensor(name: "layer0.weight"),
+      .reshardVerificationFailed(detail: "byte mismatch for tensor 'layer0.weight'"),
     ]
 
     for error in errors {

@@ -47,6 +47,11 @@ struct ShipCommand: AsyncParsableCommand {
                  must be present in staging at the expected size.
         CHECK 1  HF LFS verify — recompute each downloaded file's SHA-256
                  and assert it matches the HF LFS API. (Skip with --no-verify.)
+        RESHARD  Losslessly re-split any safetensors larger than the
+                 --max-shard-mib cap (default 256) into CDN-edge-cacheable
+                 shards, BEFORE the manifest is generated. No-op when every
+                 weight file is already under the cap. (Disable with
+                 --no-reshard.)
         CHECK 2  Refuse to generate a manifest if any file is zero bytes.
         CHECK 3  Re-read manifest.json after writing and verify its checksum.
         CHECK 4  Re-hash every staged file against the manifest before uploading.
@@ -173,6 +178,22 @@ struct ShipCommand: AsyncParsableCommand {
   )
   var keepOrphans: Bool = false
 
+  // MARK: - Re-sharding options
+
+  @Option(
+    name: .customLong("max-shard-mib"),
+    help:
+      "Maximum size (MiB) of each safetensors shard. Larger weight files are losslessly re-split before the manifest is generated so every CDN object stays edge-cacheable. Default 256."
+  )
+  var maxShardMiB: Int = 256
+
+  @Flag(
+    name: .customLong("no-reshard"),
+    help:
+      "Disable automatic safetensors re-sharding. Weights are uploaded as-downloaded; files larger than the CDN's max-cacheable-object size will not edge-cache."
+  )
+  var noReshard: Bool = false
+
   @OptionGroup var progressOptions: ProgressOptions
 
   // MARK: - validate()
@@ -197,6 +218,13 @@ struct ShipCommand: AsyncParsableCommand {
     if spec == nil && modelId == nil {
       throw ValidationError(
         "Missing argument: provide a positional modelId (HF org/repo) or --spec <path>."
+      )
+    }
+    if !noReshard && !(1...1_048_576).contains(maxShardMiB) {
+      // Upper bound (1 TiB) keeps `maxShardMiB * 1024 * 1024` far from
+      // Int overflow while staying absurdly generous for any real shard cap.
+      throw ValidationError(
+        "--max-shard-mib must be between 1 and 1048576 (got \(maxShardMiB))."
       )
     }
   }
@@ -303,6 +331,12 @@ struct ShipCommand: AsyncParsableCommand {
       )
     }
 
+    // ── RE-SHARD PHASE (before manifest generation) ──────────────────────
+    // Re-sharding changes file boundaries (and therefore SHA-256s), so it
+    // MUST run after the HF-side download verification (CHECK 0 / CHECK 1)
+    // and BEFORE PublishRunner generates the manifest from the staging dir.
+    try reshardStaging(at: stagingURL, label: resolvedModelId)
+
     // ── UPLOAD PHASE (delegated to Acervo.publishModel) ──────────────────
 
     // Resolve slug-registry triple. When --slug is supplied the manifest's
@@ -386,6 +420,9 @@ struct ShipCommand: AsyncParsableCommand {
           stagingURL: stagingURL
         )
       }
+
+      // Re-shard this component's staging dir before its manifest is built.
+      try reshardStaging(at: stagingURL, label: componentRepo)
 
       // Publish using the SHARED triple from the spec. slugOverride is the
       // component's own HF repo so the CDN prefix becomes
@@ -485,6 +522,11 @@ struct ShipCommand: AsyncParsableCommand {
       manifestComponents = [resolvedModelId]
     }
 
+    // Dry-run is non-destructive: it never rewrites the staged files. We
+    // only WARN which weights a live ship would re-shard, so the dry-run
+    // manifest reflects the current (pre-reshard) file set.
+    try warnOversizedSafetensors(at: stagingURL, label: resolvedModelId)
+
     let generator = ManifestGenerator(
       modelId: manifestModelId,
       primaryRepo: manifestPrimaryRepo,
@@ -520,6 +562,9 @@ struct ShipCommand: AsyncParsableCommand {
     for componentRepo in loadedSpec.components {
       let repoSlug = Self.slug(from: componentRepo)
       let stagingURL = stagingRoot.appendingPathComponent(repoSlug, isDirectory: true)
+
+      // Dry-run is non-destructive — warn only, never rewrite staged files.
+      try warnOversizedSafetensors(at: stagingURL, label: componentRepo)
 
       // Every component's manifest carries the same modelId, primaryRepo,
       // and components array. Only the CDN slug differs, derived from the
@@ -672,6 +717,101 @@ struct ShipCommand: AsyncParsableCommand {
         )
       }
     #endif
+  }
+
+  // MARK: - Re-sharding
+
+  // NOTE (layering): re-sharding is wired here in the CLI ship path, not in
+  // the library's `Acervo.publishModel` chokepoint, per the deliberate
+  // design choice that `acervo ship` (the HF→CDN mirror command) owns it.
+  // Consequence: `acervo upload`, `acervo recache`, and direct
+  // `Acervo.publishModel` callers do NOT reshard. If those paths ever need
+  // to guarantee edge-cacheable objects, promote this into `publishModel`.
+
+  /// Losslessly re-shards the safetensors in `stagingURL` so every CDN
+  /// object stays under the edge-cache size limit, then prints a summary.
+  ///
+  /// Runs before manifest generation on the LIVE ship paths (single and
+  /// `--spec`). Dry-run does not call this — it is non-destructive and uses
+  /// `warnOversizedSafetensors(at:label:)` instead. A no-op when
+  /// `--no-reshard` is set, when the directory contains no safetensors, or
+  /// when every weight file is already at or under the cap. Oversized single
+  /// tensors (which cannot be split) are surfaced as warnings rather than
+  /// silently exceeding the cap.
+  private func reshardStaging(at stagingURL: URL, label: String) throws {
+    guard !noReshard else { return }
+
+    let capBytes = maxShardMiB * 1024 * 1024
+    let report = try SafetensorsResharder.reshard(
+      directory: stagingURL,
+      maxShardBytes: capBytes
+    )
+
+    guard !progressOptions.quiet else { return }
+
+    if !report.safetensorsFound {
+      // Nothing to reshard (e.g. a tokenizer-only or config-only repo).
+      return
+    }
+    if !report.didReshard {
+      FileHandle.standardOutput.write(
+        Data(
+          "Re-shard: \(label) already within \(maxShardMiB) MiB cap; no change.\n".utf8
+        )
+      )
+      return
+    }
+
+    for group in report.groups {
+      let where_ = group.relativeDirectory.isEmpty ? "(top level)" : group.relativeDirectory
+      let largestMiB = Double(group.largestShardBytes) / (1024 * 1024)
+      FileHandle.standardOutput.write(
+        Data(
+          String(
+            format:
+              "Re-shard: %@ %@ — %d tensor(s) from %d file(s) → %d shard(s), largest %.1f MiB (cap %d MiB).\n",
+            label, where_, group.tensorCount, group.inputFileCount, group.shardCount,
+            largestMiB, maxShardMiB
+          ).utf8
+        )
+      )
+      for oversized in group.oversizedTensors {
+        let mib = Double(oversized.byteLength) / (1024 * 1024)
+        FileHandle.standardError.write(
+          Data(
+            String(
+              format:
+                "  WARNING: tensor '%@' is %.1f MiB > %d MiB cap and cannot be split; it gets its own oversized shard (will not edge-cache).\n",
+              oversized.name, mib, maxShardMiB
+            ).utf8
+          )
+        )
+      }
+    }
+  }
+
+  /// Non-destructive dry-run counterpart to `reshardStaging`: warns which
+  /// weights a live ship would re-split, without touching the staged files.
+  /// A no-op when `--no-reshard` is set or nothing exceeds the cap.
+  private func warnOversizedSafetensors(at stagingURL: URL, label: String) throws {
+    guard !noReshard, !progressOptions.quiet else { return }
+
+    let capBytes = maxShardMiB * 1024 * 1024
+    let oversized = try SafetensorsResharder.oversizedSafetensors(
+      in: stagingURL,
+      maxShardBytes: capBytes
+    )
+    guard !oversized.isEmpty else { return }
+
+    FileHandle.standardError.write(
+      Data(
+        "NOTE: \(label): \(oversized.count) safetensors file(s) exceed the \(maxShardMiB) MiB cap and WILL be re-sharded by a live ship (dry-run shows the pre-reshard file set):\n"
+          .utf8
+      )
+    )
+    for path in oversized {
+      FileHandle.standardError.write(Data("  - \(path)\n".utf8))
+    }
   }
 
   // MARK: - Helpers
