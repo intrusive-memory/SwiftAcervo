@@ -1,3 +1,7 @@
+---
+type: reference
+---
+
 # SwiftAcervo — Library Reference
 
 Manifest-driven shared AI model discovery, download, and verification for iOS 26.0+ and macOS 26.0+. Zero external dependencies (Foundation + CryptoKit only).
@@ -1035,6 +1039,41 @@ public func verifyDownloadCompleteness(
 Walks a staging directory and reports every file whose on-disk size diverges from HuggingFace's tree listing. An empty result means the staging directory is consistent with HF and safe to promote. This is the size-based completeness gate, independent of LFS SHA-256 verification.
 
 **Supporting types:** `HFTreeFile` (`path`, `size`, `isXet`), `HFCompletenessFailure` (`path`, `reason`, `isXet`), and the error enums `HFTreeError`, `HFIntegrityError`, `HFDownloadError`, plus the `LFSVerificationHints` namespace.
+
+---
+
+### 17 · Safetensors Re-sharding (`SafetensorsResharder.swift`)
+
+`SafetensorsResharder` is a stateless `enum` (not part of `Acervo`) that losslessly re-packs the `.safetensors` files in a staged model directory into shards no larger than a configurable cap, so every published object stays under Cloudflare's common 512 MB max-cacheable-object limit and actually edge-caches. It is **zero-dependency** (Foundation + CryptoKit) and never interprets a dtype — int4/fp16/bf16 raw bytes and the shape/dtype metadata are copied verbatim, so the operation is provably lossless.
+
+```swift
+@discardableResult
+public static func reshard(
+    directory: URL,
+    maxShardBytes: Int = SafetensorsResharder.defaultMaxShardBytes,  // 256 MiB
+    verify: Bool = true
+) throws -> SafetensorsResharder.Report
+```
+
+For each `(directory, weight-stem)` group of `.safetensors` files, the resharder merges that group's tensors and re-splits them (first-fit, tensor-granularity) into shards ≤ `maxShardBytes`, writes the HuggingFace-standard `<stem>.safetensors.index.json`, and swaps the new shards in place — but only **after** a SHA-256 round-trip proves every tensor's bytes are byte-identical to the source. Grouping by stem as well as directory keeps distinct weight sets that share a folder (e.g. `model.safetensors` beside `vae.safetensors`) from being merged into one namespace, and preserves each stem (`model`, `diffusion_pytorch_model`, …) so framework loaders keep working — which is what makes it safe for diffusers sub-folder layouts (FLUX.2-style `transformer/`, `vae/`, …). The in-place swap is fail-safe: originals are moved to a backup and restored if any move fails, so the directory is always either fully old or fully new. Sibling files (`config.json`, tokenizer files) are never touched.
+
+To preview without mutating anything — e.g. for a dry-run — use `SafetensorsResharder.oversizedSafetensors(in:maxShardBytes:)`, which returns the directory-relative paths of every `.safetensors` file over the cap (the weights a live reshard would re-split) and touches nothing on disk.
+
+**No-op gates:** a group whose files are *all* already at or under the cap is left untouched; a directory with no safetensors is a clean no-op. A single tensor larger than the cap cannot be split — it is isolated into its own oversized shard and surfaced in `Report.oversizedTensors` rather than silently exceeding the cap.
+
+**Call ordering:** always reshard *before* generating a manifest — re-sharding changes file boundaries and therefore SHA-256s, so the manifest must be produced from the post-reshard file set. `acervo ship` wires this automatically (after HF download/verification, before `ManifestGenerator`); `--max-shard-mib` overrides the cap and `--no-reshard` disables it.
+
+```swift
+let report = try SafetensorsResharder.reshard(directory: stagingDir)
+if report.didReshard {
+    print("→ \(report.shardCount) shard(s), largest \(report.largestShardBytes) bytes")
+    for t in report.oversizedTensors {
+        print("⚠️ tensor \(t.name) (\(t.byteLength) bytes) exceeds the cap")
+    }
+}
+```
+
+**Supporting types:** `SafetensorsResharder.Report` (`maxShardBytes`, `safetensorsFound`, `groups`, plus derived `didReshard` / `shardCount` / `largestShardBytes` / `oversizedTensors`), `SafetensorsResharder.GroupReport` (per-directory outcome), and `SafetensorsResharder.OversizedTensor` (`name`, `byteLength`, `relativeDirectory`). Failures throw `AcervoError.reshardInvalidCap`, `.reshardMalformedSafetensors(path:detail:)`, `.reshardDuplicateTensor(name:)`, or `.reshardVerificationFailed(detail:)`.
 
 ---
 

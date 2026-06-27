@@ -255,26 +255,34 @@ enum ValidityOracle {
       || fm.fileExists(atPath: configURL.path)
     guard hasRootMarker else { return .indeterminate }
 
-    // Weight-map check: when `model.safetensors.index.json` is present,
-    // every shard it enumerates must be on disk. When it is NOT present,
-    // there is no shard list to enumerate and the root marker alone is
-    // taken as sufficient (single-safetensors-file models, MLX 4-bit
-    // packs, etc.).
-    let shardIndexURL = modelDir.appendingPathComponent("model.safetensors.index.json")
-    guard fm.fileExists(atPath: shardIndexURL.path) else {
+    // Weight-map check: when any `*.safetensors.index.json` is present at the
+    // model root, every shard each index enumerates must be on disk. When
+    // none is present, there is no shard list to enumerate and the root
+    // marker alone is taken as sufficient (single-safetensors-file models,
+    // MLX 4-bit packs, etc.).
+    //
+    // We match any stem (`model`, `diffusion_pytorch_model`, …) rather than
+    // hardcoding `model.safetensors.index.json`, because re-sharding writes
+    // the index under the weight files' own stem.
+    let indexURLs =
+      (try? fm.contentsOfDirectory(at: modelDir, includingPropertiesForKeys: nil))?
+      .filter { $0.lastPathComponent.hasSuffix(".safetensors.index.json") } ?? []
+    guard !indexURLs.isEmpty else {
       return .available
     }
-    let shards = parseWeightMapShards(at: shardIndexURL)
-    // `weight_map` MUST be present + non-empty when the index file is
-    // present; an empty / malformed index is treated as indeterminate
-    // (we can't confirm anything from it).
-    guard !shards.isEmpty else {
-      return .indeterminate
-    }
-    for shard in shards {
-      let shardURL = modelDir.appendingPathComponent(shard)
-      if !fm.fileExists(atPath: shardURL.path) {
+    for shardIndexURL in indexURLs {
+      let shards = parseWeightMapShards(at: shardIndexURL)
+      // `weight_map` MUST be present + non-empty when an index file is
+      // present; an empty / malformed index is treated as indeterminate
+      // (we can't confirm anything from it).
+      guard !shards.isEmpty else {
         return .indeterminate
+      }
+      for shard in shards {
+        let shardURL = modelDir.appendingPathComponent(shard)
+        if !fm.fileExists(atPath: shardURL.path) {
+          return .indeterminate
+        }
       }
     }
     return .available
