@@ -39,6 +39,11 @@ public enum AcervoUIAccessibility {
   /// the `.downloading` availability state.
   public static let modelDownloadingPrefix = "model.downloading"
 
+  /// Estimated-remaining-time label identifier prefix. Full id:
+  /// `"model.downloadEta.<item.id>"`. Present beneath the row's progress
+  /// bar only once enough progress has been observed to estimate an ETA.
+  public static let modelDownloadEtaPrefix = "model.downloadEta"
+
   /// Per-row Download button identifier prefix. Full id:
   /// `"model.downloadButton.<item.id>"`. Present in the `.notAvailable`
   /// and `.partial` availability states.
@@ -129,6 +134,11 @@ public enum AcervoUIAccessibility {
 
   /// Progress bar identifier on the interstitial's downloading state.
   public static let onboardingDownloadProgress = "onboarding.downloadProgress"
+
+  /// Estimated-remaining-time label identifier on the interstitial's
+  /// downloading state. Present beneath the progress bar only once enough
+  /// progress has been observed to estimate an ETA.
+  public static let onboardingDownloadEta = "onboarding.downloadEta"
 
   /// Completion-state headline identifier on the interstitial. Present
   /// only when the model has finished downloading (`.available`).
