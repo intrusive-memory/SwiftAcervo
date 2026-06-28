@@ -192,14 +192,29 @@ public struct AcervoModelDownloadRow: View {
       }
 
     case .downloading(let progress):
-      ProgressView(value: progress)
-        .frame(width: 120)
-        .progressViewStyle(.linear)
-        .accessibilityIdentifier(
-          "\(AcervoUIAccessibility.modelDownloadingPrefix).\(controller.item.id)"
-        )
-        .accessibilityLabel("Download progress for \(controller.item.displayName)")
-        .accessibilityValue("\(Int(progress * 100)) percent complete")
+      VStack(alignment: .trailing, spacing: 2) {
+        ProgressView(value: progress)
+          .frame(width: 120)
+          .progressViewStyle(.linear)
+          .accessibilityIdentifier(
+            "\(AcervoUIAccessibility.modelDownloadingPrefix).\(controller.item.id)"
+          )
+          .accessibilityLabel("Download progress for \(controller.item.displayName)")
+          .accessibilityValue("\(Int(progress * 100)) percent complete")
+
+        if let remaining = AcervoModelRowController.formatRemaining(
+          controller.estimatedSecondsRemaining)
+        {
+          Text("~\(remaining) left")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+            .accessibilityIdentifier(
+              "\(AcervoUIAccessibility.modelDownloadEtaPrefix).\(controller.item.id)"
+            )
+            .accessibilityLabel("Estimated \(remaining) remaining")
+        }
+      }
 
     case .available:
       HStack(spacing: 8) {
