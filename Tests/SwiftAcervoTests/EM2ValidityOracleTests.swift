@@ -471,6 +471,184 @@ struct EM2TierBTests {
   }
 }
 
+// MARK: - Sortie A1: Diffusers multi-folder hardening (C2 · D2 · R5)
+
+@Suite("EM-2: Validity oracle — Diffusers multi-folder hardening (A1)")
+struct EM2DiffusersHardeningTests {
+
+  /// Core A1 anti-regression: a diffusers fixture whose `transformer/` subdir
+  /// carries a `model.safetensors.index.json` but is missing one declared shard
+  /// must resolve to `.notAvailable` (heuristic `.indeterminate`), NOT `.available`.
+  ///
+  /// Before A1, `heuristicVerdict` returned `.available` for any model whose
+  /// root marker was present and which had no root `model.safetensors.index.json`
+  /// — the subdir shards were never inspected (D2). This test guards against
+  /// that false positive.
+  @Test("Diffusers: transformer/ shard missing → heuristic .indeterminate → .notAvailable")
+  func diffusers_missingTransformerShard_isNotAvailable() async throws {
+    let modelId = "test-org/diffusers-missing-shard"
+    let slug = Acervo.slugify(modelId)
+    let base = try makeTempBase("DiffusersMissingShard")
+    defer { cleanup(base) }
+
+    let modelDir = base.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+    // model_index.json — diffusers root marker.
+    try writeFile(
+      Data("{\"_class_name\":\"FluxPipeline\"}".utf8),
+      to: modelDir.appendingPathComponent("model_index.json")
+    )
+    // No root model.safetensors.index.json → triggers diffusers branch.
+
+    // transformer/ with its own shard index declaring 2 shards.
+    let transformerDir = modelDir.appendingPathComponent("transformer")
+    let shardNames = [
+      "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "diffusion_pytorch_model-00002-of-00002.safetensors",
+    ]
+    let weightMap = Dictionary(
+      uniqueKeysWithValues: shardNames.enumerated().map { idx, name in
+        ("layer_\(idx).weight", name)
+      }
+    )
+    let shardIndexBody = try JSONSerialization.data(
+      withJSONObject: ["weight_map": weightMap], options: [.sortedKeys])
+    try writeFile(
+      shardIndexBody,
+      to: transformerDir.appendingPathComponent("model.safetensors.index.json")
+    )
+    // Write ONLY the first shard; the second is intentionally absent.
+    try writeFile(
+      Data(repeating: 0x01, count: 64),
+      to: transformerDir.appendingPathComponent(shardNames[0])
+    )
+
+    // No manifest → Tier A and Tier B both miss → Tier C heuristic runs.
+    let primary = modelDir.appendingPathComponent(AcervoDownloader.manifestFilename)
+    #expect(!FileManager.default.fileExists(atPath: primary.path))
+
+    let result = await Acervo.availability(modelId, in: base)
+    // R5: heuristic must not return .available when a declared shard is absent.
+    #expect(
+      result == .notAvailable,
+      "diffusers fixture with missing transformer shard must be .notAvailable via heuristic; got \(result)"
+    )
+    #expect(
+      result != .available,
+      "A1 anti-regression: diffusers with missing shard must NOT be .available")
+  }
+
+  /// Diffusers fixture with transformer/ shard index and ALL shards present
+  /// must still return `.available` (no regression on the happy path).
+  @Test("Diffusers: transformer/ all shards present → .available")
+  func diffusers_allTransformerShardsPresent_isAvailable() async throws {
+    let modelId = "test-org/diffusers-all-shards"
+    let slug = Acervo.slugify(modelId)
+    let base = try makeTempBase("DiffusersAllShards")
+    defer { cleanup(base) }
+
+    let modelDir = base.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+    try writeFile(
+      Data("{\"_class_name\":\"FluxPipeline\"}".utf8),
+      to: modelDir.appendingPathComponent("model_index.json")
+    )
+
+    let transformerDir = modelDir.appendingPathComponent("transformer")
+    let shardNames = [
+      "diffusion_pytorch_model-00001-of-00002.safetensors",
+      "diffusion_pytorch_model-00002-of-00002.safetensors",
+    ]
+    let weightMap = Dictionary(
+      uniqueKeysWithValues: shardNames.enumerated().map { idx, name in
+        ("layer_\(idx).weight", name)
+      }
+    )
+    let shardIndexBody = try JSONSerialization.data(
+      withJSONObject: ["weight_map": weightMap], options: [.sortedKeys])
+    try writeFile(
+      shardIndexBody,
+      to: transformerDir.appendingPathComponent("model.safetensors.index.json")
+    )
+    // Both shards present.
+    for shard in shardNames {
+      try writeFile(
+        Data(repeating: 0x01, count: 64),
+        to: transformerDir.appendingPathComponent(shard)
+      )
+    }
+
+    let result = await Acervo.availability(modelId, in: base)
+    #expect(result == .available, "all shards present → must be .available; got \(result)")
+  }
+
+  /// Diffusers fixture: transformer/ subdir carries a `model.safetensors.index.json`
+  /// with an empty `weight_map` → cannot confirm completeness → `.indeterminate` →
+  /// `.notAvailable`. Malformed / empty indexes must never produce `.available` (R5).
+  @Test("Diffusers: transformer/ empty shard index → heuristic .indeterminate → .notAvailable")
+  func diffusers_emptySubdirIndex_isNotAvailable() async throws {
+    let modelId = "test-org/diffusers-empty-index"
+    let slug = Acervo.slugify(modelId)
+    let base = try makeTempBase("DiffusersEmptyIndex")
+    defer { cleanup(base) }
+
+    let modelDir = base.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+    try writeFile(
+      Data("{\"_class_name\":\"FluxPipeline\"}".utf8),
+      to: modelDir.appendingPathComponent("model_index.json")
+    )
+
+    // transformer/ with an empty weight_map.
+    let transformerDir = modelDir.appendingPathComponent("transformer")
+    let emptyBody = try JSONSerialization.data(
+      withJSONObject: ["weight_map": [String: String]()], options: [])
+    try writeFile(
+      emptyBody,
+      to: transformerDir.appendingPathComponent("model.safetensors.index.json")
+    )
+
+    let result = await Acervo.availability(modelId, in: base)
+    #expect(
+      result == .notAvailable,
+      "diffusers fixture with empty subdir shard index must be .notAvailable; got \(result)"
+    )
+  }
+
+  /// Regression guard: non-diffusers fixture (single `config.json`, no shard index)
+  /// still returns `.available` after A1. The diffusers branch must NOT fire for
+  /// models that only have `config.json`.
+  @Test("Non-diffusers: config.json only, no shard index → .available (A1 regression guard)")
+  func nonDiffusers_configOnly_isAvailable() async throws {
+    let modelId = "test-org/non-diffusers-config-only"
+    let slug = Acervo.slugify(modelId)
+    let base = try makeTempBase("NonDiffusersConfig")
+    defer { cleanup(base) }
+
+    let modelDir = base.appendingPathComponent(slug)
+    try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+    try writeFile(
+      Data("{\"model_type\":\"qwen3\"}".utf8),
+      to: modelDir.appendingPathComponent("config.json")
+    )
+    // Single weights file — no shard index, no model_index.json.
+    try writeFile(
+      Data(repeating: 0x01, count: 32),
+      to: modelDir.appendingPathComponent("model.safetensors")
+    )
+
+    let result = await Acervo.availability(modelId, in: base)
+    #expect(
+      result == .available,
+      "non-diffusers fixture (config.json only) must still be .available; got \(result)"
+    )
+  }
+}
+
 // MARK: - Tier C unit tests (heuristic; no manifest at all)
 
 @Suite("EM-2: Validity oracle — Tier C (heuristic)")

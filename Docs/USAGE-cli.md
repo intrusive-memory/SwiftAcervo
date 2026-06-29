@@ -1,3 +1,7 @@
+---
+type: reference
+---
+
 # SwiftAcervo CLI — `acervo`
 
 Reference for the `acervo` command-line tool. Textual mirror of `acervo --help` plus every subcommand's `--help`, captured from version `0.18.2`.
@@ -225,6 +229,13 @@ Runs the full integrity pipeline in one command:
            must be present in staging at the expected size.
   CHECK 1  HF LFS verify — recompute each downloaded file's SHA-256
            and assert it matches the HF LFS API. (Skip with --no-verify.)
+  RESHARD  Losslessly re-split any safetensors larger than the
+           --max-shard-mib cap (default 256) into CDN-edge-cacheable
+           shards, BEFORE the manifest is generated. No-op when every
+           weight file is already under the cap. (Disable with
+           --no-reshard.) Live ship only — --dry-run is non-destructive
+           and instead WARNS which weights would be re-sharded, so a
+           dry-run manifest reflects the current (pre-reshard) file set.
   CHECK 2  Refuse to generate a manifest if any file is zero bytes.
   CHECK 3  Re-read manifest.json after writing and verify its checksum.
   CHECK 4  Re-hash every staged file against the manifest before uploading.
@@ -253,6 +264,8 @@ EXAMPLES
   acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit config.json tokenizer.json
   acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --no-verify --dry-run
   acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --keep-orphans
+  acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --max-shard-mib 128
+  acervo ship mlx-community/Qwen2.5-7B-Instruct-4bit --no-reshard
   acervo ship org/repo --slug my-slug --dry-run --output-dir /tmp/manifests
   acervo ship --spec /path/to/spec.json --dry-run --output-dir /tmp/manifests
 
@@ -298,6 +311,14 @@ OPTIONS:
                           file set, so this flag is a no-op today.
   --keep-orphans          Skip the orphan-prune step. By default, keys on the
                           CDN not referenced by the new manifest are deleted.
+  --max-shard-mib <max-shard-mib>
+                          Maximum size (MiB) of each safetensors shard. Larger
+                          weight files are losslessly re-split before the
+                          manifest is generated so every CDN object stays
+                          edge-cacheable. Default 256. (default: 256)
+  --no-reshard            Disable automatic safetensors re-sharding. Weights are
+                          uploaded as-downloaded; files larger than the CDN's
+                          max-cacheable-object size will not edge-cache.
   -q, --quiet             Suppress the download/upload progress bar and
                           subprocess output. Errors still print.
   --version               Show the version.
