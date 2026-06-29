@@ -267,41 +267,47 @@ enum ValidityOracle {
       hasDiffusersMarker || fm.fileExists(atPath: configURL.path)
     guard hasRootMarker else { return .indeterminate }
 
-    // Layout-sensitive weight-map check.
+    // Layout-sensitive, stem-agnostic weight-map check.
     //
-    // When `model.safetensors.index.json` is present at the root, every
-    // shard it enumerates must be on disk (same for both layouts).
+    // We match any `*.safetensors.index.json` at the model root (stem
+    // `model`, `diffusion_pytorch_model`, … — re-sharding writes the index
+    // under the weight files' own stem) rather than hardcoding
+    // `model.safetensors.index.json`.
     //
-    // When it is NOT present, the detected layout drives the next check:
-    //   • Diffusers (`model_index.json` present, no root shard index) →
-    //     descend into component subdirs (C2 · R5).
-    //   • Non-diffusers (root marker = config.json only, no root shard
-    //     index) → root marker alone is sufficient.
-    let shardIndexURL = modelDir.appendingPathComponent("model.safetensors.index.json")
-    let hasRootShardIndex = fm.fileExists(atPath: shardIndexURL.path)
+    //   • Root shard index present → every shard each index enumerates must
+    //     be on disk (same for both layouts).
+    //   • No root shard index, diffusers marker present → descend into
+    //     component subdirs (C2 · R5).
+    //   • No root shard index, non-diffusers → root marker alone is
+    //     sufficient (single-safetensors-file models, MLX 4-bit packs, etc.).
+    let indexURLs =
+      (try? fm.contentsOfDirectory(at: modelDir, includingPropertiesForKeys: nil))?
+      .filter { $0.lastPathComponent.hasSuffix(".safetensors.index.json") } ?? []
 
-    if hasDiffusersMarker && !hasRootShardIndex {
+    if hasDiffusersMarker && indexURLs.isEmpty {
       // Diffusers / multi-folder layout: verify component-subdir shards.
       return heuristicVerdictForDiffusers(modelDir: modelDir)
     }
 
-    guard hasRootShardIndex else {
+    guard !indexURLs.isEmpty else {
       // Non-diffusers, no root shard index: root marker is sufficient.
       return .available
     }
 
-    // Root `model.safetensors.index.json` present — every shard must be on disk.
-    // `weight_map` MUST be present + non-empty when the index file is
+    // Root shard index/indexes present — every shard each enumerates must be
+    // on disk. `weight_map` MUST be present + non-empty when an index file is
     // present; an empty / malformed index is treated as indeterminate
     // (we can't confirm anything from it).
-    let shards = parseWeightMapShards(at: shardIndexURL)
-    guard !shards.isEmpty else {
-      return .indeterminate
-    }
-    for shard in shards {
-      let shardURL = modelDir.appendingPathComponent(shard)
-      if !fm.fileExists(atPath: shardURL.path) {
+    for shardIndexURL in indexURLs {
+      let shards = parseWeightMapShards(at: shardIndexURL)
+      guard !shards.isEmpty else {
         return .indeterminate
+      }
+      for shard in shards {
+        let shardURL = modelDir.appendingPathComponent(shard)
+        if !fm.fileExists(atPath: shardURL.path) {
+          return .indeterminate
+        }
       }
     }
     return .available
