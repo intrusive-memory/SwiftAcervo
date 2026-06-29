@@ -1771,6 +1771,30 @@ extension AcervoDownloader {
       )
     }
 
+    // A3 / R2.1: Write the verified marker after a full-model download.
+    //
+    // Every downloaded file byte was SHA-256 verified inline during streaming
+    // (the streaming path validates each file's hash before rename-into-place).
+    // Cache-hit files passed the same size-presence predicate used by the
+    // strict availability check and are trusted not to have changed on disk.
+    // Writing the marker lets subsequent `availability` calls take the R3
+    // fast-path without re-hashing multi-GB weights.
+    //
+    // Guard: skip when `requestedFiles` is non-empty — a partial download
+    // covers only a subset of the manifest files, so stamping the marker
+    // would cause `isModelAvailable` to incorrectly trust an incomplete model
+    // directory.
+    if requestedFiles.isEmpty {
+      do {
+        let marker = VerifiedMarker(manifestChecksum: manifest.manifestChecksum)
+        try marker.write(in: destination)
+      } catch {
+        logger.warning(
+          "Failed to write verified marker for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+
     // Boundary memory event: emit once per model after the last component
     // is verified (downloaded OR cache-hit). This is the choke-point where
     // all per-file paths (download + integrity verify, or cache-hit skip)

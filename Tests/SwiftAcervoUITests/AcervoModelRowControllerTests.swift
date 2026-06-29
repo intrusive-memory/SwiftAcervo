@@ -176,9 +176,104 @@ struct AcervoModelRowControllerTests {
     // controller state is preserved for future UX).
     #expect(controller.state == .available)
   }
+
+  // MARK: - ETA estimation
+
+  /// Builds a controller wired to a controllable clock for ETA tests.
+  private func makeETAController(_ clock: TestClock) -> AcervoModelRowController {
+    AcervoModelRowController(
+      item: Self.testItem,
+      availability: { _ in .available },
+      download: { _, _ in },
+      deleteModel: { _ in },
+      now: { clock.now }
+    )
+  }
+
+  @Test("estimatedSecondsRemaining is nil until two timed samples arrive")
+  func etaNeedsTwoSamples() {
+    let clock = TestClock(Date(timeIntervalSince1970: 1000))
+    let controller = makeETAController(clock)
+
+    controller.recordProgressSample(0)  // ignored: not in (0,1)
+    #expect(controller.estimatedSecondsRemaining == nil)
+
+    controller.recordProgressSample(0.1)  // first real sample: anchor only
+    #expect(controller.estimatedSecondsRemaining == nil)
+  }
+
+  @Test("ETA derives from fraction rate: 0.1/s over 0.8 remaining ≈ 8s")
+  func etaFromRate() {
+    let clock = TestClock(Date(timeIntervalSince1970: 1000))
+    let controller = makeETAController(clock)
+
+    controller.recordProgressSample(0.1)
+    clock.advance(1.0)
+    controller.recordProgressSample(0.2)  // 0.1 fraction in 1s → 0.1/s
+
+    let eta = try? #require(controller.estimatedSecondsRemaining)
+    // (1 - 0.2) / 0.1 == 8
+    #expect(abs((eta ?? 0) - 8.0) < 0.001)
+  }
+
+  @Test("Samples closer than the min interval are ignored (no tiny-dt spike)")
+  func etaIgnoresSubIntervalSamples() {
+    let clock = TestClock(Date(timeIntervalSince1970: 1000))
+    let controller = makeETAController(clock)
+
+    controller.recordProgressSample(0.1)
+    clock.advance(0.1)  // below minSampleInterval (0.5s)
+    controller.recordProgressSample(0.15)
+    #expect(controller.estimatedSecondsRemaining == nil)
+
+    // A later qualifying sample still works, measuring from the anchor.
+    clock.advance(0.9)  // now 1.0s past the anchor; accumulated Δ = 0.1
+    controller.recordProgressSample(0.2)
+    let eta = try? #require(controller.estimatedSecondsRemaining)
+    #expect(abs((eta ?? 0) - 8.0) < 0.001)
+  }
+
+  @Test("A 1.0 sample reports zero remaining")
+  func etaCompletesAtFull() {
+    let clock = TestClock(Date(timeIntervalSince1970: 1000))
+    let controller = makeETAController(clock)
+    controller.recordProgressSample(1.0)
+    #expect(controller.estimatedSecondsRemaining == 0)
+  }
+
+  @Test("formatRemaining renders compact strings and omits invalid input")
+  func formatRemainingShapes() {
+    #expect(AcervoModelRowController.formatRemaining(nil) == nil)
+    #expect(AcervoModelRowController.formatRemaining(0) == nil)
+    #expect(AcervoModelRowController.formatRemaining(.infinity) == nil)
+    #expect(AcervoModelRowController.formatRemaining(45) == "45s")
+    #expect(AcervoModelRowController.formatRemaining(125) == "2m 5s")
+  }
 }
 
 // MARK: - Helpers
+
+/// A controllable clock for deterministic ETA-rate tests. `@unchecked
+/// Sendable` because the controller's `now` closure is `@Sendable`; the
+/// tests drive it single-threaded on the main actor.
+private final class TestClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var current: Date
+
+  init(_ start: Date) { current = start }
+
+  var now: Date {
+    lock.lock()
+    defer { lock.unlock() }
+    return current
+  }
+
+  func advance(_ seconds: TimeInterval) {
+    lock.lock()
+    current += seconds
+    lock.unlock()
+  }
+}
 
 /// A tiny one-shot async gate so a test can pause inside the download
 /// closure, observe the controller's mid-flight state, then let the
