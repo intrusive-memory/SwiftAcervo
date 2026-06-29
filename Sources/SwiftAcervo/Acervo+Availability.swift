@@ -92,6 +92,13 @@ extension Acervo {
   static func isModelAvailable(_ modelId: String, in baseDirectory: URL) -> Bool {
     let slug = slugify(modelId)
     let modelDir = baseDirectory.appendingPathComponent(slug)
+    // Verified-marker fast-path (A2 / R3): when a marker exists and its
+    // stamped `manifestChecksum` matches the current local manifest, the
+    // model was already fully audited against the same declaration —
+    // trust it without re-walking the file list.
+    if markerTrustsLocalManifest(modelId, in: baseDirectory) {
+      return true
+    }
     guard
       let manifest = ValidityOracle.loadLocalManifestEitherShape(
         modelId: modelId,
@@ -262,6 +269,127 @@ extension Acervo {
       return .downloading(progress: p)
     }
 
+    // Verified-marker fast-path (A2 / R3): a marker whose stamped
+    // `manifestChecksum` matches the current local manifest means the
+    // model already passed a full SHA-256 audit against the same
+    // declaration. Trust it and SKIP the (potentially multi-minute)
+    // re-hash that `verifyHashes: true` would otherwise drive. When the
+    // checksum does NOT match — or no marker exists — we fall through to
+    // a full re-audit below.
+    if markerTrustsLocalManifest(modelId, in: baseDirectory) {
+      return .available
+    }
+
+    return await evaluateAvailability(
+      modelId,
+      verifyHashes: verifyHashes,
+      in: baseDirectory
+    )
+  }
+
+  // MARK: - Verified-Integrity audit (A2 / C3 · R2.3)
+
+  /// Runs an explicit, full SHA-256 integrity audit of `modelId` and, on
+  /// a passing audit, writes the `.acervo-verified.json` marker stamped
+  /// with the current local `manifestChecksum`.
+  ///
+  /// This is the "Verify" surface (REQUIREMENTS R2.3): unlike
+  /// `availability(_:)`, it always performs the full-hash audit and never
+  /// takes the marker fast-path — it is what *establishes* the marker.
+  /// Use it right after a download (R2.1, see `AcervoDownloader`), lazily
+  /// before first generation when no valid marker exists (R2.2), or on an
+  /// explicit user/CLI Verify action (R2.3).
+  ///
+  /// - The marker is written only when the audit returns `.available`
+  ///   AND a local manifest is present to supply a `manifestChecksum`
+  ///   (Tier A/B). A Tier-C heuristic `.available` (no manifest on disk)
+  ///   cannot be stamped — there is no authoritative checksum — so no
+  ///   marker is written and later checks fall through to the heuristic.
+  /// - A failed marker write is non-fatal: the audit result is still
+  ///   returned (the next call simply re-audits).
+  ///
+  /// This method never throws and never performs network I/O.
+  ///
+  /// - Parameter modelId: A model identifier in "org/repo" format.
+  /// - Returns: `.available`, `.downloading(progress:)`,
+  ///   `.partial(missing: [...])`, or `.notAvailable`.
+  public static func verifyIntegrity(_ modelId: String) async -> ModelAvailability {
+    await verifyIntegrity(modelId, in: sharedModelsDirectory)
+  }
+
+  /// Custom-base-directory overload of `verifyIntegrity(_:)`.
+  ///
+  /// Internal test seam mirroring the public method against an arbitrary
+  /// base directory.
+  static func verifyIntegrity(
+    _ modelId: String,
+    in baseDirectory: URL
+  ) async -> ModelAvailability {
+    if await InFlightDownloads.shared.contains(modelId) {
+      let p = await InFlightDownloads.shared.progress(for: modelId) ?? 0.0
+      return .downloading(progress: p)
+    }
+
+    // Full-hash audit (verifyHashes: true), bypassing the marker
+    // fast-path on purpose — verifyIntegrity is what writes the marker.
+    let result = await evaluateAvailability(
+      modelId,
+      verifyHashes: true,
+      in: baseDirectory
+    )
+
+    if case .available = result {
+      let slug = slugify(modelId)
+      let modelDir = baseDirectory.appendingPathComponent(slug)
+      if let manifest = ValidityOracle.loadLocalManifestEitherShape(
+        modelId: modelId,
+        modelDir: modelDir,
+        baseDirectory: baseDirectory
+      ) {
+        let marker = VerifiedMarker(manifestChecksum: manifest.manifestChecksum)
+        try? marker.write(in: modelDir)
+      }
+    }
+
+    return result
+  }
+
+  // MARK: - Verdict evaluation + test seam
+
+  /// Type of the injectable oracle-evaluation seam.
+  ///
+  /// `(modelId, baseDirectory, verifyHashes) -> ModelAvailability`.
+  typealias AvailabilityEvaluator =
+    @Sendable (String, URL, Bool) async -> ModelAvailability
+
+  /// Test-only seam recording whether (and how) the full three-tier
+  /// oracle evaluation ran.
+  ///
+  /// When `nil` (production default), `evaluateAvailability` forwards to
+  /// `ValidityOracle.evaluate`. Tests inject a closure via the projected
+  /// `$availabilityEvaluatorOverride.withValue(_:operation:)` to assert,
+  /// WITHOUT relying on timing, whether the hash-verifying code path was
+  /// entered: the closure simply is not invoked when the marker
+  /// fast-path short-circuits, and is invoked with `verifyHashes == true`
+  /// when a re-audit is forced. Using a `@TaskLocal` keeps the seam free
+  /// of global mutable state and confined to the calling task tree.
+  @TaskLocal
+  static var availabilityEvaluatorOverride: AvailabilityEvaluator? = nil
+
+  /// Runs the full three-tier oracle and maps its verdict to a
+  /// `ModelAvailability`, routing through the test seam when present.
+  ///
+  /// This is the single choke point for the (potentially hash-verifying)
+  /// audit, so both `availability(_:verifyHashes:)` and `verifyIntegrity`
+  /// share one evaluation path and one spy seam.
+  static func evaluateAvailability(
+    _ modelId: String,
+    verifyHashes: Bool,
+    in baseDirectory: URL
+  ) async -> ModelAvailability {
+    if let override = availabilityEvaluatorOverride {
+      return await override(modelId, baseDirectory, verifyHashes)
+    }
     let verdict = await ValidityOracle.evaluate(
       modelId: modelId,
       in: baseDirectory,
@@ -275,5 +403,35 @@ extension Acervo {
     case .indeterminate:
       return .notAvailable
     }
+  }
+
+  // MARK: - Verified-marker fast-path helper
+
+  /// Returns `true` when a `.acervo-verified.json` marker exists in the
+  /// model's directory AND its stamped `manifestChecksum` matches the
+  /// current local manifest's checksum.
+  ///
+  /// A matching checksum means the model was fully audited against the
+  /// exact same manifest declaration, so callers may trust it without
+  /// re-hashing (R3). Any of these conditions returns `false` (→
+  /// re-audit): no marker, an undecodable marker, no local manifest, or a
+  /// checksum mismatch.
+  static func markerTrustsLocalManifest(
+    _ modelId: String,
+    in baseDirectory: URL
+  ) -> Bool {
+    let slug = slugify(modelId)
+    let modelDir = baseDirectory.appendingPathComponent(slug)
+    guard let marker = VerifiedMarker.read(in: modelDir) else { return false }
+    guard
+      let manifest = ValidityOracle.loadLocalManifestEitherShape(
+        modelId: modelId,
+        modelDir: modelDir,
+        baseDirectory: baseDirectory
+      )
+    else {
+      return false
+    }
+    return marker.manifestChecksum == manifest.manifestChecksum
   }
 }

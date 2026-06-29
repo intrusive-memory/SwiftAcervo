@@ -480,6 +480,115 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
       )
     }
 
+    // MARK: - Sortie A1: Diffusers multi-folder hardening (C2 · D2 · R5)
+
+    /// A1 anti-regression via the three-state availability surface:
+    /// a diffusers fixture (model_index.json + transformer/ with a shard
+    /// index) whose declared shard is absent must resolve to `.notAvailable`,
+    /// not `.available`. No manifest is seeded so the Tier-C heuristic runs.
+    @Test("diffusers: missing transformer shard → .notAvailable via Tier C (A1 anti-regression)")
+    func diffusers_missingTransformerShard_isNotAvailable() async throws {
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "test-org/diffusers-3state-\(UUID().uuidString.prefix(8))"
+      let slug = Acervo.slugify(modelId)
+      let modelDir = tempBase.appendingPathComponent(slug)
+      try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+      // Diffusers root marker; no root model.safetensors.index.json.
+      try Data("{\"_class_name\":\"FluxPipeline\"}".utf8)
+        .write(to: modelDir.appendingPathComponent("model_index.json"))
+
+      // transformer/ carries its own shard index with 2 shards;
+      // only the first shard is materialized on disk.
+      let transformerDir = modelDir.appendingPathComponent("transformer")
+      try FileManager.default.createDirectory(at: transformerDir, withIntermediateDirectories: true)
+      let shardNames = [
+        "diffusion_pytorch_model-00001-of-00002.safetensors",
+        "diffusion_pytorch_model-00002-of-00002.safetensors",
+      ]
+      let weightMap: [String: Any] = [
+        "weight_map": Dictionary(
+          uniqueKeysWithValues: shardNames.enumerated().map { idx, name in
+            ("layer_\(idx)", name)
+          }
+        ),
+      ]
+      let shardIndexBody = try JSONSerialization.data(
+        withJSONObject: weightMap, options: [.sortedKeys])
+      try shardIndexBody.write(
+        to: transformerDir.appendingPathComponent("model.safetensors.index.json"))
+      // Write only the first shard; second is intentionally absent.
+      try Data(repeating: 0x01, count: 64)
+        .write(to: transformerDir.appendingPathComponent(shardNames[0]))
+
+      // No manifest → Tier C runs. Previously returned .available (D2);
+      // after A1 must return .notAvailable.
+      let result = await Acervo.availability(modelId, in: tempBase)
+      #expect(
+        result == .notAvailable,
+        "diffusers fixture with missing transformer shard must be .notAvailable; got \(result)"
+      )
+      #expect(
+        result != .available,
+        "A1 anti-regression: diffusers with missing shard must NOT be .available"
+      )
+    }
+
+    /// A1 via availability with a manifest (Tier A): a diffusers fixture whose
+    /// manifest declares a transformer shard that is absent on disk resolves to
+    /// `.partial(missing: [...])`. The Tier-A verdict is driven by the manifest —
+    /// independent of the diffusers heuristic — and resolves to `.partial` rather
+    /// than `.notAvailable`.
+    @Test("diffusers: transformer shard missing + manifest present → .partial via Tier A (A1)")
+    func diffusers_missingTransformerShard_withManifest_isPartial() async throws {
+      let tempBase = try makeTempBase()
+      defer { removeTempBase(tempBase) }
+
+      let modelId = "test-org/diffusers-3state-manifest-\(UUID().uuidString.prefix(8))"
+      let slug = Acervo.slugify(modelId)
+      let modelDir = tempBase.appendingPathComponent(slug)
+      try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+      // Diffusers layout with model_index.json on disk.
+      let modelIndexBody = Data("{\"_class_name\":\"FluxPipeline\"}".utf8)
+      try modelIndexBody.write(to: modelDir.appendingPathComponent("model_index.json"))
+
+      // Manifest declares model_index.json + 2 transformer shards.
+      let shardPaths = [
+        "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+      ]
+      let shardBody = Data(repeating: 0x01, count: 64)
+      let files: [CDNManifestFile] = [
+        manifestFile(path: "model_index.json", data: modelIndexBody),
+      ] + shardPaths.map { manifestFile(path: $0, data: shardBody) }
+      let manifest = makeManifest(modelId: modelId, files: files)
+      try AcervoDownloader.persistManifest(manifest, in: tempBase)
+
+      // Write only the first shard on disk; the second is absent.
+      let transformerDir = modelDir.appendingPathComponent("transformer")
+      try FileManager.default.createDirectory(
+        at: transformerDir, withIntermediateDirectories: true)
+      try shardBody.write(to: modelDir.appendingPathComponent(shardPaths[0]))
+
+      // Tier A sees the manifest and reports .partial(missing: [second shard]).
+      let result = await Acervo.availability(modelId, in: tempBase)
+      guard case .partial(let missing) = result else {
+        Issue.record("expected .partial(missing:), got \(result)")
+        return
+      }
+      #expect(
+        missing.contains(shardPaths[1]),
+        "second transformer shard must appear in .partial(missing:); got \(missing)"
+      )
+      #expect(
+        !missing.contains("model_index.json"),
+        "model_index.json is on disk; must not be in .partial(missing:)"
+      )
+    }
+
     // DELETED 2026-05-23 — was `downloading_stateObservableViaAvailability`.
     // The polling-based observation of `.downloading(progress:)` during an
     // in-flight download is inherently timing-coupled and flaky on iOS CI

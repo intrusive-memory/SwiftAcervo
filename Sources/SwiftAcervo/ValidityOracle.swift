@@ -233,16 +233,28 @@ enum ValidityOracle {
   /// Heuristic verdict when no manifest is reachable.
   ///
   /// `model_index.json` (diffusers pipelines) OR `config.json`
-  /// (transformers / MLX) must be at the model root. In addition,
-  /// every entry in `model.safetensors.index.json`'s `weight_map`
-  /// values must be on disk. Sizes are not declared in the shard
-  /// index, so this tier is presence-only by design.
+  /// (transformers / MLX) must be at the model root. The check then
+  /// depends on the detected layout:
   ///
-  /// Returns `.available` when both root-marker and weight-map checks
-  /// pass; `.indeterminate` otherwise (so the caller can map to
-  /// `.notAvailable`). Tier C is intentionally NOT a path to
-  /// `.partial` because without a manifest the oracle has no
-  /// authoritative "should be there" list to enumerate.
+  ///   • **Root `model.safetensors.index.json` present** (non-diffusers or
+  ///     diffusers with an unusual root index): every shard declared in its
+  ///     `weight_map` must be on disk.
+  ///
+  ///   • **Diffusers layout** (`model_index.json` present AND no root shard
+  ///     index): enumerate component subdirs that carry their own
+  ///     `model.safetensors.index.json` (e.g. `transformer/`, `vae/`,
+  ///     `text_encoder/`). For each such subdir, every declared shard must
+  ///     be on disk. If any shard is absent, or the subdir index is empty /
+  ///     malformed, returns `.indeterminate` (R5: never `.available` when
+  ///     completeness cannot be positively confirmed).
+  ///
+  ///   • **Non-diffusers, no root shard index**: root marker alone is
+  ///     sufficient (single-safetensors-file models, MLX 4-bit packs, etc.).
+  ///
+  /// Sizes are not declared in shard index files, so this tier is
+  /// presence-only by design. Tier C is intentionally NOT a path to
+  /// `.partial` because without a manifest the oracle has no authoritative
+  /// "should be there" list to enumerate.
   private static func heuristicVerdict(modelDir: URL) -> Verdict {
     let fm = FileManager.default
 
@@ -250,24 +262,39 @@ enum ValidityOracle {
     // `config.json` (transformers / MLX) must be present.
     let modelIndexURL = modelDir.appendingPathComponent("model_index.json")
     let configURL = modelDir.appendingPathComponent("config.json")
+    let hasDiffusersMarker = fm.fileExists(atPath: modelIndexURL.path)
     let hasRootMarker =
-      fm.fileExists(atPath: modelIndexURL.path)
-      || fm.fileExists(atPath: configURL.path)
+      hasDiffusersMarker || fm.fileExists(atPath: configURL.path)
     guard hasRootMarker else { return .indeterminate }
 
-    // Weight-map check: when `model.safetensors.index.json` is present,
-    // every shard it enumerates must be on disk. When it is NOT present,
-    // there is no shard list to enumerate and the root marker alone is
-    // taken as sufficient (single-safetensors-file models, MLX 4-bit
-    // packs, etc.).
+    // Layout-sensitive weight-map check.
+    //
+    // When `model.safetensors.index.json` is present at the root, every
+    // shard it enumerates must be on disk (same for both layouts).
+    //
+    // When it is NOT present, the detected layout drives the next check:
+    //   • Diffusers (`model_index.json` present, no root shard index) →
+    //     descend into component subdirs (C2 · R5).
+    //   • Non-diffusers (root marker = config.json only, no root shard
+    //     index) → root marker alone is sufficient.
     let shardIndexURL = modelDir.appendingPathComponent("model.safetensors.index.json")
-    guard fm.fileExists(atPath: shardIndexURL.path) else {
+    let hasRootShardIndex = fm.fileExists(atPath: shardIndexURL.path)
+
+    if hasDiffusersMarker && !hasRootShardIndex {
+      // Diffusers / multi-folder layout: verify component-subdir shards.
+      return heuristicVerdictForDiffusers(modelDir: modelDir)
+    }
+
+    guard hasRootShardIndex else {
+      // Non-diffusers, no root shard index: root marker is sufficient.
       return .available
     }
-    let shards = parseWeightMapShards(at: shardIndexURL)
+
+    // Root `model.safetensors.index.json` present — every shard must be on disk.
     // `weight_map` MUST be present + non-empty when the index file is
     // present; an empty / malformed index is treated as indeterminate
     // (we can't confirm anything from it).
+    let shards = parseWeightMapShards(at: shardIndexURL)
     guard !shards.isEmpty else {
       return .indeterminate
     }
@@ -277,6 +304,57 @@ enum ValidityOracle {
         return .indeterminate
       }
     }
+    return .available
+  }
+
+  /// Heuristic verdict for the diffusers / multi-folder layout:
+  /// `model_index.json` present AND no root `model.safetensors.index.json`.
+  ///
+  /// Enumerates all immediate subdirectories of `modelDir` that carry their
+  /// own `model.safetensors.index.json`. For each such subdir, every shard
+  /// declared in `weight_map` must exist on disk; otherwise returns
+  /// `.indeterminate` (R5: never `.available` when completeness cannot be
+  /// positively confirmed).
+  ///
+  /// If no subdirectory carries a shard index, the `model_index.json` root
+  /// marker is taken as sufficient and `.available` is returned — this
+  /// preserves backward compatibility with diffusers fixtures that store
+  /// shards without a per-component shard index file.
+  private static func heuristicVerdictForDiffusers(modelDir: URL) -> Verdict {
+    let fm = FileManager.default
+    guard let contents = try? fm.contentsOfDirectory(
+      at: modelDir,
+      includingPropertiesForKeys: [.isDirectoryKey],
+      options: .skipsHiddenFiles
+    ) else {
+      // Cannot read the directory → cannot confirm completeness.
+      return .indeterminate
+    }
+    for entry in contents {
+      // Consider only subdirectories.
+      guard
+        let values = try? entry.resourceValues(forKeys: [.isDirectoryKey]),
+        values.isDirectory == true
+      else {
+        continue
+      }
+      let subdirShardIndex = entry.appendingPathComponent("model.safetensors.index.json")
+      guard fm.fileExists(atPath: subdirShardIndex.path) else { continue }
+      // This component subdir carries its own shard index — verify every
+      // declared shard is present on disk.
+      let shards = parseWeightMapShards(at: subdirShardIndex)
+      guard !shards.isEmpty else {
+        // Index present but empty or malformed → cannot confirm completeness.
+        return .indeterminate
+      }
+      for shard in shards {
+        let shardURL = entry.appendingPathComponent(shard)
+        if !fm.fileExists(atPath: shardURL.path) {
+          return .indeterminate
+        }
+      }
+    }
+    // All indexed subdirs (if any) passed — or no indexed subdirs were found.
     return .available
   }
 
