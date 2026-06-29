@@ -328,11 +328,13 @@ enum ValidityOracle {
   /// shards without a per-component shard index file.
   private static func heuristicVerdictForDiffusers(modelDir: URL) -> Verdict {
     let fm = FileManager.default
-    guard let contents = try? fm.contentsOfDirectory(
-      at: modelDir,
-      includingPropertiesForKeys: [.isDirectoryKey],
-      options: .skipsHiddenFiles
-    ) else {
+    guard
+      let contents = try? fm.contentsOfDirectory(
+        at: modelDir,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: .skipsHiddenFiles
+      )
+    else {
       // Cannot read the directory → cannot confirm completeness.
       return .indeterminate
     }

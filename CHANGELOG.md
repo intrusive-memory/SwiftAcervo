@@ -1,3 +1,8 @@
+---
+type: reference
+updated: 2026-06-29
+---
+
 # Changelog
 
 All notable changes to SwiftAcervo are documented here.
@@ -6,6 +11,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+
+## [0.23.0]
+
+### Added
+
+- **`SafetensorsResharder` — lossless re-sharding of over-cap safetensors.** `SafetensorsResharder.reshard(directory:maxShardBytes:verify:)` re-splits any safetensors weight file larger than the CDN edge-cache cap into ≤256 MiB shards using a pure Foundation + CryptoKit byte copy (int4/fp16/bf16 weights pass through untouched). It operates per directory/sub-folder, emits the HuggingFace-standard `<stem>.safetensors.index.json`, and SHA-256 round-trip-verifies byte-identity before swapping the originals in place. No-op when every weight file is already under the cap.
+
+- **`acervo ship` runs resharding automatically** after download and before manifest generation. `--max-shard-mib` overrides the cap; `--no-reshard` disables the pass.
+
+- **Model integrity: verified marker, `verifyIntegrity`, and diffusers-aware availability.** A persisted verified-marker records when a model's bytes were last validated against its manifest, `Acervo.verifyIntegrity` re-checks on demand, and availability resolution understands diffusers-style multi-folder layouts. (#79)
 
 ## [0.19.0]
 

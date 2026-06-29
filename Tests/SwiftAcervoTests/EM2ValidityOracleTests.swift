@@ -534,7 +534,9 @@ struct EM2DiffusersHardeningTests {
       result == .notAvailable,
       "diffusers fixture with missing transformer shard must be .notAvailable via heuristic; got \(result)"
     )
-    #expect(result != .available, "A1 anti-regression: diffusers with missing shard must NOT be .available")
+    #expect(
+      result != .available,
+      "A1 anti-regression: diffusers with missing shard must NOT be .available")
   }
 
   /// Diffusers fixture with transformer/ shard index and ALL shards present

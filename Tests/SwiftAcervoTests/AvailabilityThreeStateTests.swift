@@ -513,7 +513,7 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
           uniqueKeysWithValues: shardNames.enumerated().map { idx, name in
             ("layer_\(idx)", name)
           }
-        ),
+        )
       ]
       let shardIndexBody = try JSONSerialization.data(
         withJSONObject: weightMap, options: [.sortedKeys])
@@ -561,9 +561,10 @@ extension SharedStaticStateSuite.MockURLProtocolSuite {
         "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
       ]
       let shardBody = Data(repeating: 0x01, count: 64)
-      let files: [CDNManifestFile] = [
-        manifestFile(path: "model_index.json", data: modelIndexBody),
-      ] + shardPaths.map { manifestFile(path: $0, data: shardBody) }
+      let files: [CDNManifestFile] =
+        [
+          manifestFile(path: "model_index.json", data: modelIndexBody)
+        ] + shardPaths.map { manifestFile(path: $0, data: shardBody) }
       let manifest = makeManifest(modelId: modelId, files: files)
       try AcervoDownloader.persistManifest(manifest, in: tempBase)
 
