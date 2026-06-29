@@ -44,7 +44,7 @@ extension SharedStaticStateSuite {
       )
       #expect(
         url.absoluteString
-          == "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen2.5-7B-Instruct-4bit/config.json"
+          == "\(Acervo.cdnBaseURL)/mlx-community_Qwen2.5-7B-Instruct-4bit/config.json"
       )
     }
 
@@ -56,7 +56,7 @@ extension SharedStaticStateSuite {
       )
       #expect(
         url.absoluteString
-          == "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/speech_tokenizer/config.json"
+          == "\(Acervo.cdnBaseURL)/mlx-community_Qwen3-TTS-12Hz-1.7B-Base-bf16/speech_tokenizer/config.json"
       )
     }
 
@@ -69,7 +69,7 @@ extension SharedStaticStateSuite {
 
       let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
       #expect(components?.scheme == "https")
-      #expect(components?.host == "pub-8e049ed02be340cbb18f921765fd24f3.r2.dev")
+      #expect(components?.host == Acervo.cdnAllowedHost)
       #expect(
         components?.path == "/models/mlx-community_Qwen2.5-7B-Instruct-4bit/tokenizer.json"
       )
@@ -83,7 +83,7 @@ extension SharedStaticStateSuite {
       )
       #expect(
         url.absoluteString
-          == "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/org_repo/sub1/sub2/model.safetensors"
+          == "\(Acervo.cdnBaseURL)/org_repo/sub1/sub2/model.safetensors"
       )
     }
 
@@ -94,7 +94,7 @@ extension SharedStaticStateSuite {
       )
       #expect(
         url.absoluteString
-          == "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/mlx-community_Qwen2.5-7B-Instruct-4bit/manifest.json"
+          == "\(Acervo.cdnBaseURL)/mlx-community_Qwen2.5-7B-Instruct-4bit/manifest.json"
       )
     }
 

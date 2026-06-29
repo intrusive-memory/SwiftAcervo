@@ -296,6 +296,17 @@ public struct AcervoModelDownloadInterstitial: View {
         .foregroundStyle(.secondary)
         .monospacedDigit()
 
+      if let remaining = AcervoModelRowController.formatRemaining(
+        controller.estimatedSecondsRemaining)
+      {
+        Text("~\(remaining) remaining")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .monospacedDigit()
+          .accessibilityIdentifier(AcervoUIAccessibility.onboardingDownloadEta)
+          .accessibilityLabel("Estimated \(remaining) remaining")
+      }
+
       Text(downloadingFootnote)
         .font(.caption2)
         .foregroundStyle(.tertiary)

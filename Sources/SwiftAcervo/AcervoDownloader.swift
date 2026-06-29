@@ -15,7 +15,9 @@
 // legacy download(for:) + verifyAgainstManifest pattern.
 //
 // CDN URL format:
-//   https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models/{slug}/{fileName}
+//   https://<your-cdn>/models/{slug}/{fileName}
+// The base (`https://<your-cdn>/models`) is consumer-supplied via
+// `Acervo.cdnBaseURL`; there is no hardcoded host. See Docs/CDN_CONFIGURATION.md.
 //
 // All downloads use SecureDownloadSession which rejects redirects
 // to non-CDN domains.
@@ -29,9 +31,6 @@ import OSLog
 /// All methods are static. This struct is not publicly exposed; consumers
 /// use `Acervo.download()` and related public API instead.
 struct AcervoDownloader: Sendable {
-
-  /// The base URL for the CDN model repository.
-  static let cdnBaseURL = "https://pub-8e049ed02be340cbb18f921765fd24f3.r2.dev/models"
 
   /// Logger for download-related diagnostics.
   private static let logger = Logger(
@@ -112,7 +111,7 @@ extension AcervoDownloader {
   /// - Returns: The fully qualified CDN download URL.
   static func buildURL(modelId: String, fileName: String) -> URL {
     let slug = Acervo.slugify(modelId)
-    var url = URL(string: cdnBaseURL)!
+    var url = URL(string: Acervo.cdnBaseURL)!
       .appendingPathComponent(slug)
 
     // Handle subdirectory files by appending each path component separately
@@ -130,7 +129,7 @@ extension AcervoDownloader {
   /// - Returns: The URL of `manifest.json` on the CDN.
   static func buildManifestURL(modelId: String) -> URL {
     let slug = Acervo.slugify(modelId)
-    return URL(string: cdnBaseURL)!
+    return URL(string: Acervo.cdnBaseURL)!
       .appendingPathComponent(slug)
       .appendingPathComponent("manifest.json")
   }
@@ -1770,6 +1769,30 @@ extension AcervoDownloader {
       logger.warning(
         "Failed to persist byte-equal manifest for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
       )
+    }
+
+    // A3 / R2.1: Write the verified marker after a full-model download.
+    //
+    // Every downloaded file byte was SHA-256 verified inline during streaming
+    // (the streaming path validates each file's hash before rename-into-place).
+    // Cache-hit files passed the same size-presence predicate used by the
+    // strict availability check and are trusted not to have changed on disk.
+    // Writing the marker lets subsequent `availability` calls take the R3
+    // fast-path without re-hashing multi-GB weights.
+    //
+    // Guard: skip when `requestedFiles` is non-empty — a partial download
+    // covers only a subset of the manifest files, so stamping the marker
+    // would cause `isModelAvailable` to incorrectly trust an incomplete model
+    // directory.
+    if requestedFiles.isEmpty {
+      do {
+        let marker = VerifiedMarker(manifestChecksum: manifest.manifestChecksum)
+        try marker.write(in: destination)
+      } catch {
+        logger.warning(
+          "Failed to write verified marker for \(modelId, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+      }
     }
 
     // Boundary memory event: emit once per model after the last component

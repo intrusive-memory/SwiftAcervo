@@ -175,6 +175,27 @@ public enum AcervoError: LocalizedError, Sendable {
   case publishOrphanPruneFailed(
     failedKeys: [String], publishedManifest: CDNManifest)
 
+  /// `SafetensorsResharder` was given a non-positive shard cap. The cap is
+  /// the maximum number of bytes per output shard and must be > 0.
+  case reshardInvalidCap(Int)
+
+  /// A `.safetensors` file could not be parsed during re-sharding (bad
+  /// header length, truncated/non-JSON header, or a malformed tensor
+  /// entry). `path` is the offending file; `detail` describes the problem.
+  case reshardMalformedSafetensors(path: String, detail: String)
+
+  /// Two input `.safetensors` files in the same group declared a tensor
+  /// with the same name. Re-sharding merges a directory's tensors into a
+  /// single namespace, so duplicate names are ambiguous and rejected.
+  case reshardDuplicateTensor(name: String)
+
+  /// The lossless round-trip verification after re-sharding failed: an
+  /// output shard's tensor bytes did not SHA-256-match the source, a tensor
+  /// went missing, or a shard could not be read back. `detail` describes
+  /// the specific failure. The original files are left untouched when this
+  /// throws (the swap happens only after verification passes).
+  case reshardVerificationFailed(detail: String)
+
   /// Maximum length of the `body` substring included in
   /// `cdnOperationFailed`'s `errorDescription`. Anything longer is
   /// truncated with a hint that the full body is on the case payload.
@@ -306,6 +327,20 @@ public enum AcervoError: LocalizedError, Sendable {
         : ""
       return
         "publishModel succeeded but the orphan-prune step left \(failedKeys.count) key(s) on the CDN: \(preview)\(suffix). The new manifest is live; the orphans are storage waste and can be retried."
+
+    case .reshardInvalidCap(let cap):
+      return "Invalid re-shard cap \(cap): the per-shard byte cap must be greater than zero."
+
+    case .reshardMalformedSafetensors(let path, let detail):
+      return "Cannot re-shard safetensors file '\(path)': \(detail)."
+
+    case .reshardDuplicateTensor(let name):
+      return
+        "Duplicate tensor '\(name)' across the safetensors files in one directory. Re-sharding merges a directory's tensors into a single namespace; duplicate names are ambiguous."
+
+    case .reshardVerificationFailed(let detail):
+      return
+        "Re-shard lossless verification failed: \(detail). The original files were left untouched."
     }
   }
 }
