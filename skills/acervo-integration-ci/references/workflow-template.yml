@@ -1,0 +1,90 @@
+# Canonical SwiftAcervo integration-test job.
+#
+# Drop this into .github/workflows/integration-tests.yml (or merge the job into
+# an existing tests workflow). Replace every {{PLACEHOLDER}}. The two scripts it
+# calls are vendored into the repo at .github/scripts/ by the acervo-integration-ci
+# skill, so the workflow is self-contained and identical across every repo.
+#
+# Placeholders:
+#   {{SCHEME}}            xcodebuild scheme that builds the integration test target
+#   {{TEST_PLAN}}         .xctestplan that contains ONLY the model-dependent tests
+#                         (omit -testPlan and use -only-testing if you have no plan)
+#   {{MODEL_SLUGS}}       newline list of CDN slugs == slugify(modelId), e.g.
+#                           flux2-klein-4b
+#                           FLUX.2-vae
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main, development]
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Integration Tests (real models)
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    env:
+      # Single source of truth for where models live in CI. Checked FIRST by
+      # Acervo.sharedModelsDirectory, so it overrides any App Group config a
+      # test plan might set. Keep it inside the workspace so actions/cache can
+      # snapshot it.
+      ACERVO_MODELS_DIR: ${{ github.workspace }}/.acervo-ci-models
+      ACERVO_CI_MODELS: |
+        {{MODEL_SLUGS}}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Compute model cache key
+        id: modelkey
+        run: |
+          echo "value=$(bash .github/scripts/acervo-ci-cache-key.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore model cache
+        id: modelcache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ACERVO_MODELS_DIR }}
+          key: acervo-models-${{ runner.os }}-${{ steps.modelkey.outputs.value }}
+
+      - name: Prime models from CDN (cache miss)
+        if: steps.modelcache.outputs.cache-hit != 'true'
+        run: bash .github/scripts/acervo-ci-prime.sh
+
+      - name: Resolve packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -scheme {{SCHEME}} \
+            -skipPackagePluginValidation
+
+      - name: Build for testing
+        run: |
+          xcodebuild build-for-testing \
+            -scheme {{SCHEME}} \
+            -destination 'platform=macOS,arch=arm64' \
+            -skipPackagePluginValidation \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Integration tests
+        env:
+          # xcodebuild strips TEST_RUNNER_ and forwards these INTO the xctest
+          # runner process. Without the prefix the test process never sees them.
+          #   - ACERVO_MODELS_DIR  → test reads from the primed cache
+          #   - ACERVO_OFFLINE=1   → a cache miss fails LOUDLY instead of
+          #                          silently pulling multi-GB during the test
+          TEST_RUNNER_ACERVO_MODELS_DIR: ${{ env.ACERVO_MODELS_DIR }}
+          TEST_RUNNER_ACERVO_OFFLINE: "1"
+        run: |
+          xcodebuild test-without-building \
+            -scheme {{SCHEME}} \
+            -testPlan '{{TEST_PLAN}}' \
+            -destination 'platform=macOS,arch=arm64' \
+            -skipPackagePluginValidation \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES COMPILER_INDEX_STORE_ENABLE=NO
