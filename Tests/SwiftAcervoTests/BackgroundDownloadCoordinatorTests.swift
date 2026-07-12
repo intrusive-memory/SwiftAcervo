@@ -53,7 +53,8 @@ struct BackgroundDownloadCoordinatorTests {
 
     let delivered = try writeTemp(tmp, "weights-payload")
     let sha = try IntegrityVerification.sha256(of: delivered)
-    await coord.enqueue(repoId: "org/repo", file: "w.bin", remoteURL: sampleURL, expectedSHA256: sha)
+    await coord.enqueue(
+      repoId: "org/repo", file: "w.bin", remoteURL: sampleURL, expectedSHA256: sha)
     await coord.markInflight(repoId: "org/repo", file: "w.bin", taskIdentifier: 1)
 
     await coord.resolveCompletedTask(taskIdentifier: 1, deliveredFile: delivered)
@@ -77,9 +78,11 @@ struct BackgroundDownloadCoordinatorTests {
 
     let a = try writeTemp(tmp, "file-a")
     let b = try writeTemp(tmp, "file-b")
-    await coord.enqueue(repoId: "org/m", file: "a", remoteURL: sampleURL,
+    await coord.enqueue(
+      repoId: "org/m", file: "a", remoteURL: sampleURL,
       expectedSHA256: try IntegrityVerification.sha256(of: a))
-    await coord.enqueue(repoId: "org/m", file: "b", remoteURL: sampleURL,
+    await coord.enqueue(
+      repoId: "org/m", file: "b", remoteURL: sampleURL,
       expectedSHA256: try IntegrityVerification.sha256(of: b))
     await coord.markInflight(repoId: "org/m", file: "a", taskIdentifier: 10)
     await coord.markInflight(repoId: "org/m", file: "b", taskIdentifier: 11)
@@ -92,7 +95,11 @@ struct BackgroundDownloadCoordinatorTests {
 
     // a -> fileVerified; b -> fileVerified + repoCompleted == 3 events total.
     let events = await collect(3, from: coord.events)
-    #expect(events.filter { if case .fileVerified = $0 { return true }; return false }.count == 2)
+    #expect(
+      events.filter {
+        if case .fileVerified = $0 { return true }
+        return false
+      }.count == 2)
     #expect(events.contains(.repoCompleted(repoId: "org/m")))
   }
 
@@ -103,7 +110,8 @@ struct BackgroundDownloadCoordinatorTests {
     let coord = BackgroundDownloadCoordinator(ledger: ledger, modelsBaseDirectory: tmp.url)
 
     let delivered = try writeTemp(tmp, "corrupt")
-    await coord.enqueue(repoId: "org/repo", file: "w.bin", remoteURL: sampleURL,
+    await coord.enqueue(
+      repoId: "org/repo", file: "w.bin", remoteURL: sampleURL,
       expectedSHA256: "0000000000000000000000000000000000000000000000000000000000000000")
     await coord.markInflight(repoId: "org/repo", file: "w.bin", taskIdentifier: 2)
 
@@ -111,12 +119,14 @@ struct BackgroundDownloadCoordinatorTests {
 
     let dest = coord.destinationURL(repoId: "org/repo", file: "w.bin")
     #expect(FileManager.default.fileExists(atPath: dest.path) == false)
-    if case .failed = await ledger.state(repoId: "org/repo", file: "w.bin") {} else {
+    if case .failed = await ledger.state(repoId: "org/repo", file: "w.bin") {
+    } else {
       Issue.record("expected failed state")
     }
     let events = await collect(1, from: coord.events)
     if case .fileFailed(let repo, let file, _) = events.first {
-      #expect(repo == "org/repo"); #expect(file == "w.bin")
+      #expect(repo == "org/repo")
+      #expect(file == "w.bin")
     } else {
       Issue.record("expected fileFailed event")
     }

@@ -50,7 +50,8 @@ struct DownloadLedgerTests {
     #expect(await ledger.state(repoId: "org/repo", file: "w.bin") == .inflight(taskIdentifier: 7))
 
     await ledger.markFailed(repoId: "org/repo", file: "w.bin", reason: "sha mismatch")
-    #expect(await ledger.state(repoId: "org/repo", file: "w.bin") == .failed(reason: "sha mismatch"))
+    #expect(
+      await ledger.state(repoId: "org/repo", file: "w.bin") == .failed(reason: "sha mismatch"))
 
     await ledger.markVerified(repoId: "org/repo", file: "w.bin")
     #expect(await ledger.state(repoId: "org/repo", file: "w.bin") == .verified)
@@ -154,7 +155,8 @@ struct DownloadLedgerTests {
 
     do {
       let ledger = DownloadLedger(baseDirectory: tmp.url)
-      await ledger.enqueue(repoId: "org/repo", file: "w.safetensors", remoteURL: url, expectedSHA256: sha)
+      await ledger.enqueue(
+        repoId: "org/repo", file: "w.safetensors", remoteURL: url, expectedSHA256: sha)
       #expect(await ledger.state(repoId: "org/repo", file: "w.safetensors") == .queued)
       #expect(await ledger.expectedSHA256(repoId: "org/repo", file: "w.safetensors") == sha)
       #expect(await ledger.remoteURL(repoId: "org/repo", file: "w.safetensors") == url)
@@ -164,7 +166,9 @@ struct DownloadLedgerTests {
     }
 
     let reloaded = DownloadLedger(baseDirectory: tmp.url)
-    #expect(await reloaded.state(repoId: "org/repo", file: "w.safetensors") == .inflight(taskIdentifier: 3))
+    #expect(
+      await reloaded.state(repoId: "org/repo", file: "w.safetensors")
+        == .inflight(taskIdentifier: 3))
     #expect(await reloaded.expectedSHA256(repoId: "org/repo", file: "w.safetensors") == sha)
     #expect(await reloaded.remoteURL(repoId: "org/repo", file: "w.safetensors") == url)
   }

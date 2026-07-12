@@ -12,6 +12,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.24.0]
+
+### Added
+
+- **Background model downloads on iOS (#81).** A new, additive, iOS-only path lets model downloads continue while the app is suspended, backed by `URLSessionConfiguration.background` + `downloadTask`. `DownloadLedger` is a durable, actor-serialized JSON ledger in the App Group (`.acervo-downloads/ledger.json`) tracking per-file state (`queued`/`inflight`/`verified`/`failed`) plus expected SHA-256 and remote URL, so a transfer that completes across an app relaunch can be verified and finalized. `DownloadFinalizer` performs SHA-256 verify + atomic install. `BackgroundDownloadCoordinator` routes completed tasks, emits an `AsyncStream<BackgroundDownloadEvent>`, and re-derives `RepoDownloadAvailability` from the ledger. Public API: `Acervo.enqueueBackgroundDownload(modelId:)`, `backgroundDownloadEvents`, `backgroundDownloadAvailability(modelId:)`, and `handleBackgroundURLSessionEvents(identifier:completionHandler:)` for the host app's `handleEventsForBackgroundURLSession`. Redirect pinning to the CDN host and integrity guarantees are preserved. **macOS/CLI keep the existing foreground `dataTask` path unchanged** (all new transport is `#if os(iOS)`).
+
+---
+
 ## [0.23.0]
 
 ### Added
