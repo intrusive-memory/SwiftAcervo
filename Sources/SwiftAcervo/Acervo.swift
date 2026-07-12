@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.24.0"
+  public static let version = "0.24.1"
 
   /// The name of the environment variable that gates outbound HTTP fetches.
   ///
