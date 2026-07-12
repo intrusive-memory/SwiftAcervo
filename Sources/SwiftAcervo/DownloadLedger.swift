@@ -193,6 +193,13 @@ public actor DownloadLedger {
     state.repos[repoId]?[file]?.state
   }
 
+  /// All tracked files for `repoId` mapped to their current state. Empty when
+  /// the repo is unknown. Used to re-derive availability after a relaunch.
+  public func fileStates(repoId: String) -> [String: DownloadFileState] {
+    guard let repo = state.repos[repoId] else { return [:] }
+    return repo.mapValues { $0.state }
+  }
+
   /// The expected SHA-256 recorded for a file, if any.
   public func expectedSHA256(repoId: String, file: String) -> String? {
     state.repos[repoId]?[file]?.expectedSHA256
