@@ -97,6 +97,14 @@ iOS background transfer imposes constraints that the current design violates:
 5. **Integrity verification moves to completion.** SHA-256 is computed on the
    OS-delivered file *before* moving it into the App Group container.
 
+> **Resolved design decisions (2026-07-11):**
+> - **Ledger storage (R3):** Codable JSON file in the App Group
+>   (`.acervo-downloads/ledger.json`), atomic writes, serialized access.
+> - **`async` API on iOS (R11 / SwiftVinetas OQ-1):** keep the existing
+>   `async throws` download resolving when foregrounded; add an **additive**
+>   escaping observation API (AsyncStream) as the authoritative source across
+>   backgrounding/relaunch. No breaking change to existing call sites.
+
 ## 5. Functional requirements (SwiftAcervo)
 
 ### R1 — iOS background session
@@ -125,6 +133,14 @@ keyed by session task identifier ↔ (modelId, relative file path). On launch /
 `handleEvents…`, reconcile delivered files against this ledger and only report the
 *model* complete when every file is verified and in place. Must survive app
 termination between file completions.
+
+**DECIDED (2026-07-11):** storage is a **Codable JSON ledger file** in the App
+Group container at `.acervo-downloads/ledger.json`, written **atomically** on each
+state transition (write-to-temp + rename). Chosen over SQLite: the write volume is
+low (dozens of rows), and a plain file is trivially inspectable, resettable, and
+unit-testable against a temp directory. Implementation must guard concurrent
+writes (serial actor/queue) since delegate callbacks and the app can touch it
+together.
 
 ### R4 — Resume via resume-data
 On recoverable failure, capture `resumeData` from the `NSError`
