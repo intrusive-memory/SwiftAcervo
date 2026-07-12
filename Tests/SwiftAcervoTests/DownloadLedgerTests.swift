@@ -145,4 +145,27 @@ struct DownloadLedgerTests {
     await ledger.register(repoId: "org/repo", files: ["a"])
     #expect(await ledger.state(repoId: "org/repo", file: "a") == .queued)
   }
+
+  @Test("enqueue records URL + SHA; state changes preserve that metadata across relaunch")
+  func enqueueRecordsMetadata() async {
+    let tmp = TempDir()
+    let url = URL(string: "https://cdn.example/models/org/repo/w.safetensors")!
+    let sha = "abc123def456"
+
+    do {
+      let ledger = DownloadLedger(baseDirectory: tmp.url)
+      await ledger.enqueue(repoId: "org/repo", file: "w.safetensors", remoteURL: url, expectedSHA256: sha)
+      #expect(await ledger.state(repoId: "org/repo", file: "w.safetensors") == .queued)
+      #expect(await ledger.expectedSHA256(repoId: "org/repo", file: "w.safetensors") == sha)
+      #expect(await ledger.remoteURL(repoId: "org/repo", file: "w.safetensors") == url)
+
+      // Advancing state must not drop the URL/SHA the delegate needs later.
+      await ledger.markInflight(repoId: "org/repo", file: "w.safetensors", taskIdentifier: 3)
+    }
+
+    let reloaded = DownloadLedger(baseDirectory: tmp.url)
+    #expect(await reloaded.state(repoId: "org/repo", file: "w.safetensors") == .inflight(taskIdentifier: 3))
+    #expect(await reloaded.expectedSHA256(repoId: "org/repo", file: "w.safetensors") == sha)
+    #expect(await reloaded.remoteURL(repoId: "org/repo", file: "w.safetensors") == url)
+  }
 }
