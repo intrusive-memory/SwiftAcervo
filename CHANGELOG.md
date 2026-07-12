@@ -12,6 +12,14 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.24.1]
+
+### Added
+
+- **`Acervo.enqueueBackgroundDownloadComponent(_:)` (iOS).** Component-aware background enqueue: resolves a registered component's short `componentId` to its `repoId` + file list (hydrating on the CDN if needed), then enqueues each file as a background download task. Complements the repo-based `enqueueBackgroundDownload(modelId:)` so component-addressed models (e.g. PixArt) — not just repo-addressed ones (FLUX.2) — can download in the background. Additive, iOS-only; macOS/CLI unaffected.
+
+---
+
 ## [0.24.0]
 
 ### Added

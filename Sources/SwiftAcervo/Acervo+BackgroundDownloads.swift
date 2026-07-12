@@ -34,6 +34,21 @@
       try await backgroundService.enqueue(modelId: modelId)
     }
 
+    /// Enqueues every file of a **registered component** for background
+    /// download, resolving the component's `repoId` + file list from the
+    /// registry (hydrating on the CDN first if needed).
+    ///
+    /// Use this for component-addressed models (e.g. PixArt), whose short
+    /// `componentId`s are not repo ids. Observe ``backgroundDownloadEvents`` and
+    /// re-derive state via ``backgroundDownloadAvailability(modelId:)`` keyed by
+    /// the resolved `repoId`.
+    ///
+    /// - Throws: `AcervoError.componentNotRegistered` / `.componentNotHydrated`,
+    ///   or manifest/hydration errors.
+    public static func enqueueBackgroundDownloadComponent(_ componentId: String) async throws {
+      try await backgroundService.enqueueComponent(componentId)
+    }
+
     /// The authoritative observation stream of background download events
     /// (progress / file verified / file failed / repo completed). Single-consumer.
     public static var backgroundDownloadEvents: AsyncStream<BackgroundDownloadEvent> {
@@ -93,10 +108,39 @@
 
     func enqueue(modelId: String) async throws {
       let manifest = try await Acervo.fetchManifest(for: modelId)
-      for file in manifest.files {
-        let url = AcervoDownloader.buildURL(modelId: modelId, fileName: file.path)
+      await enqueueFiles(
+        repoId: modelId,
+        files: manifest.files.map { (path: $0.path, sha256: $0.sha256) })
+    }
+
+    /// Resolves (hydrating if needed) a registered component to its repo + file
+    /// list, then enqueues each file. This is the component-aware entry point
+    /// PixArt uses — its short `componentId`s only resolve to a `repoId` + files
+    /// after registry hydration, which the repo-based `enqueue(modelId:)` skips.
+    func enqueueComponent(_ componentId: String) async throws {
+      guard let initial = ComponentRegistry.shared.component(componentId) else {
+        throw AcervoError.componentNotRegistered(componentId)
+      }
+      if initial.needsHydration {
+        try await Acervo.hydrateComponent(componentId)
+      }
+      guard let descriptor = ComponentRegistry.shared.component(componentId),
+        descriptor.isHydrated
+      else {
+        throw AcervoError.componentNotHydrated(id: componentId)
+      }
+      await enqueueFiles(
+        repoId: descriptor.repoId,
+        files: descriptor.files.map { (path: $0.relativePath, sha256: $0.sha256) })
+    }
+
+    /// Enqueues a resolved set of `(path, sha256)` files under `repoId` as
+    /// background download tasks.
+    private func enqueueFiles(repoId: String, files: [(path: String, sha256: String?)]) async {
+      for file in files {
+        let url = AcervoDownloader.buildURL(modelId: repoId, fileName: file.path)
         await session.enqueue(
-          repoId: modelId, file: file.path, remoteURL: url, expectedSHA256: file.sha256)
+          repoId: repoId, file: file.path, remoteURL: url, expectedSHA256: file.sha256)
       }
     }
   }
