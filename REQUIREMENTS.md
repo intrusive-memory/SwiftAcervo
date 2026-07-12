@@ -162,6 +162,19 @@ behavioral change**. Prefer a small internal transport abstraction (e.g. a
 `ModelDownloadTransport` protocol with `Foreground` and `BackgroundIOS`
 implementations) over scattering `#if` throughout `AcervoDownloader`.
 
+### R10a — Background behavior must surface through the component-download entry points
+SwiftVinetas does **not** call `Acervo.download(...)` / `AcervoManager.download(...)`
+directly. Its engines call:
+- `Acervo.ensureComponentReady(_:progress:telemetry:)`
+  (`Acervo+ComponentDownloads.swift:140`) — PixArt.
+- `Acervo.ensureAvailable(_:files:progress:)` — FLUX.2.
+
+The iOS background path (R1–R9) must therefore be reachable **through these
+component-download entry points**, plus a batch **enqueue** variant that accepts a
+set of components/repos+files (so SwiftVinetas can enqueue an entire multi-component
+model at once instead of looping). Expose a **durable per-file/per-component state
+query** (backed by the R3 ledger) for availability re-derivation after relaunch.
+
 ### R10 — Host re-attach API (the key new surface)
 Expose public API so the host app can service background completion:
 - A way to obtain the session identifier(s) SwiftAcervo uses.
