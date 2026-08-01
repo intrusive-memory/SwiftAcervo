@@ -37,16 +37,34 @@ ENVIRONMENT VARIABLES
   Local paths
     STAGING_DIR             Staging root for download/recache. Optional;
                             default /tmp/acervo-staging.
-    ACERVO_APP_GROUP_ID     App Group id that locates the shared models
-                            directory for cache-scoped operations.
-    ACERVO_MODELS_DIR       Absolute override for the shared models
-                            directory (takes precedence over the App Group).
-    ACERVO_OFFLINE          When set (e.g. =1), forbid all network access;
-                            serve only what is already on disk.
+
+MODEL STORAGE (SwiftAcervo)
+  ACERVO_APP_GROUP_ID  App Group identifier that locates the shared models
+                       directory: ~/Library/Group Containers/<id>/SharedModels.
+                       Required for CLIs, scripts, and test runners, which have
+                       no entitlement to read it from. Signed UI apps may
+                       instead declare the group in their
+                       com.apple.security.application-groups entitlement.
+  ACERVO_MODELS_DIR    Absolute path that replaces the shared models directory
+                       outright. Takes precedence over ACERVO_APP_GROUP_ID and
+                       over the entitlement, so no App Group is required when
+                       it is set. The layout beneath it must match the
+                       canonical one: a single <org>_<repo> subdirectory per
+                       model. Intended for unentitled processes that the macOS
+                       sandbox blocks from reading the real container. Not for
+                       production use.
+  ACERVO_CDN_BASE_URL  Base URL that every model download and manifest fetch is
+                       built from. Must include the path prefix that
+                       <slug>/<file> is appended to, and must not end in a
+                       slash. UI apps may instead set the AcervoCDNBaseURL
+                       Info.plist key.
+  ACERVO_OFFLINE       Set to 1 to forbid all network access; only models
+                       already present on disk resolve, and anything else
+                       throws rather than reaching the CDN.
 
 REQUIRED TOOLS
-  hf        HuggingFace CLI — used for model downloads (brew install
-huggingface-hub)
+  hf        HuggingFace CLI — used for model downloads
+            (brew install huggingface-hub)
 
 TYPICAL WORKFLOW
   # See what is already on the CDN:
@@ -88,8 +106,59 @@ SUBCOMMANDS:
                           and/or CDN.
   recache                 Re-fetch a model from HuggingFace and atomically
                           republish it to the CDN.
+  doctor                  Report how model storage and the CDN resolve in this
+                          environment.
 
   See 'acervo help <subcommand>' for detailed help.
+```
+
+---
+
+## `acervo doctor`
+
+```
+OVERVIEW: Report how model storage and the CDN resolve in this environment.
+
+Prints every SwiftAcervo environment variable, its current value, and the
+effective source of the shared models directory and CDN base URL.
+
+Safe to run when the configuration is broken: it never resolves through
+the trapping accessors, so a missing App Group id is reported rather than
+fatal.
+
+EXIT STATUS
+  0  model storage and the CDN both resolve
+  1  one or both are unconfigured (use --quiet in scripts)
+
+EXAMPLES
+  acervo doctor
+  ACERVO_MODELS_DIR=/tmp/models acervo doctor
+  acervo doctor --quiet && echo configured
+
+USAGE: acervo doctor [--quiet]
+
+OPTIONS:
+  -q, --quiet             Suppress the report; signal configuration state
+                          through exit status only.
+  --version               Show the version.
+  -h, --help              Show help information.
+
+```
+
+Sample output:
+
+```
+SwiftAcervo 0.24.1 — environment
+  ACERVO_APP_GROUP_ID = group.intrusive-memory.models
+  ACERVO_MODELS_DIR (unset)
+  ACERVO_CDN_BASE_URL = https://cdn.intrusive-memory.productions/models
+  ACERVO_OFFLINE (unset)
+
+Shared models directory resolves from:
+  App Group 'group.intrusive-memory.models' (from ACERVO_APP_GROUP_ID)
+  → /Users/you/Library/Group Containers/group.intrusive-memory.models/SharedModels
+
+CDN base URL: https://cdn.intrusive-memory.productions/models (from ACERVO_CDN_BASE_URL)
 ```
 
 ---

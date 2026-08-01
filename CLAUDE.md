@@ -39,6 +39,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - `config.json` presence is the universal model validity marker
 - Canonical path: `~/Library/Group Containers/<group-id>/SharedModels/{org}_{repo}/`. The group ID is supplied per-consumer via `com.apple.security.application-groups` entitlement (UI apps) or the `ACERVO_APP_GROUP_ID` environment variable (CLIs/tests). No fallback — `Acervo.sharedModelsDirectory` traps with `fatalError` if neither source is configured.
 - Manifest-first file selection: consumers do not know what files exist until the CDN manifest returns; the manifest is the sole authoritative source, and names not in it throw `AcervoError.fileNotInManifest`.
+- `ACERVO_MODELS_DIR` overrides `sharedModelsDirectory` with a literal path and short-circuits App Group resolution entirely (no group ID needed when set). Escape hatch for unentitled `xctest` runners and CI; not for production.
+- **Every consuming binary must document these variables via `Acervo.environmentHelp()`**, interpolated into its `CommandConfiguration.discussion` — never hand-written — and should carry a `doctor` subcommand printing `Acervo.environmentDiagnostics()`. `Acervo.EnvironmentVariable` is the single `CaseIterable` source of truth for all four (`ACERVO_APP_GROUP_ID`, `ACERVO_MODELS_DIR`, `ACERVO_CDN_BASE_URL`, `ACERVO_OFFLINE`). `acervo doctor` is the reference implementation. See [Docs/USAGE-library.md](Docs/USAGE-library.md#documenting-the-variables-in-a-consuming-binary-required).
+- Never re-derive model path resolution. `Acervo.modelsDirectoryResolution` is the one non-trapping primitive; `sharedModelsDirectory` (traps), `resolvedSharedModelsDirectory` (optional), and `environmentDiagnostics()` all switch on it. To check whether storage is configured, use `resolvedSharedModelsDirectory != nil` — a codesigned binary resolves its App Group from the entitlement with no env var set.
 
 ---
 
