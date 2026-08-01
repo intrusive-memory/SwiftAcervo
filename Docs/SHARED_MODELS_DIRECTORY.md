@@ -1,3 +1,7 @@
+---
+type: reference
+---
+
 # SHARED_MODELS_DIRECTORY.md — Canonical Model Storage Location
 
 **For**: Developers who need to understand where models are stored and why.
@@ -27,6 +31,43 @@ SwiftAcervo learns the App Group ID at runtime in two ways:
 The env var wins if both are set.
 
 **There is no fallback path.** If neither source supplies a value, `Acervo.sharedModelsDirectory` calls `fatalError`. A per-process `Application Support/...` fallback is exactly the divergence App Groups exist to prevent: a CLI and a UI app would land at different paths and stop sharing.
+
+### Bypassing App Group resolution entirely
+
+`ACERVO_MODELS_DIR` replaces the resolved directory with a literal path and short-circuits everything above — when it is set, no App Group identifier is needed at all:
+
+```sh
+export ACERVO_MODELS_DIR=/tmp/models
+```
+
+It exists for processes the macOS sandbox (MACF) blocks from reading the real container: unentitled `xctest` runners, ad-hoc CLI tools, CI jobs restoring a cached model tree. The canonical workaround is to hardlink the model files into a temp directory from an entitled shell and point Acervo at it — hardlinks share inode content, so SHA-256 integrity checks still pass against the mirror.
+
+Two differences from App Group resolution:
+
+- The path is used **verbatim**. No `SharedModels/` suffix is appended.
+- The layout beneath it must still be canonical — one `slugify("org/repo")` subdirectory per model — because `modelDirectory(for:)` appends the same slug either way.
+
+For `xctest`, `xcodebuild` strips a `TEST_RUNNER_` prefix before injecting into the runner process, so a Makefile sets `TEST_RUNNER_ACERVO_MODELS_DIR`.
+
+This is a deliberate escape hatch, not a configuration knob. Sandboxed UI apps never set it, and it should not be set in production.
+
+### Checking what resolves, without trapping
+
+`sharedModelsDirectory` traps by design when nothing is configured — which is exactly when you want a readout. `Acervo.resolvedSharedModelsDirectory` returns `nil` instead, and `Acervo.environmentDiagnostics()` prints a full report. `acervo doctor` wraps both:
+
+```console
+$ acervo doctor
+SwiftAcervo 0.25.0 — environment
+  ACERVO_APP_GROUP_ID = group.intrusive-memory.models
+  ACERVO_MODELS_DIR (unset)
+  ...
+
+Shared models directory resolves from:
+  App Group 'group.intrusive-memory.models' (from ACERVO_APP_GROUP_ID)
+  → /Users/you/Library/Group Containers/group.intrusive-memory.models/SharedModels
+```
+
+Prefer `resolvedSharedModelsDirectory != nil` over checking the environment variables yourself: a codesigned binary resolves its group from the entitlement with no variable set, and a hand-rolled check would call that healthy setup broken.
 
 ### Getting the Path
 

@@ -27,7 +27,7 @@ import Foundation
 public enum Acervo {
 
   /// The current version of SwiftAcervo.
-  public static let version = "0.24.1"
+  public static let version = "0.25.0"
 
   /// The name of the environment variable that gates outbound HTTP fetches.
   ///
@@ -36,7 +36,12 @@ public enum Acervo {
   /// fetch and throws ``AcervoError/offlineModeActive`` instead. Read paths
   /// that only touch the local filesystem (e.g. ``modelDirectory(for:)``,
   /// ``isModelAvailable(_:)``, hydrate-from-cache) are unaffected.
-  static let offlineModeEnvironmentVariable = "ACERVO_OFFLINE"
+  /// Public for parity with ``appGroupEnvironmentVariable``,
+  /// ``modelsDirectoryOverrideVariable``, and
+  /// ``cdnBaseURLEnvironmentVariable`` — consumers that surface Acervo's
+  /// configuration (help text, diagnostics, test harnesses) need to name all
+  /// four without hardcoding string literals.
+  public static let offlineModeEnvironmentVariable = "ACERVO_OFFLINE"
 
   /// `true` when the `ACERVO_OFFLINE` environment variable is set to `"1"`.
   ///

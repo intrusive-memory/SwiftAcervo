@@ -60,6 +60,86 @@ setenv("ACERVO_APP_GROUP_ID", "group.com.mycompany.models", 1)
 
 The environment variable name is exposed as `Acervo.appGroupEnvironmentVariable`.
 
+### Overriding the models directory outright
+
+`ACERVO_MODELS_DIR` replaces `sharedModelsDirectory` with a literal path, short-circuiting App Group resolution entirely — when it is set, no App Group identifier is required at all. It exists for processes the macOS sandbox blocks from reading the real container: unentitled `xctest` runners, ad-hoc CLI tools, CI jobs restoring a cached model tree.
+
+```sh
+export ACERVO_MODELS_DIR=/tmp/models
+# xcodebuild strips the TEST_RUNNER_ prefix before injecting into xctest:
+export TEST_RUNNER_ACERVO_MODELS_DIR=/tmp/models
+```
+
+The layout beneath the override must match the canonical one — one `slugify("org/repo")` subdirectory per model — because `modelDirectory(for:)` appends the same slug either way. The path is used verbatim: unlike App Group resolution, no `SharedModels/` suffix is appended.
+
+The variable name is exposed as `Acervo.modelsDirectoryOverrideVariable`.
+
+### Documenting the variables in a consuming binary (required)
+
+Every executable that reaches models through Acervo **must** surface these variables in its `--help`, and must do so by interpolating `Acervo.environmentHelp()` rather than restating them. Hand-written copies drift: the wording diverges package by package, and a variable added upstream never reaches the tools that need it.
+
+```swift
+import ArgumentParser
+import SwiftAcervo
+
+@main
+struct MyToolCLI: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "mytool",
+    abstract: "…",
+    discussion: """
+      …tool-specific prose…
+
+      \(Acervo.environmentHelp())
+      """
+  )
+}
+```
+
+That renders an aligned, pre-wrapped block covering all four variables:
+
+```
+MODEL STORAGE (SwiftAcervo)
+  ACERVO_APP_GROUP_ID  App Group identifier that locates the shared models
+                       directory: ~/Library/Group Containers/<id>/SharedModels.
+                       …
+  ACERVO_MODELS_DIR    Absolute path that replaces the shared models directory
+                       outright. …
+  ACERVO_CDN_BASE_URL  Base URL that every model download and manifest fetch is
+                       built from. …
+  ACERVO_OFFLINE       Set to 1 to forbid all network access; …
+```
+
+| Symbol | Purpose |
+|---|---|
+| `Acervo.EnvironmentVariable` | `CaseIterable` enum of all four variables, each with `name`, `summary`, `isRequired`, `bundleAlternative`, and `currentValue`. |
+| `Acervo.environmentHelp(title:indent:width:)` | The rendered help block. `title: nil` drops the heading for callers merging it into a larger `ENVIRONMENT VARIABLES` section; `width` defaults to 79 so `swift-argument-parser` never re-flows it. |
+| `Acervo.environmentDiagnostics()` | Non-trapping report of what is set and how model storage would resolve. Safe to call when the configuration is broken — unlike `sharedModelsDirectory`, which `fatalError`s by design. |
+| `Acervo.resolvedSharedModelsDirectory` | `sharedModelsDirectory` without the trap; `nil` when unconfigured. Use this — not a hand-rolled env var check — to test whether storage resolves, since a codesigned binary can resolve its App Group from the entitlement with no variable set. |
+
+Pair the help block with a `doctor` subcommand so users can see *why* resolution is failing, not just what they could have set. `acervo doctor` is the reference implementation:
+
+```swift
+struct DoctorCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "doctor",
+    abstract: "Report how model storage and the CDN resolve in this environment."
+  )
+
+  @Flag(name: [.short, .customLong("quiet")])
+  var quiet = false
+
+  func run() async throws {
+    if !quiet {
+      FileHandle.standardOutput.write(Data((Acervo.environmentDiagnostics() + "\n").utf8))
+    }
+    guard Acervo.resolvedSharedModelsDirectory != nil,
+          Acervo.EnvironmentVariable.cdnBaseURL.currentValue != nil
+    else { throw ExitCode(1) }
+  }
+}
+```
+
 ---
 
 ## Concepts

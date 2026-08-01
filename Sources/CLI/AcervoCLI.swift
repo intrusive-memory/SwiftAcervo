@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import SwiftAcervo
 
 @main
 struct AcervoCLI: AsyncParsableCommand {
@@ -29,15 +30,12 @@ struct AcervoCLI: AsyncParsableCommand {
         Local paths
           STAGING_DIR             Staging root for download/recache. Optional;
                                   default /tmp/acervo-staging.
-          ACERVO_APP_GROUP_ID     App Group id that locates the shared models
-                                  directory for cache-scoped operations.
-          ACERVO_MODELS_DIR       Absolute override for the shared models
-                                  directory (takes precedence over the App Group).
-          ACERVO_OFFLINE          When set (e.g. =1), forbid all network access;
-                                  serve only what is already on disk.
+
+      \(Acervo.environmentHelp())
 
       REQUIRED TOOLS
-        hf        HuggingFace CLI — used for model downloads (brew install huggingface-hub)
+        hf        HuggingFace CLI — used for model downloads
+                  (brew install huggingface-hub)
 
       TYPICAL WORKFLOW
         # See what is already on the CDN:
@@ -66,6 +64,7 @@ struct AcervoCLI: AsyncParsableCommand {
       VerifyCommand.self,
       DeleteCommand.self,
       RecacheCommand.self,
+      DoctorCommand.self,
     ]
   )
 }

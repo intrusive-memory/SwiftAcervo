@@ -37,8 +37,13 @@ acervo delete mlx-community/Qwen2.5-7B-Instruct-4bit --local --cdn --yes
 | `R2_REGION` | optional | `auto` | Region literal |
 | `STAGING_DIR` | optional | `/tmp/acervo-staging` | Staging root for `download` / `recache` |
 | `ACERVO_APP_GROUP_ID` | cache-scoped ops | — | App Group id locating the shared models directory |
-| `ACERVO_MODELS_DIR` | optional | — | Absolute override for the shared models directory (takes precedence over the App Group) |
-| `ACERVO_OFFLINE` | optional | — | When set (e.g. `=1`), forbid all network access; serve only on-disk content |
+| `ACERVO_MODELS_DIR` | optional | — | Absolute path replacing the shared models directory outright; short-circuits App Group resolution, so no group id is needed when set. Escape hatch for unentitled test runners / CI — not for production |
+| `ACERVO_CDN_BASE_URL` | downloads, manifest fetches | — | CDN base URL, including the path prefix and no trailing slash (UI apps may use the `AcervoCDNBaseURL` Info.plist key instead) |
+| `ACERVO_OFFLINE` | optional | — | When set to `1`, forbid all network access; serve only on-disk content |
+
+Run `acervo doctor` to see which of these are set and how model storage resolves — it reports a broken configuration instead of trapping on it.
+
+Consuming binaries must not restate this table by hand: interpolate `Acervo.environmentHelp()` into the tool's `CommandConfiguration.discussion` so the wording stays identical everywhere and new variables propagate on the next dependency bump. See [Docs/USAGE-library.md](Docs/USAGE-library.md#documenting-the-variables-in-a-consuming-binary-required).
 
 ## UI Components
 
