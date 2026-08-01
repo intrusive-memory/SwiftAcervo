@@ -57,7 +57,7 @@ This is a deliberate escape hatch, not a configuration knob. Sandboxed UI apps n
 
 ```console
 $ acervo doctor
-SwiftAcervo 0.24.1 — environment
+SwiftAcervo 0.25.0 — environment
   ACERVO_APP_GROUP_ID = group.intrusive-memory.models
   ACERVO_MODELS_DIR (unset)
   ...
