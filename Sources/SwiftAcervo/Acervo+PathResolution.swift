@@ -151,17 +151,11 @@ extension Acervo {
   ///   path because that is exactly the divergence the App Group container
   ///   exists to prevent.
   public static var sharedModelsDirectory: URL {
-    // Explicit override (see ``modelsDirectoryOverrideVariable``): an
-    // unentitled test runner / CLI can point Acervo at a hardlinked mirror
-    // that the macOS sandbox does not block. Checked first so the App Group
-    // identifier is not required when the override is in effect.
-    if let override = ProcessInfo.processInfo.environment[modelsDirectoryOverrideVariable],
-      !override.isEmpty
-    {
-      return URL(fileURLWithPath: override, isDirectory: true)
-    }
+    switch modelsDirectoryResolution {
+    case .override(let url), .appGroup(_, let url, _):
+      return url
 
-    guard let groupID = resolvedAppGroupIdentifier else {
+    case .noAppGroupIdentifier:
       fatalError(
         """
         SwiftAcervo: no App Group identifier configured.
@@ -174,33 +168,107 @@ extension Acervo {
 
             export ACERVO_APP_GROUP_ID=group.intrusive-memory.models
 
+        Alternatively, export ACERVO_MODELS_DIR with an absolute path to use \
+        that directory directly and skip App Group resolution entirely.
+
         See SwiftAcervo's README and AGENTS.md for details.
         """
       )
+
+    case .appGroupNotGranted(let groupID):
+      fatalError(
+        "SwiftAcervo: App Group '\(groupID)' is not granted to this process. "
+          + "Add it to com.apple.security.application-groups in the app's entitlements."
+      )
     }
+  }
+
+  /// ``sharedModelsDirectory`` without the trap: `nil` when no configuration
+  /// supplies a path.
+  ///
+  /// `sharedModelsDirectory` calls `fatalError` on a missing configuration by
+  /// design — a silent per-process fallback is the divergence the App Group
+  /// container exists to prevent. This accessor exists for the callers that
+  /// legitimately need to ask "is storage configured?" without dying on the
+  /// answer: `doctor` / `--diagnose` commands, settings screens, and preflight
+  /// checks that want to surface a helpful message of their own.
+  ///
+  /// Both accessors resolve through the same ``modelsDirectoryResolution``, so
+  /// this can never disagree with the path `sharedModelsDirectory` returns.
+  public static var resolvedSharedModelsDirectory: URL? {
+    switch modelsDirectoryResolution {
+    case .override(let url), .appGroup(_, let url, _):
+      return url
+    case .noAppGroupIdentifier, .appGroupNotGranted:
+      return nil
+    }
+  }
+
+  /// How ``sharedModelsDirectory`` resolves right now, including the failure
+  /// cases, without trapping.
+  ///
+  /// The single source of truth for model path resolution: both the trapping
+  /// ``sharedModelsDirectory`` and the optional
+  /// ``resolvedSharedModelsDirectory`` switch on this, as does
+  /// ``environmentDiagnostics()``. Adding a resolution source means editing
+  /// this one property.
+  enum ModelsDirectoryResolution {
+    /// ``modelsDirectoryOverrideVariable`` supplied a literal path.
+    case override(URL)
+    /// An App Group identifier resolved and yielded a container path.
+    /// `fromEnvironment` distinguishes ``appGroupEnvironmentVariable`` from
+    /// the `com.apple.security.application-groups` entitlement.
+    case appGroup(id: String, url: URL, fromEnvironment: Bool)
+    /// Neither the override nor any App Group source supplied a value.
+    case noAppGroupIdentifier
+    /// An identifier resolved, but the process does not hold the entitlement.
+    case appGroupNotGranted(id: String)
+  }
+
+  static var modelsDirectoryResolution: ModelsDirectoryResolution {
+    // Explicit override (see ``modelsDirectoryOverrideVariable``): an
+    // unentitled test runner / CLI can point Acervo at a hardlinked mirror
+    // that the macOS sandbox does not block. Checked first so the App Group
+    // identifier is not required when the override is in effect.
+    if let override = ProcessInfo.processInfo.environment[modelsDirectoryOverrideVariable],
+      !override.isEmpty
+    {
+      return .override(URL(fileURLWithPath: override, isDirectory: true))
+    }
+
+    guard let groupID = resolvedAppGroupIdentifier else {
+      return .noAppGroupIdentifier
+    }
+    let fromEnvironment =
+      ProcessInfo.processInfo.environment[appGroupEnvironmentVariable]
+      .map { !$0.isEmpty } ?? false
+
+    if let groupURL = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: groupID
+    ) {
+      return .appGroup(
+        id: groupID,
+        url: groupURL.appendingPathComponent(modelsSubdirectory),
+        fromEnvironment: fromEnvironment
+      )
+    }
+
     #if os(iOS)
-      guard
-        let groupURL = FileManager.default.containerURL(
-          forSecurityApplicationGroupIdentifier: groupID
-        )
-      else {
-        fatalError(
-          "SwiftAcervo: App Group '\(groupID)' is not granted to this iOS process. "
-            + "Add it to com.apple.security.application-groups in the app's entitlements."
-        )
-      }
-      return groupURL.appendingPathComponent(modelsSubdirectory)
+      // On iOS a nil container means the entitlement is absent — there is no
+      // readable equivalent path to fall back to.
+      return .appGroupNotGranted(id: groupID)
     #else
-      if let groupURL = FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: groupID
-      ) {
-        return groupURL.appendingPathComponent(modelsSubdirectory)
-      }
-      return
-        FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Group Containers")
-        .appendingPathComponent(groupID)
-        .appendingPathComponent(modelsSubdirectory)
+      // `containerURL(...)` returns nil for unsandboxed macOS processes (CLIs,
+      // test runners). They can still reach the container by path, via
+      // ordinary file-system permissions.
+      return .appGroup(
+        id: groupID,
+        url: FileManager.default.homeDirectoryForCurrentUser
+          .appendingPathComponent("Library/Group Containers")
+          .appendingPathComponent(groupID)
+          .appendingPathComponent(modelsSubdirectory),
+        fromEnvironment: fromEnvironment
+      )
     #endif
   }
 
