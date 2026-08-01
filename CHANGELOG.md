@@ -12,6 +12,28 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`Acervo.environmentHelp()` — one canonical help block for every consuming binary.** Downstream CLIs previously either restated SwiftAcervo's environment variables in their own words or, far more often, omitted them entirely: of the eleven executables in the collection that reach models through Acervo, none documented `ACERVO_MODELS_DIR` and only one mentioned `ACERVO_APP_GROUP_ID`. `Acervo.environmentHelp(title:indent:width:)` renders an aligned, pre-wrapped block that consumers interpolate straight into `CommandConfiguration.discussion`, so the wording cannot drift and a variable added upstream reaches every tool on the next dependency bump. Backed by `Acervo.EnvironmentVariable`, a `CaseIterable` enum of all four variables (`ACERVO_APP_GROUP_ID`, `ACERVO_MODELS_DIR`, `ACERVO_CDN_BASE_URL`, `ACERVO_OFFLINE`) exposing `name`, `summary`, `isRequired`, `bundleAlternative`, and `currentValue`.
+
+- **`Acervo.environmentDiagnostics()`.** A non-trapping report of which variables are set and how model storage would resolve. `sharedModelsDirectory` and `cdnBaseURL` `fatalError` on a missing configuration by design — which is precisely when an operator needs to see why — so the diagnostic inspects the environment without resolving through them.
+
+- **`Acervo.resolvedSharedModelsDirectory`.** `sharedModelsDirectory` without the trap: `nil` when nothing is configured. For callers that must ask "is storage configured?" without dying on the answer — `doctor` commands, settings screens, preflight checks that want to surface their own message.
+
+- **`acervo doctor`.** Prints the diagnostics report and exits non-zero when storage or the CDN is unconfigured (`--quiet` for scripts). The reference implementation of the subcommand every consuming binary should carry.
+
+### Changed
+
+- **Model path resolution is now a single non-trapping primitive.** `sharedModelsDirectory`, `resolvedSharedModelsDirectory`, and `environmentDiagnostics()` all switch on one internal `ModelsDirectoryResolution` value that names the effective source (override / App Group + whether it came from the environment or the entitlement / not-granted / unconfigured). Previously the trapping accessor was the only place resolution existed, so anything wanting to report on it without trapping had to re-derive the logic — and would drift. Behavior of `sharedModelsDirectory` is unchanged apart from its unconfigured `fatalError` now also mentioning `ACERVO_MODELS_DIR` as a way out.
+
+- **`Acervo.offlineModeEnvironmentVariable` is now `public`**, for parity with `appGroupEnvironmentVariable`, `modelsDirectoryOverrideVariable`, and `cdnBaseURLEnvironmentVariable`. It was the only one of the four that consumers could not name without a hardcoded string literal.
+
+- **The `acervo` CLI's `--help` now renders the shared block** instead of its own hand-maintained copy of the same four variables.
+
+---
+
 ## [0.24.1]
 
 ### Added
