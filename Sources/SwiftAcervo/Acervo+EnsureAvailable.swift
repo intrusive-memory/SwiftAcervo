@@ -20,7 +20,7 @@
 // Acervo+SlugAvailability.swift):
 //   - Acervo.isOrgRepoSlug(_:)
 //   - Acervo.componentTotalBytes(_:in:)
-//   - Acervo.fetchSlugManifest(slug:manifestURL:session:)
+//   - Acervo.fetchSlugManifest(slug:manifestURL:in:session:)
 //
 
 import Foundation
@@ -263,6 +263,7 @@ extension Acervo {
       manifest = try await fetchSlugManifest(
         slug: slug,
         manifestURL: manifestURL,
+        in: baseDirectory,
         session: session
       )
     } catch let error as AcervoError {

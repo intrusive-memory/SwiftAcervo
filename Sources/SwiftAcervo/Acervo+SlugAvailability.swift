@@ -118,6 +118,7 @@ extension Acervo {
       manifest = try await fetchSlugManifest(
         slug: slug,
         manifestURL: manifestURL,
+        in: baseDirectory,
         session: session
       )
     } catch let error as AcervoError {
@@ -204,11 +205,13 @@ extension Acervo {
     return cached.files.reduce(Int64(0)) { $0 + $1.sizeBytes }
   }
 
-  /// Cache-aware manifest fetch for the slug-keyed APIs. Hits
-  /// ``ManifestCache/shared`` first; on miss, downloads from
-  /// `manifestURL` and stores under both `(slug, nil)` and
-  /// `(slug, manifestURL)` lookup shapes (which collapse to the same key
-  /// when `manifestURL == derivedURL(forSlug: slug)`).
+  /// Cache-aware manifest fetch for the slug-keyed APIs. Resolution order
+  /// is **local-first**: in-memory ``ManifestCache/shared``, then the
+  /// persisted on-disk copy under `baseDirectory`, and only then the
+  /// network. A successful network fetch persists the wire bytes to disk,
+  /// so every later launch resolves the slug without touching the CDN —
+  /// including when the CDN is unreachable. Deleting the model (or the
+  /// persisted entry) is what forces a re-fetch.
   ///
   /// Non-2xx responses throw ``AcervoError/manifestFetchFailed(slug:status:)``
   /// (NOT ``manifestDownloadFailed(statusCode:)``) so UI code can branch on
@@ -216,13 +219,22 @@ extension Acervo {
   internal static func fetchSlugManifest(
     slug: String,
     manifestURL: URL,
+    in baseDirectory: URL,
     session injectedSession: URLSession?
   ) async throws -> CDNManifest {
-    // 1) Cache hit?
+    // 1) In-memory cache hit?
     if let cached = await ManifestCache.shared.manifest(slug: slug, url: manifestURL) {
       return cached
     }
-    // 2) Network fetch.
+    // 2) Persisted on-disk copy from a prior launch? Promote it into the
+    // in-memory cache so subsequent lookups in this process skip the disk.
+    if let persisted = ManifestCache.loadFromDisk(
+      slug: slug, url: manifestURL, in: baseDirectory)
+    {
+      await ManifestCache.shared.store(persisted, slug: slug, url: manifestURL)
+      return persisted
+    }
+    // 3) Network fetch.
     let session = injectedSession ?? SecureDownloadSession.shared
     let request = URLRequest(url: manifestURL)
     let data: Data
@@ -237,9 +249,11 @@ extension Acervo {
     } catch {
       throw AcervoError.manifestDecodingFailed(error)
     }
-    // 3) Store under the explicit URL (preserves the (slug, explicitURL)
-    // key) — when `manifestURL == derivedURL(forSlug: slug)`, this is
-    // also the canonical (slug, nil) entry per ManifestCache's contract.
+    // 4) Persist the wire bytes (best-effort), then store under the explicit
+    // URL (preserves the (slug, explicitURL) key) — when
+    // `manifestURL == derivedURL(forSlug: slug)`, this is also the canonical
+    // (slug, nil) entry per ManifestCache's contract.
+    ManifestCache.persistToDisk(data, slug: slug, url: manifestURL, in: baseDirectory)
     await ManifestCache.shared.store(manifest, slug: slug, url: manifestURL)
     return manifest
   }

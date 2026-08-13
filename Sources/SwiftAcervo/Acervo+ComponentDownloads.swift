@@ -71,11 +71,12 @@ extension Acervo {
     }
 
     if initialDescriptor.needsHydration {
-      if let session {
-        try await hydrateComponent(componentId, session: session, telemetry: telemetry)
-      } else {
-        try await hydrateComponent(componentId, telemetry: telemetry)
-      }
+      try await hydrateComponent(
+        componentId,
+        session: session ?? SecureDownloadSession.shared,
+        in: baseDirectory,
+        telemetry: telemetry
+      )
     }
 
     guard let descriptor = ComponentRegistry.shared.component(componentId),
@@ -201,11 +202,12 @@ extension Acervo {
     }
 
     if initialDescriptor.needsHydration {
-      if let session {
-        try await hydrateComponent(componentId, session: session, telemetry: telemetry)
-      } else {
-        try await hydrateComponent(componentId, telemetry: telemetry)
-      }
+      try await hydrateComponent(
+        componentId,
+        session: session ?? SecureDownloadSession.shared,
+        in: baseDirectory,
+        telemetry: telemetry
+      )
     }
 
     // If already ready, emit cacheHit-style completion and no-op

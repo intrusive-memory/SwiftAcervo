@@ -105,7 +105,8 @@ extension Acervo {
       throw AcervoError.componentNotRegistered(id)
     }
     if descriptor.needsHydration {
-      try await hydrateComponent(id)
+      try await hydrateComponent(
+        id, session: SecureDownloadSession.shared, in: baseDirectory)
     }
     return isComponentReady(id, in: baseDirectory)
   }

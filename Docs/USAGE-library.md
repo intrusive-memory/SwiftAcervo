@@ -879,7 +879,7 @@ if !failures.isEmpty {
 
 ### 13 · Hydration (`Acervo+Hydration.swift`)
 
-Lazy descriptor population from the CDN manifest. Required before most operations on un-hydrated components.
+Lazy descriptor population from the model manifest — **local-first**: the persisted `<modelDir>/manifest.json` from a completed download is used when present, and the CDN is only contacted when no local manifest exists. Required before most operations on un-hydrated components.
 
 ---
 
@@ -892,7 +892,7 @@ public static func hydrateComponent(
 ) async throws
 ```
 
-Fetches the CDN manifest for the component's `repoId` and rebuilds the descriptor with a full file list (`files`, `estimatedSizeBytes`). Concurrent calls for the same `componentId` coalesce into a single network fetch via `HydrationCoalescer`. A later call after completion re-fetches, so CDN manifest updates between app launches are picked up.
+Resolves the manifest for the component's `repoId` and rebuilds the descriptor with a full file list (`files`, `estimatedSizeBytes`). **Local-first:** when the persisted `<modelDir>/manifest.json` from a completed download exists, hydration reads it with zero network I/O — a device with a complete local copy keeps working even when the CDN is unreachable. The CDN is only fetched when no local manifest is present. To pick up an updated CDN manifest for a model that was re-published under the same ID, delete the local model first. Concurrent calls for the same `componentId` coalesce into a single resolution via `HydrationCoalescer`.
 
 **Warning:** Do not call `hydrateComponent` on bundle-pattern descriptors — descriptors where multiple components share a `repoId`, each owning a declared file subset. Hydration replaces `files` with the full manifest, breaking per-component file scope. Bundle descriptors must be registered using the explicit `files:` initializer and left pre-hydrated.
 
@@ -921,7 +921,7 @@ public static func availability(
 ) async throws -> ModelAvailability
 ```
 
-Fetches the slug's manifest (from the in-memory `ManifestCache` if cached, otherwise from the network), then fans out across every `manifest.components` entry using the offline repo-keyed `availability(_:)` for each. Aggregates component states via `AvailabilityAggregator`:
+Resolves the slug's manifest **local-first** — in-memory `ManifestCache`, then the on-disk copy persisted under `<base>/.acervo-slug-manifests/` by a prior successful fetch, and only then the network — then fans out across every `manifest.components` entry using the offline repo-keyed `availability(_:)` for each. Once a slug has resolved once on a device, slug-keyed APIs keep working across launches with no CDN at all; `deleteModel(slug:)` clears the persisted copy. Aggregates component states via `AvailabilityAggregator`:
 
 - All components `.available` → `.available`
 - Any component `.downloading` → `.downloading(weightedAverageProgress)` (weighted by each component's total bytes)
