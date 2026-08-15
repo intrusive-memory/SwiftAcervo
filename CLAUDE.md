@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with Sw
 - CDN-only downloads with per-file SHA-256 manifest verification
 - `SecureDownloadSession` that rejects redirects to non-CDN domains
 - Component registry for declarative model component management, with v0.8.0 bare `ComponentDescriptor.init(id:type:displayName:repoId:minimumMemoryBytes:metadata:)` for un-hydrated registration
-- `Acervo.hydrateComponent(_:)` / `Acervo.ensureComponentReady(_:)` for manifest-driven descriptor population (auto-hydrate on first use). **Local-first**: hydration reads the persisted `<modelDir>/manifest.json` when present and never touches the CDN for a model that is fully on disk; slug manifests are likewise persisted under `<base>/.acervo-slug-manifests/` and re-read across launches. A device with complete local copies works with the CDN unreachable; re-fetch requires deleting the local model.
+- `Acervo.hydrateComponent(_:)` / `Acervo.ensureComponentReady(_:)` for manifest-driven descriptor population (auto-hydrate on first use)
 - `Acervo.fetchManifest(for: modelId)` and `Acervo.fetchManifest(forComponent: componentId)` for raw manifest access without downloads
 - `LocalHandle` / `withLocalAccess(_:perform:)` for scoped access to caller-supplied local paths
 - Migration utility for legacy `intrusive-memory/Models/` cache paths

@@ -155,12 +155,10 @@ extension Acervo {
       throw AcervoError.urlRequiredForSlug(slug)
     }
 
-    // Fetch manifest (cache-aware: memory → disk → network). Throws
-    // manifestFetchFailed on HTTP errors.
+    // Fetch manifest (cache-aware). Throws manifestFetchFailed on HTTP errors.
     let manifest = try await fetchSlugManifest(
       slug: slug,
       manifestURL: manifestURL,
-      in: baseDirectory,
       session: session
     )
 
@@ -180,10 +178,7 @@ extension Acervo {
       await ManifestCache.shared.remove(slug: componentRepo, url: nil)
     }
 
-    // Clear the slug-level ManifestCache entry (idempotent), both the
-    // in-memory copy and the persisted on-disk copy — a deleted model must
-    // re-resolve from the CDN on its next use.
+    // Clear the slug-level ManifestCache entry (idempotent).
     await ManifestCache.shared.remove(slug: slug, url: url)
-    ManifestCache.removeFromDisk(slug: slug, url: manifestURL, in: baseDirectory)
   }
 }

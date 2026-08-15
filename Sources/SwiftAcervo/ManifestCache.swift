@@ -25,7 +25,6 @@
 // happens at lookup time, so `(slug, nil)` and `(slug, derivedURL)` collapse
 // to the same key by construction.
 
-import CryptoKit
 import Foundation
 
 /// In-memory cache for resolved CDN manifests keyed by `(slug, URL)`.
@@ -94,65 +93,4 @@ actor ManifestCache {
 
   /// Test affordance: number of distinct cache entries.
   var count: Int { entries.count }
-
-  // MARK: - Disk persistence (local-first slug resolution)
-  //
-  // The in-memory cache above only lives for one process. Slug manifests are
-  // additionally persisted under the models base directory so that slug-keyed
-  // APIs resolve without any network on later launches — including when the
-  // CDN is unreachable. Files are keyed by (slugified slug, SHA-256 of the
-  // resolved manifest URL) so the (slug, url) contract carries over to disk:
-  // repointing the CDN base URL yields a different key and a fresh fetch.
-
-  /// Directory under `baseDirectory` holding persisted slug manifests.
-  /// Dot-prefixed so model-discovery walks (which key on per-model
-  /// `config.json`) never mistake it for a model folder.
-  nonisolated static func diskCacheDirectory(in baseDirectory: URL) -> URL {
-    baseDirectory.appendingPathComponent(".acervo-slug-manifests", isDirectory: true)
-  }
-
-  /// On-disk location for the `(slug, url)` entry.
-  nonisolated static func diskCacheURL(slug: String, url: URL, in baseDirectory: URL) -> URL {
-    let urlDigest = SHA256.hash(data: Data(url.absoluteString.utf8))
-      .map { String(format: "%02x", $0) }
-      .joined()
-      .prefix(16)
-    return diskCacheDirectory(in: baseDirectory)
-      .appendingPathComponent("\(Acervo.slugify(slug))-\(urlDigest).json")
-  }
-
-  /// Loads the persisted manifest for `(slug, url)`, or `nil` when absent.
-  /// A file that no longer decodes is deleted so the caller falls through
-  /// to a network fetch, mirroring `AcervoDownloader.loadCachedManifest`.
-  nonisolated static func loadFromDisk(
-    slug: String, url: URL, in baseDirectory: URL
-  ) -> CDNManifest? {
-    let fileURL = diskCacheURL(slug: slug, url: url, in: baseDirectory)
-    guard let data = try? Data(contentsOf: fileURL) else { return nil }
-    guard let manifest = try? JSONDecoder().decode(CDNManifest.self, from: data) else {
-      try? FileManager.default.removeItem(at: fileURL)
-      return nil
-    }
-    return manifest
-  }
-
-  /// Best-effort persistence of the raw wire bytes for `(slug, url)`.
-  /// Failures are swallowed: persistence is an availability optimization,
-  /// never a correctness requirement for the fetch that produced the bytes.
-  nonisolated static func persistToDisk(
-    _ data: Data, slug: String, url: URL, in baseDirectory: URL
-  ) {
-    let fileURL = diskCacheURL(slug: slug, url: url, in: baseDirectory)
-    try? FileManager.default.createDirectory(
-      at: diskCacheDirectory(in: baseDirectory),
-      withIntermediateDirectories: true
-    )
-    try? data.write(to: fileURL, options: .atomic)
-  }
-
-  /// Removes the persisted entry for `(slug, url)`. No-op if absent.
-  nonisolated static func removeFromDisk(slug: String, url: URL, in baseDirectory: URL) {
-    try? FileManager.default.removeItem(
-      at: diskCacheURL(slug: slug, url: url, in: baseDirectory))
-  }
 }
