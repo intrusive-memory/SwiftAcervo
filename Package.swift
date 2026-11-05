@@ -21,7 +21,7 @@ let package = Package(
   ],
   dependencies: [
     .package(
-      url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.8.0")),
+      url: "https://github.com/apple/swift-argument-parser", .upToNextMajor(from: "1.8.2")),
     .package(url: "https://github.com/jkandzi/Progress.swift", .upToNextMajor(from: "0.4.0")),
   ],
   targets: [
